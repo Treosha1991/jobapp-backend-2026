@@ -92,4 +92,60 @@ class VacancyContactAPIView(APIView):
 
         serializer = VacancyContactSerializer(vacancy)
         return Response(serializer.data)
+    
+from .models import UnlockRequest
+from rest_framework import status
+
+
+class VacancyUnlockRequestAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        vacancy = Vacancy.objects.get(pk=pk)
+
+        # если уже открыто — сразу вернём "already_unlocked"
+        if UnlockedContact.objects.filter(user=request.user, vacancy=vacancy).exists():
+            return Response({"detail": "already_unlocked"}, status=200)
+
+        unlock = UnlockRequest.create_for(request.user, vacancy)
+        return Response(
+            {
+                "unlock_token": unlock.token,
+                "expires_in_seconds": 120
+            },
+            status=200
+        )
+
+
+class VacancyUnlockConfirmAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        vacancy = Vacancy.objects.get(pk=pk)
+        token = request.data.get("unlock_token")
+
+        if not token:
+            return Response({"error": "unlock_token required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        qs = UnlockRequest.objects.filter(
+            user=request.user,
+            vacancy=vacancy,
+            token=token
+        ).order_by("-created_at")
+
+        if not qs.exists():
+            return Response({"error": "invalid token"}, status=status.HTTP_400_BAD_REQUEST)
+
+        unlock_req = qs.first()
+        if not unlock_req.is_valid():
+            return Response({"error": "token expired"}, status=status.HTTP_400_BAD_REQUEST)
+
+        UnlockedContact.objects.get_or_create(user=request.user, vacancy=vacancy)
+
+        # токен можно удалить, чтобы нельзя было использовать повторно
+        unlock_req.delete()
+
+        serializer = VacancyContactSerializer(vacancy)
+        return Response(serializer.data, status=200)
+
 

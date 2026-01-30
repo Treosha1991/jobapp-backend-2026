@@ -4,6 +4,8 @@ from .api import (
     VacancyDetailAPIView,
     VacancyCreateAPIView,
     VacancyContactAPIView,
+    VacancyUnlockRequestAPIView,
+    VacancyUnlockConfirmAPIView,
 )
 from .auth_api import RegisterAPIView, LoginAPIView
 
@@ -15,6 +17,11 @@ urlpatterns = [
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),
     path("vacancies/<int:pk>/", VacancyDetailAPIView.as_view(), name="vacancy-detail"),
     path("vacancies/create/", VacancyCreateAPIView.as_view(), name="vacancy-create"),
+
     path("vacancies/<int:pk>/contacts/", VacancyContactAPIView.as_view()),
+
+    path("vacancies/<int:pk>/unlock/request/", VacancyUnlockRequestAPIView.as_view(), name="vacancy-unlock-request"),
+    path("vacancies/<int:pk>/unlock/confirm/", VacancyUnlockConfirmAPIView.as_view(), name="vacancy-unlock-confirm"),
+
 
 ]

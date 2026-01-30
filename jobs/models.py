@@ -73,4 +73,31 @@ class UnlockedContact(models.Model):
 
     def __str__(self):
         return f"{self.user.username} unlocked {self.vacancy.id}"
+    
+import secrets
+from datetime import timedelta
+
+class UnlockRequest(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE)
+    token = models.CharField(max_length=64, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    @staticmethod
+    def create_for(user, vacancy):
+        tok = secrets.token_urlsafe(32)
+        return UnlockRequest.objects.create(
+            user=user,
+            vacancy=vacancy,
+            token=tok,
+            expires_at=timezone.now() + timedelta(minutes=2)
+        )
+
+    def is_valid(self):
+        return self.expires_at > timezone.now()
+
+    def __str__(self):
+        return f"UnlockRequest {self.user.username} {self.vacancy.id}"
+
 
