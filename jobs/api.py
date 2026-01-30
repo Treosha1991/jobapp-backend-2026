@@ -56,3 +56,40 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             is_approved=False,
             expires_at=timezone.now() + timedelta(days=30),
         )
+
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from .models import UnlockedContact
+from .serializers import VacancyContactSerializer
+
+class VacancyContactAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        vacancy = Vacancy.objects.get(pk=pk)
+
+        unlocked = UnlockedContact.objects.filter(
+            user=request.user,
+            vacancy=vacancy
+        ).exists()
+
+        if not unlocked:
+            return Response(
+                {"detail": "contacts_locked"},
+                status=403
+            )
+
+        serializer = VacancyContactSerializer(vacancy)
+        return Response(serializer.data)
+
+    def post(self, request, pk):
+        vacancy = Vacancy.objects.get(pk=pk)
+
+        UnlockedContact.objects.get_or_create(
+            user=request.user,
+            vacancy=vacancy
+        )
+
+        serializer = VacancyContactSerializer(vacancy)
+        return Response(serializer.data)
+

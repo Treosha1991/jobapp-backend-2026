@@ -62,3 +62,15 @@ class Vacancy(models.Model):
 
     def __str__(self):
         return self.title
+    
+class UnlockedContact(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE)
+    opened_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "vacancy")
+
+    def __str__(self):
+        return f"{self.user.username} unlocked {self.vacancy.id}"
+

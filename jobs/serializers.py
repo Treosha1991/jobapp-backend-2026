@@ -54,3 +54,14 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "email",
             "source",
         ]
+
+class VacancyContactSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Vacancy
+        fields = [
+            "phone",
+            "whatsapp",
+            "viber",
+            "telegram",
+            "email",
+        ]
