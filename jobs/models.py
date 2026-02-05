@@ -4,27 +4,70 @@ from django.utils import timezone
 
 
 class Vacancy(models.Model):
-
     COUNTRY_CHOICES = [
         ("PL", "Poland"),
-        ("BY", "Belarus"),
+        ("DE", "Germany"),
+        ("FR", "France"),
+        ("ES", "Spain"),
+        ("IT", "Italy"),
+        ("NL", "Netherlands"),
+        ("BE", "Belgium"),
+        ("AT", "Austria"),
+        ("SE", "Sweden"),
+        ("FI", "Finland"),
+        ("DK", "Denmark"),
+        ("IE", "Ireland"),
+        ("PT", "Portugal"),
+        ("GR", "Greece"),
+        ("CZ", "Czechia"),
+        ("SK", "Slovakia"),
+        ("HU", "Hungary"),
+        ("RO", "Romania"),
+        ("BG", "Bulgaria"),
+        ("HR", "Croatia"),
+        ("SI", "Slovenia"),
+        ("LT", "Lithuania"),
+        ("LV", "Latvia"),
+        ("EE", "Estonia"),
+        ("LU", "Luxembourg"),
+        ("MT", "Malta"),
+        ("CY", "Cyprus"),
+        ("UK", "United Kingdom"),
+        ("CH", "Switzerland"),
+        ("US", "USA"),
+        ("CA", "Canada"),
         ("UA", "Ukraine"),
+        ("BY", "Belarus"),
         ("OTHER", "Other"),
     ]
-
     CATEGORY_CHOICES = [
-        ("business", "Business"),
         ("construction", "Construction"),
         ("agriculture", "Agriculture"),
+        ("warehouse", "Warehouse"),
+        ("logistics", "Logistics"),
+        ("manufacturing", "Manufacturing"),
+        ("hospitality", "Hospitality"),
+        ("cleaning", "Cleaning"),
+        ("retail", "Retail"),
+        ("transport", "Transport"),
+        ("healthcare", "Healthcare"),
+        ("it", "IT"),
         ("service", "Service"),
-        ("tourism", "Tourism"),
+        ("other", "Other"),
     ]
-
     EMPLOYMENT_TYPE_CHOICES = [
         ("full", "Full-time"),
         ("part", "Part-time"),
         ("shift", "Shift"),
         ("contract", "Contract"),
+        ("seasonal", "Seasonal"),
+        ("temporary", "Temporary"),
+        ("internship", "Internship"),
+    ]
+
+    EXPERIENCE_CHOICES = [
+        ("with", "With experience"),
+        ("without", "Without experience"),
     ]
 
     SOURCE_CHOICES = [
@@ -33,12 +76,20 @@ class Vacancy(models.Model):
         ("other", "Other"),
     ]
 
+    HOUSING_TYPE_CHOICES = [
+        ("free", "Free"),
+        ("paid", "Paid"),
+        ("none", "None"),
+    ]
+
+
     # Основное
     title = models.CharField(max_length=120)
     country = models.CharField(max_length=10, choices=COUNTRY_CHOICES)
     city = models.CharField(max_length=80)
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES)
     employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES)
+    experience_required = models.CharField(max_length=10, choices=EXPERIENCE_CHOICES, default="without")
     salary = models.CharField(max_length=80)
     description = models.TextField(max_length=3000)
 
@@ -49,13 +100,21 @@ class Vacancy(models.Model):
     telegram = models.CharField(max_length=100, blank=True)
     email = models.EmailField(blank=True)
 
+    # Housing
+    housing_type = models.CharField(max_length=10, choices=HOUSING_TYPE_CHOICES, default="none")
+    housing_cost = models.CharField(max_length=80, blank=True)
+
+
     # Служебное
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
     created_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    creator_token = models.CharField(max_length=64, unique=True, blank=True, null=True)
     published_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 
     is_approved = models.BooleanField(default=False)
+    is_rejected = models.BooleanField(default=False)
+    rejection_reason = models.TextField(blank=True)
 
     def is_active(self):
         return self.expires_at > timezone.now()
@@ -99,5 +158,25 @@ class UnlockRequest(models.Model):
 
     def __str__(self):
         return f"UnlockRequest {self.user.username} {self.vacancy.id}"
+
+
+class EmailVerification(models.Model):
+    PURPOSE_CHOICES = [
+        ("register", "Register"),
+        ("reset", "Reset password"),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    code = models.CharField(max_length=6)
+    purpose = models.CharField(max_length=20, choices=PURPOSE_CHOICES, default="register")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    def is_valid(self):
+        return (not self.is_used) and self.expires_at > timezone.now()
+
+    def __str__(self):
+        return f"EmailVerification {self.user.username} {self.purpose}"
 
 
