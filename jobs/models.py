@@ -164,11 +164,14 @@ class EmailVerification(models.Model):
     PURPOSE_CHOICES = [
         ("register", "Register"),
         ("reset", "Reset password"),
+        ("link_email", "Link email"),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     code = models.CharField(max_length=6)
     purpose = models.CharField(max_length=20, choices=PURPOSE_CHOICES, default="register")
+    target_email = models.EmailField(blank=True)
+    pending_password = models.CharField(max_length=128, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)

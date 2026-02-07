@@ -24,6 +24,8 @@ from .auth_api import (
     PhoneRequestCodeAPIView,
     PhoneVerifyCodeAPIView,
     MeAPIView,
+    LinkEmailRequestAPIView,
+    LinkEmailConfirmAPIView,
 )
 
 
@@ -35,6 +37,8 @@ urlpatterns = [
     path("auth/resend/", ResendCodeAPIView.as_view(), name="api-resend"),
     path("auth/phone/request-code/", PhoneRequestCodeAPIView.as_view(), name="api-phone-request-code"),
     path("auth/phone/verify-code/", PhoneVerifyCodeAPIView.as_view(), name="api-phone-verify-code"),
+    path("auth/link-email/request/", LinkEmailRequestAPIView.as_view(), name="api-link-email-request"),
+    path("auth/link-email/confirm/", LinkEmailConfirmAPIView.as_view(), name="api-link-email-confirm"),
     path("auth/reset/request/", ResetPasswordRequestAPIView.as_view(), name="api-reset-request"),
     path("auth/reset/confirm/", ResetPasswordConfirmAPIView.as_view(), name="api-reset-confirm"),
 

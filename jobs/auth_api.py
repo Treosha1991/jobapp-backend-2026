@@ -8,6 +8,7 @@ from urllib import parse, request as urllib_request
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
+from django.contrib.auth.hashers import make_password
 from django.core.mail import send_mail
 from django.db import IntegrityError
 from django.utils import timezone
@@ -50,6 +51,9 @@ def _send_email_code(email, code, purpose="register"):
     if purpose == "reset":
         subject = "JobApp password reset code"
         message = f"Your password reset code: {code}\nIt is valid for 10 minutes."
+    elif purpose == "link_email":
+        subject = "JobApp email linking code"
+        message = f"Your email linking code: {code}\nIt is valid for 10 minutes."
     else:
         subject = "JobApp verification code"
         message = f"Your verification code: {code}\nIt is valid for 10 minutes."
@@ -438,3 +442,77 @@ class MeAPIView(APIView):
     def get(self, request):
         token, _ = Token.objects.get_or_create(user=request.user)
         return Response(_auth_payload(request.user, token))
+
+
+class LinkEmailRequestAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        password = request.data.get("password") or ""
+        user = request.user
+
+        if not email or not password:
+            return Response({"error": "email and password required"}, status=status.HTTP_400_BAD_REQUEST)
+        if "@" not in email:
+            return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
+        if len(password) < 6:
+            return Response({"error": "password_too_short"}, status=status.HTTP_400_BAD_REQUEST)
+        if user.email:
+            return Response({"error": "email_already_linked"}, status=status.HTTP_400_BAD_REQUEST)
+
+        owner = User.objects.filter(username=email).exclude(id=user.id).first()
+        if owner:
+            return Response({"error": "email_already_used"}, status=status.HTTP_400_BAD_REQUEST)
+
+        EmailVerification.objects.filter(user=user, purpose="link_email", is_used=False).update(is_used=True)
+        code = _generate_code()
+        EmailVerification.objects.create(
+            user=user,
+            code=code,
+            purpose="link_email",
+            target_email=email,
+            pending_password=make_password(password),
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+        _send_email_code(email, code, "link_email")
+        return Response({"detail": "verification_sent"})
+
+
+class LinkEmailConfirmAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        code = (request.data.get("code") or "").strip()
+        user = request.user
+        if not code:
+            return Response({"error": "code required"}, status=status.HTTP_400_BAD_REQUEST)
+        if user.email:
+            return Response({"error": "email_already_linked"}, status=status.HTTP_400_BAD_REQUEST)
+
+        rec = EmailVerification.objects.filter(
+            user=user,
+            purpose="link_email",
+            code=code,
+            is_used=False,
+        ).order_by("-created_at").first()
+        if not rec or not rec.is_valid():
+            return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
+        if not rec.target_email or not rec.pending_password:
+            return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
+
+        owner = User.objects.filter(username=rec.target_email).exclude(id=user.id).first()
+        if owner:
+            return Response({"error": "email_already_used"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.username = rec.target_email
+        user.email = rec.target_email
+        user.password = rec.pending_password
+        user.is_active = True
+        user.save(update_fields=["username", "email", "password", "is_active"])
+
+        rec.is_used = True
+        rec.save(update_fields=["is_used"])
+
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response(_auth_payload(user, token))
