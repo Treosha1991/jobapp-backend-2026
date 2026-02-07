@@ -78,8 +78,17 @@ def _send_sms_code(phone_e164, code, purpose):
     req = urllib_request.Request(url, data=payload, method="POST")
     req.add_header("Authorization", f"Basic {auth}")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib_request.urlopen(req, timeout=15):
-        return True
+    try:
+        with urllib_request.urlopen(req, timeout=15):
+            return True
+    except Exception as exc:
+        print(f"[SMS-ERROR] {phone_e164}: {exc}")
+        return False
+
+
+def _username_for_phone(phone_e164):
+    # Keep usernames deterministic and ASCII-safe for phone-only accounts.
+    return f"phone_{phone_e164.replace('+', '')}"
 
 
 def _phone_code_too_frequent(phone_e164, purpose):
@@ -226,9 +235,8 @@ class PhoneRequestCodeAPIView(APIView):
             user = request.user
         elif purpose == "login":
             prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
-            if not prof:
-                return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
-            user = prof.user
+            if prof:
+                user = prof.user
         else:
             prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
             if not prof:
@@ -237,10 +245,11 @@ class PhoneRequestCodeAPIView(APIView):
 
         rec = _create_phone_code(phone, purpose, user=user)
         sent = _send_sms_code(phone, rec.code, purpose)
-        data = {"detail": "code_sent", "channel": "sms"}
-        if settings.DEBUG and not sent:
-            data["debug_code"] = rec.code
-        return Response(data)
+        if not sent:
+            if settings.DEBUG:
+                return Response({"detail": "code_sent", "channel": "debug", "debug_code": rec.code})
+            return Response({"error": "sms_delivery_failed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"detail": "code_sent", "channel": "sms"})
 
 
 class PhoneVerifyCodeAPIView(APIView):
@@ -288,12 +297,18 @@ class PhoneVerifyCodeAPIView(APIView):
         if purpose == "reset":
             return Response({"detail": "code_verified"})
 
-        profile = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+        profile = UserProfile.objects.filter(phone_e164=phone).select_related("user").first()
         if not profile:
-            return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
+            username = _username_for_phone(phone)
+            user = User.objects.filter(username=username).first()
+            if not user:
+                user = User.objects.create_user(username=username, email="", password=None, is_active=True)
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.phone_e164 = phone
+        profile.phone_verified = True
+        profile.phone_verified_at = timezone.now()
+        profile.save(update_fields=["phone_e164", "phone_verified", "phone_verified_at"])
         user = profile.user
-        if not user.is_active:
-            return Response({"error": "email_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
         token, _ = Token.objects.get_or_create(user=user)
         return Response(_auth_payload(user, token))
 
@@ -316,10 +331,11 @@ class ResetPasswordRequestAPIView(APIView):
                 return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
             rec = _create_phone_code(phone, "reset", user=prof.user)
             sent = _send_sms_code(phone, rec.code, "reset")
-            data = {"detail": "reset_code_sent", "channel": "sms"}
-            if settings.DEBUG and not sent:
-                data["debug_code"] = rec.code
-            return Response(data)
+            if not sent:
+                if settings.DEBUG:
+                    return Response({"detail": "reset_code_sent", "channel": "debug", "debug_code": rec.code})
+                return Response({"error": "sms_delivery_failed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response({"detail": "reset_code_sent", "channel": "sms"})
 
         user = User.objects.filter(username=email).first()
         if not user:
