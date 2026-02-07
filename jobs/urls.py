@@ -21,14 +21,20 @@ from .auth_api import (
     ResendCodeAPIView,
     ResetPasswordRequestAPIView,
     ResetPasswordConfirmAPIView,
+    PhoneRequestCodeAPIView,
+    PhoneVerifyCodeAPIView,
+    MeAPIView,
 )
 
 
 urlpatterns = [
     path("auth/register/", RegisterAPIView.as_view(), name="api-register"),
     path("auth/login/", LoginAPIView.as_view(), name="api-login"),
+    path("auth/me/", MeAPIView.as_view(), name="api-me"),
     path("auth/verify/", VerifyEmailAPIView.as_view(), name="api-verify"),
     path("auth/resend/", ResendCodeAPIView.as_view(), name="api-resend"),
+    path("auth/phone/request-code/", PhoneRequestCodeAPIView.as_view(), name="api-phone-request-code"),
+    path("auth/phone/verify-code/", PhoneVerifyCodeAPIView.as_view(), name="api-phone-verify-code"),
     path("auth/reset/request/", ResetPasswordRequestAPIView.as_view(), name="api-reset-request"),
     path("auth/reset/confirm/", ResetPasswordConfirmAPIView.as_view(), name="api-reset-confirm"),
 

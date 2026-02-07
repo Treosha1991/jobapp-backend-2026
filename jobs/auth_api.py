@@ -1,24 +1,52 @@
+import base64
+import os
 import random
+import re
 from datetime import timedelta
+from urllib import parse, request as urllib_request
 
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
+from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import EmailVerification
+from .models import EmailVerification, PhoneVerification, UserProfile
 
 
 def _generate_code():
     return f"{random.randint(0, 999999):06d}"
 
 
-def _send_code(email, code, purpose="register"):
+def _normalize_phone(raw_phone):
+    value = (raw_phone or "").strip()
+    if value.startswith("00"):
+        value = f"+{value[2:]}"
+    digits = re.sub(r"[^\d+]", "", value)
+    if not digits.startswith("+"):
+        digits = f"+{digits}"
+    if not re.match(r"^\+\d{8,15}$", digits):
+        return None
+    return digits
+
+
+def _auth_payload(user, token):
+    profile = UserProfile.objects.filter(user=user).first()
+    return {
+        "token": token.key,
+        "is_staff": user.is_staff,
+        "email": user.email or "",
+        "phone": (profile.phone_e164 if profile else "") or "",
+        "phone_verified": bool(profile and profile.phone_verified),
+    }
+
+
+def _send_email_code(email, code, purpose="register"):
     if purpose == "reset":
         subject = "JobApp password reset code"
         message = f"Your password reset code: {code}\nIt is valid for 10 minutes."
@@ -26,6 +54,57 @@ def _send_code(email, code, purpose="register"):
         subject = "JobApp verification code"
         message = f"Your verification code: {code}\nIt is valid for 10 minutes."
     send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=False)
+
+
+def _send_sms_code(phone_e164, code, purpose):
+    if purpose == "reset":
+        text = f"JobApp: password reset code {code}. Valid 10 minutes."
+    elif purpose == "login":
+        text = f"JobApp: login code {code}. Valid 10 minutes."
+    else:
+        text = f"JobApp: phone verification code {code}. Valid 10 minutes."
+
+    sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+    token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    from_phone = os.environ.get("TWILIO_FROM_NUMBER", "").strip()
+
+    if not sid or not token or not from_phone:
+        print(f"[SMS-DEV] {phone_e164}: {text}")
+        return False
+
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+    payload = parse.urlencode({"To": phone_e164, "From": from_phone, "Body": text}).encode()
+    auth = base64.b64encode(f"{sid}:{token}".encode()).decode()
+    req = urllib_request.Request(url, data=payload, method="POST")
+    req.add_header("Authorization", f"Basic {auth}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    with urllib_request.urlopen(req, timeout=15):
+        return True
+
+
+def _phone_code_too_frequent(phone_e164, purpose):
+    return PhoneVerification.objects.filter(
+        phone_e164=phone_e164,
+        purpose=purpose,
+        created_at__gt=timezone.now() - timedelta(seconds=45),
+    ).exists()
+
+
+def _create_phone_code(phone_e164, purpose, user=None):
+    PhoneVerification.objects.filter(
+        phone_e164=phone_e164,
+        purpose=purpose,
+        is_used=False,
+    ).update(is_used=True)
+    code = _generate_code()
+    record = PhoneVerification.objects.create(
+        phone_e164=phone_e164,
+        user=user,
+        code=code,
+        purpose=purpose,
+        expires_at=timezone.now() + timedelta(minutes=10),
+    )
+    return record
 
 
 class RegisterAPIView(APIView):
@@ -58,7 +137,7 @@ class RegisterAPIView(APIView):
             purpose="register",
             expires_at=timezone.now() + timedelta(minutes=10),
         )
-        _send_code(email, code, "register")
+        _send_email_code(email, code, "register")
 
         return Response({"detail": "verification_sent"})
 
@@ -94,7 +173,7 @@ class VerifyEmailAPIView(APIView):
         user.save(update_fields=["is_active"])
 
         token, _ = Token.objects.get_or_create(user=user)
-        return Response({"token": token.key, "is_staff": user.is_staff, "email": user.email})
+        return Response(_auth_payload(user, token))
 
 
 class ResendCodeAPIView(APIView):
@@ -119,8 +198,104 @@ class ResendCodeAPIView(APIView):
             purpose="register",
             expires_at=timezone.now() + timedelta(minutes=10),
         )
-        _send_code(email, code, "register")
+        _send_email_code(email, code, "register")
         return Response({"detail": "verification_sent"})
+
+
+class PhoneRequestCodeAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        phone = _normalize_phone(request.data.get("phone"))
+        purpose = (request.data.get("purpose") or "login").strip()
+
+        if not phone:
+            return Response({"error": "invalid phone"}, status=status.HTTP_400_BAD_REQUEST)
+        if purpose not in {"verify_phone", "login", "reset"}:
+            return Response({"error": "invalid purpose"}, status=status.HTTP_400_BAD_REQUEST)
+        if _phone_code_too_frequent(phone, purpose):
+            return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        user = None
+        if purpose == "verify_phone":
+            if not request.user.is_authenticated:
+                return Response({"error": "auth_required"}, status=status.HTTP_401_UNAUTHORIZED)
+            owner = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).exclude(user=request.user).first()
+            if owner:
+                return Response({"error": "phone_already_used"}, status=status.HTTP_400_BAD_REQUEST)
+            user = request.user
+        elif purpose == "login":
+            prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+            if not prof:
+                return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
+            user = prof.user
+        else:
+            prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+            if not prof:
+                return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
+            user = prof.user
+
+        rec = _create_phone_code(phone, purpose, user=user)
+        sent = _send_sms_code(phone, rec.code, purpose)
+        data = {"detail": "code_sent", "channel": "sms"}
+        if settings.DEBUG and not sent:
+            data["debug_code"] = rec.code
+        return Response(data)
+
+
+class PhoneVerifyCodeAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        phone = _normalize_phone(request.data.get("phone"))
+        code = (request.data.get("code") or "").strip()
+        purpose = (request.data.get("purpose") or "login").strip()
+
+        if not phone or not code:
+            return Response({"error": "phone and code required"}, status=status.HTTP_400_BAD_REQUEST)
+        if purpose not in {"verify_phone", "login", "reset"}:
+            return Response({"error": "invalid purpose"}, status=status.HTTP_400_BAD_REQUEST)
+
+        rec = PhoneVerification.objects.filter(
+            phone_e164=phone,
+            purpose=purpose,
+            is_used=False,
+        ).order_by("-created_at").first()
+        if not rec or not rec.is_valid():
+            return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if rec.code != code:
+            rec.attempts += 1
+            rec.save(update_fields=["attempts"])
+            return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
+
+        rec.is_used = True
+        rec.save(update_fields=["is_used"])
+
+        if purpose == "verify_phone":
+            if not request.user.is_authenticated:
+                return Response({"error": "auth_required"}, status=status.HTTP_401_UNAUTHORIZED)
+            profile, _ = UserProfile.objects.get_or_create(user=request.user)
+            try:
+                profile.phone_e164 = phone
+                profile.phone_verified = True
+                profile.phone_verified_at = timezone.now()
+                profile.save(update_fields=["phone_e164", "phone_verified", "phone_verified_at"])
+            except IntegrityError:
+                return Response({"error": "phone_already_used"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "phone_verified", "phone": phone, "phone_verified": True})
+
+        if purpose == "reset":
+            return Response({"detail": "code_verified"})
+
+        profile = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+        if not profile:
+            return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
+        user = profile.user
+        if not user.is_active:
+            return Response({"error": "email_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response(_auth_payload(user, token))
 
 
 class ResetPasswordRequestAPIView(APIView):
@@ -128,8 +303,23 @@ class ResetPasswordRequestAPIView(APIView):
 
     def post(self, request):
         email = (request.data.get("email") or "").strip().lower()
-        if not email:
-            return Response({"error": "email required"}, status=status.HTTP_400_BAD_REQUEST)
+        phone = _normalize_phone(request.data.get("phone"))
+
+        if not email and not phone:
+            return Response({"error": "email or phone required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if phone:
+            if _phone_code_too_frequent(phone, "reset"):
+                return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+            if not prof:
+                return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
+            rec = _create_phone_code(phone, "reset", user=prof.user)
+            sent = _send_sms_code(phone, rec.code, "reset")
+            data = {"detail": "reset_code_sent", "channel": "sms"}
+            if settings.DEBUG and not sent:
+                data["debug_code"] = rec.code
+            return Response(data)
 
         user = User.objects.filter(username=email).first()
         if not user:
@@ -145,8 +335,8 @@ class ResetPasswordRequestAPIView(APIView):
             purpose="reset",
             expires_at=timezone.now() + timedelta(minutes=10),
         )
-        _send_code(email, code, "reset")
-        return Response({"detail": "reset_code_sent"})
+        _send_email_code(email, code, "reset")
+        return Response({"detail": "reset_code_sent", "channel": "email"})
 
 
 class ResetPasswordConfirmAPIView(APIView):
@@ -154,11 +344,34 @@ class ResetPasswordConfirmAPIView(APIView):
 
     def post(self, request):
         email = (request.data.get("email") or "").strip().lower()
+        phone = _normalize_phone(request.data.get("phone"))
         code = (request.data.get("code") or "").strip()
         new_password = request.data.get("new_password") or ""
 
-        if not email or not code or not new_password:
-            return Response({"error": "email, code, new_password required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not code or not new_password:
+            return Response({"error": "code and new_password required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if phone:
+            prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+            if not prof:
+                return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
+            rec = PhoneVerification.objects.filter(
+                phone_e164=phone,
+                purpose="reset",
+                code=code,
+                is_used=False,
+            ).order_by("-created_at").first()
+            if not rec or not rec.is_valid():
+                return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
+            rec.is_used = True
+            rec.save(update_fields=["is_used"])
+            user = prof.user
+            user.set_password(new_password)
+            user.save(update_fields=["password"])
+            return Response({"detail": "password_reset"})
+
+        if not email:
+            return Response({"error": "email or phone required"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.filter(username=email).first()
         if not user:
@@ -179,7 +392,6 @@ class ResetPasswordConfirmAPIView(APIView):
 
         user.set_password(new_password)
         user.save(update_fields=["password"])
-
         return Response({"detail": "password_reset"})
 
 
@@ -199,4 +411,12 @@ class LoginAPIView(APIView):
             return Response({"error": "invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
         token, _ = Token.objects.get_or_create(user=user)
-        return Response({"token": token.key, "is_staff": user.is_staff, "email": user.email})
+        return Response(_auth_payload(user, token))
+
+
+class MeAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        token, _ = Token.objects.get_or_create(user=request.user)
+        return Response(_auth_payload(request.user, token))

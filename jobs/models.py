@@ -180,3 +180,36 @@ class EmailVerification(models.Model):
         return f"EmailVerification {self.user.username} {self.purpose}"
 
 
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
+    phone_e164 = models.CharField(max_length=20, blank=True, null=True, unique=True)
+    phone_verified = models.BooleanField(default=False)
+    phone_verified_at = models.DateTimeField(blank=True, null=True)
+
+    def __str__(self):
+        return f"UserProfile {self.user.username}"
+
+
+class PhoneVerification(models.Model):
+    PURPOSE_CHOICES = [
+        ("verify_phone", "Verify phone"),
+        ("login", "Login"),
+        ("reset", "Reset password"),
+    ]
+
+    phone_e164 = models.CharField(max_length=20, db_index=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, blank=True, null=True)
+    code = models.CharField(max_length=6)
+    purpose = models.CharField(max_length=20, choices=PURPOSE_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+    attempts = models.PositiveSmallIntegerField(default=0)
+
+    def is_valid(self):
+        return (not self.is_used) and self.expires_at > timezone.now() and self.attempts < 5
+
+    def __str__(self):
+        return f"PhoneVerification {self.phone_e164} {self.purpose}"
+
+

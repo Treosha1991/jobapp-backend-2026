@@ -3,8 +3,9 @@ from django.conf import settings
 from django.core.mail import send_mail
 import secrets
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import ValidationError
 
-from .models import Vacancy
+from .models import Vacancy, UserProfile
 from .serializers import (
     VacancyListSerializer,
     VacancyDetailSerializer,
@@ -65,6 +66,9 @@ class VacancyCreateAPIView(generics.CreateAPIView):
         return response
 
     def perform_create(self, serializer):
+        profile = UserProfile.objects.filter(user=self.request.user).first()
+        if not profile or not profile.phone_verified:
+            raise ValidationError({"error": "phone_verification_required"})
         is_moderator = _is_moderator(self.request)
         token = secrets.token_hex(32)
         serializer.save(
