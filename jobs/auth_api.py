@@ -56,7 +56,7 @@ def _send_email_code(email, code, purpose="register"):
     send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=False)
 
 
-def _send_sms_code(phone_e164, code, purpose):
+def _send_whatsapp_code(phone_e164, code, purpose):
     if purpose == "reset":
         text = f"JobApp: password reset code {code}. Valid 10 minutes."
     elif purpose == "login":
@@ -66,14 +66,16 @@ def _send_sms_code(phone_e164, code, purpose):
 
     sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
     token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
-    from_phone = os.environ.get("TWILIO_FROM_NUMBER", "").strip()
+    from_phone = os.environ.get("TWILIO_WHATSAPP_FROM", "").strip() or os.environ.get("TWILIO_FROM_NUMBER", "").strip()
 
     if not sid or not token or not from_phone:
-        print(f"[SMS-DEV] {phone_e164}: {text}")
+        print(f"[WHATSAPP-DEV] {phone_e164}: {text}")
         return False
 
     url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-    payload = parse.urlencode({"To": phone_e164, "From": from_phone, "Body": text}).encode()
+    to_value = phone_e164 if phone_e164.startswith("whatsapp:") else f"whatsapp:{phone_e164}"
+    from_value = from_phone if from_phone.startswith("whatsapp:") else f"whatsapp:{from_phone}"
+    payload = parse.urlencode({"To": to_value, "From": from_value, "Body": text}).encode()
     auth = base64.b64encode(f"{sid}:{token}".encode()).decode()
     req = urllib_request.Request(url, data=payload, method="POST")
     req.add_header("Authorization", f"Basic {auth}")
@@ -82,7 +84,7 @@ def _send_sms_code(phone_e164, code, purpose):
         with urllib_request.urlopen(req, timeout=15):
             return True
     except Exception as exc:
-        print(f"[SMS-ERROR] {phone_e164}: {exc}")
+        print(f"[WHATSAPP-ERROR] {phone_e164}: {exc}")
         return False
 
 
@@ -244,12 +246,12 @@ class PhoneRequestCodeAPIView(APIView):
             user = prof.user
 
         rec = _create_phone_code(phone, purpose, user=user)
-        sent = _send_sms_code(phone, rec.code, purpose)
+        sent = _send_whatsapp_code(phone, rec.code, purpose)
         if not sent:
             if settings.DEBUG:
                 return Response({"detail": "code_sent", "channel": "debug", "debug_code": rec.code})
-            return Response({"error": "sms_delivery_failed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        return Response({"detail": "code_sent", "channel": "sms"})
+            return Response({"error": "whatsapp_delivery_failed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"detail": "code_sent", "channel": "whatsapp"})
 
 
 class PhoneVerifyCodeAPIView(APIView):
@@ -330,12 +332,12 @@ class ResetPasswordRequestAPIView(APIView):
             if not prof:
                 return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
             rec = _create_phone_code(phone, "reset", user=prof.user)
-            sent = _send_sms_code(phone, rec.code, "reset")
+            sent = _send_whatsapp_code(phone, rec.code, "reset")
             if not sent:
                 if settings.DEBUG:
                     return Response({"detail": "reset_code_sent", "channel": "debug", "debug_code": rec.code})
-                return Response({"error": "sms_delivery_failed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-            return Response({"detail": "reset_code_sent", "channel": "sms"})
+                return Response({"error": "whatsapp_delivery_failed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response({"detail": "reset_code_sent", "channel": "whatsapp"})
 
         user = User.objects.filter(username=email).first()
         if not user:
