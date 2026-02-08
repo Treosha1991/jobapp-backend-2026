@@ -1,9 +1,11 @@
 import base64
+import json
 import os
 import random
 import re
 from datetime import timedelta
 from urllib import parse, request as urllib_request
+from urllib.error import HTTPError
 
 from django.conf import settings
 from django.contrib.auth import authenticate
@@ -89,6 +91,72 @@ def _send_whatsapp_code(phone_e164, code, purpose):
             return True
     except Exception as exc:
         print(f"[WHATSAPP-ERROR] {phone_e164}: {exc}")
+        return False
+
+
+def _twilio_verify_service_sid():
+    return os.environ.get("TWILIO_VERIFY_SERVICE_SID", "").strip()
+
+
+def _twilio_credentials():
+    sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+    token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    return sid, token
+
+
+def _twilio_verify_start(phone_e164, channel="whatsapp"):
+    service_sid = _twilio_verify_service_sid()
+    sid, token = _twilio_credentials()
+    if not service_sid or not sid or not token:
+        return False
+
+    url = f"https://verify.twilio.com/v2/Services/{service_sid}/Verifications"
+    payload = parse.urlencode({"To": phone_e164, "Channel": channel}).encode()
+    auth = base64.b64encode(f"{sid}:{token}".encode()).decode()
+    req = urllib_request.Request(url, data=payload, method="POST")
+    req.add_header("Authorization", f"Basic {auth}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib_request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            return body.get("status") in {"pending", "approved"}
+    except HTTPError as exc:
+        try:
+            details = exc.read().decode("utf-8")
+        except Exception:
+            details = str(exc)
+        print(f"[TWILIO-VERIFY-START-ERROR] {phone_e164}: {details}")
+        return False
+    except Exception as exc:
+        print(f"[TWILIO-VERIFY-START-ERROR] {phone_e164}: {exc}")
+        return False
+
+
+def _twilio_verify_check(phone_e164, code):
+    service_sid = _twilio_verify_service_sid()
+    sid, token = _twilio_credentials()
+    if not service_sid or not sid or not token:
+        return False
+
+    url = f"https://verify.twilio.com/v2/Services/{service_sid}/VerificationCheck"
+    payload = parse.urlencode({"To": phone_e164, "Code": code}).encode()
+    auth = base64.b64encode(f"{sid}:{token}".encode()).decode()
+    req = urllib_request.Request(url, data=payload, method="POST")
+    req.add_header("Authorization", f"Basic {auth}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib_request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            return body.get("status") == "approved"
+    except HTTPError as exc:
+        try:
+            details = exc.read().decode("utf-8")
+        except Exception:
+            details = str(exc)
+        print(f"[TWILIO-VERIFY-CHECK-ERROR] {phone_e164}: {details}")
+        return False
+    except Exception as exc:
+        print(f"[TWILIO-VERIFY-CHECK-ERROR] {phone_e164}: {exc}")
         return False
 
 
@@ -249,7 +317,15 @@ class PhoneRequestCodeAPIView(APIView):
                 return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
             user = prof.user
 
+        # Keep local record for throttling/audit even when Twilio Verify is used.
         rec = _create_phone_code(phone, purpose, user=user)
+
+        if _twilio_verify_service_sid():
+            sent = _twilio_verify_start(phone, channel="whatsapp")
+            if not sent:
+                return Response({"error": "whatsapp_delivery_failed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response({"detail": "code_sent", "channel": "whatsapp"})
+
         sent = _send_whatsapp_code(phone, rec.code, purpose)
         if not sent:
             if settings.DEBUG:
@@ -276,16 +352,22 @@ class PhoneVerifyCodeAPIView(APIView):
             purpose=purpose,
             is_used=False,
         ).order_by("-created_at").first()
-        if not rec or not rec.is_valid():
-            return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if rec.code != code:
-            rec.attempts += 1
-            rec.save(update_fields=["attempts"])
-            return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
-
-        rec.is_used = True
-        rec.save(update_fields=["is_used"])
+        if _twilio_verify_service_sid():
+            if not _twilio_verify_check(phone, code):
+                return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
+            if rec:
+                rec.is_used = True
+                rec.save(update_fields=["is_used"])
+        else:
+            if not rec or not rec.is_valid():
+                return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
+            if rec.code != code:
+                rec.attempts += 1
+                rec.save(update_fields=["attempts"])
+                return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
+            rec.is_used = True
+            rec.save(update_fields=["is_used"])
 
         if purpose == "verify_phone":
             if not request.user.is_authenticated:
