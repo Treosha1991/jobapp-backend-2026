@@ -1,6 +1,7 @@
 from django.utils import timezone
 from django.conf import settings
 from django.core.mail import send_mail
+from django.db.models import Case, IntegerField, Q, Value, When
 import secrets
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
@@ -76,6 +77,8 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             is_approved=is_moderator,
             is_rejected=False,
             rejection_reason="",
+            is_editing=False,
+            editing_started_at=None,
             creator_token=token,
             expires_at=timezone.now() + timedelta(days=30),
         )
@@ -184,7 +187,13 @@ class VacancyPendingListAPIView(generics.ListAPIView):
     permission_classes = [IsModerator]
 
     def get_queryset(self):
-        return Vacancy.objects.filter(is_approved=False).order_by("-published_at")
+        return Vacancy.objects.filter(
+            is_approved=False,
+            is_rejected=False,
+            is_editing=False,
+        ).filter(
+            Q(rejection_reason="") | Q(rejection_reason__isnull=True)
+        ).order_by("-published_at")
 
 
 class VacancyApproveAPIView(APIView):
@@ -192,10 +201,22 @@ class VacancyApproveAPIView(APIView):
 
     def post(self, request, pk):
         vacancy = Vacancy.objects.get(pk=pk)
+        if vacancy.is_editing:
+            return Response({"error": "vacancy_editing"}, status=409)
         vacancy.is_approved = True
         vacancy.is_rejected = False
         vacancy.rejection_reason = ""
-        vacancy.save(update_fields=["is_approved", "is_rejected", "rejection_reason"])
+        vacancy.is_editing = False
+        vacancy.editing_started_at = None
+        vacancy.save(
+            update_fields=[
+                "is_approved",
+                "is_rejected",
+                "rejection_reason",
+                "is_editing",
+                "editing_started_at",
+            ]
+        )
         return Response({"detail": "approved"}, status=200)
 
 
@@ -204,11 +225,23 @@ class VacancyRejectAPIView(APIView):
 
     def post(self, request, pk):
         vacancy = Vacancy.objects.get(pk=pk)
+        if vacancy.is_editing:
+            return Response({"error": "vacancy_editing"}, status=409)
         reason = request.data.get("reason", "").strip()
         vacancy.is_approved = False
         vacancy.is_rejected = True
         vacancy.rejection_reason = reason
-        vacancy.save(update_fields=["is_approved", "is_rejected", "rejection_reason"])
+        vacancy.is_editing = False
+        vacancy.editing_started_at = None
+        vacancy.save(
+            update_fields=[
+                "is_approved",
+                "is_rejected",
+                "rejection_reason",
+                "is_editing",
+                "editing_started_at",
+            ]
+        )
         return Response({"detail": "rejected"}, status=200)
 
 
@@ -220,7 +253,17 @@ class VacancyResubmitAPIView(APIView):
         vacancy.is_approved = False
         vacancy.is_rejected = False
         vacancy.rejection_reason = ""
-        vacancy.save(update_fields=["is_approved", "is_rejected", "rejection_reason"])
+        vacancy.is_editing = False
+        vacancy.editing_started_at = None
+        vacancy.save(
+            update_fields=[
+                "is_approved",
+                "is_rejected",
+                "rejection_reason",
+                "is_editing",
+                "editing_started_at",
+            ]
+        )
         return Response({"detail": "resubmitted"}, status=200)
 
 
@@ -229,7 +272,18 @@ class VacancyMineAPIView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Vacancy.objects.filter(created_by=self.request.user).order_by("-published_at")
+        return (
+            Vacancy.objects.filter(created_by=self.request.user)
+            .annotate(
+                bucket_order=Case(
+                    When(is_approved=True, then=Value(2)),
+                    When(is_rejected=True, then=Value(1)),
+                    default=Value(0),  # pending + editing
+                    output_field=IntegerField(),
+                )
+            )
+            .order_by("bucket_order", "-published_at")
+        )
 
 
 class VacancyEditAPIView(APIView):
@@ -243,7 +297,13 @@ class VacancyEditAPIView(APIView):
         data = request.data.copy()
         serializer = VacancyCreateSerializer(vacancy, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save(is_approved=False, is_rejected=False, rejection_reason="")
+        serializer.save(
+            is_approved=False,
+            is_rejected=False,
+            rejection_reason="",
+            is_editing=True,
+            editing_started_at=timezone.now(),
+        )
         return Response(serializer.data, status=200)
 
 

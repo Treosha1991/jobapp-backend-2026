@@ -115,6 +115,18 @@ class Vacancy(models.Model):
     is_approved = models.BooleanField(default=False)
     is_rejected = models.BooleanField(default=False)
     rejection_reason = models.TextField(blank=True)
+    is_editing = models.BooleanField(default=False)
+    editing_started_at = models.DateTimeField(blank=True, null=True)
+
+    @property
+    def moderation_status(self):
+        if self.is_editing:
+            return "editing"
+        if self.is_approved:
+            return "approved"
+        if self.is_rejected:
+            return "rejected"
+        return "pending"
 
     def is_active(self):
         return self.expires_at > timezone.now()

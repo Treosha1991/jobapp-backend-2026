@@ -136,6 +136,11 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
 
 class VacancyMineSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
+    moderation_status = serializers.SerializerMethodField()
+    bucket = serializers.SerializerMethodField()
+    status_label_key = serializers.SerializerMethodField()
+    rejection_reason_code = serializers.SerializerMethodField()
+    rejection_reason_comment = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -157,6 +162,13 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "is_approved",
             "is_rejected",
             "rejection_reason",
+            "is_editing",
+            "editing_started_at",
+            "moderation_status",
+            "bucket",
+            "status_label_key",
+            "rejection_reason_code",
+            "rejection_reason_comment",
         ]
 
     def get_contacts(self, obj):
@@ -167,6 +179,38 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "email": obj.email or "",
             "viber": obj.viber or "",
         }
+
+    def get_moderation_status(self, obj):
+        return obj.moderation_status
+
+    def get_bucket(self, obj):
+        if obj.is_approved:
+            return "approved"
+        if obj.is_rejected:
+            return "rejected"
+        return "pending"
+
+    def get_status_label_key(self, obj):
+        if obj.is_editing:
+            return "statusEditing"
+        if obj.is_approved:
+            return "statusApproved"
+        if obj.is_rejected:
+            return "statusRejected"
+        return "statusPending"
+
+    def get_rejection_reason_code(self, obj):
+        raw = (obj.rejection_reason or "").strip()
+        if not raw:
+            return ""
+        parts = raw.split(":", 1)
+        return parts[0].strip()
+
+    def get_rejection_reason_comment(self, obj):
+        raw = (obj.rejection_reason or "").strip()
+        if not raw or ":" not in raw:
+            return ""
+        return raw.split(":", 1)[1].strip()
 
 class VacancyContactSerializer(serializers.ModelSerializer):
     class Meta:
