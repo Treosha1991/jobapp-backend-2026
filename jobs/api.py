@@ -78,7 +78,8 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             is_rejected=False,
             rejection_reason="",
             is_editing=False,
-            editing_started_at=None,
+            # Reuse this field as "submitted_at" for moderation visibility delay.
+            editing_started_at=timezone.now(),
             creator_token=token,
             expires_at=timezone.now() + timedelta(days=30),
         )
@@ -187,10 +188,13 @@ class VacancyPendingListAPIView(generics.ListAPIView):
     permission_classes = [IsModerator]
 
     def get_queryset(self):
+        visible_after = timezone.now() - timedelta(seconds=60)
         return Vacancy.objects.filter(
             is_approved=False,
             is_rejected=False,
             is_editing=False,
+        ).filter(
+            Q(editing_started_at__isnull=True) | Q(editing_started_at__lte=visible_after)
         ).filter(
             Q(rejection_reason="") | Q(rejection_reason__isnull=True)
         ).order_by("-published_at")
@@ -295,15 +299,27 @@ class VacancyEditAPIView(APIView):
             return Response({"error": "invalid token"}, status=status.HTTP_403_FORBIDDEN)
 
         data = request.data.copy()
+        submit_raw = str(data.pop("submit", "")).lower()
+        submit_for_moderation = submit_raw in ("1", "true", "yes", "on")
         serializer = VacancyCreateSerializer(vacancy, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save(
-            is_approved=False,
-            is_rejected=False,
-            rejection_reason="",
-            is_editing=True,
-            editing_started_at=timezone.now(),
-        )
+        if submit_for_moderation:
+            serializer.save(
+                is_approved=False,
+                is_rejected=False,
+                rejection_reason="",
+                is_editing=False,
+                # Marks resubmission time; pending list applies 60s delay.
+                editing_started_at=timezone.now(),
+            )
+        else:
+            serializer.save(
+                is_approved=False,
+                is_rejected=False,
+                rejection_reason="",
+                is_editing=True,
+                editing_started_at=timezone.now(),
+            )
         return Response(serializer.data, status=200)
 
 
