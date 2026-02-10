@@ -169,7 +169,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
 
         _check_len("title", 30)
         _check_len("city", 20)
-        _check_len("salary", 20)
+        _check_len("salary", 80)
         _check_len("phone", 15)
         _check_len("telegram", 15)
         _check_len("whatsapp", 15)
