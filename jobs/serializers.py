@@ -68,6 +68,12 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "viber": obj.viber or "",
         }
 
+    def get_salary_monthly_from(self, obj):
+        return _salary_monthly_from(obj)
+
+    def get_salary_monthly_to(self, obj):
+        return _salary_monthly_to(obj)
+
 class VacancyDetailSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
@@ -107,6 +113,12 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "email": obj.email or "",
             "viber": obj.viber or "",
         }
+
+    def get_salary_monthly_from(self, obj):
+        return _salary_monthly_from(obj)
+
+    def get_salary_monthly_to(self, obj):
+        return _salary_monthly_to(obj)
 
 class VacancyCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -296,12 +308,6 @@ class VacancyMineSerializer(serializers.ModelSerializer):
     def get_salary_monthly_to(self, obj):
         return _salary_monthly_to(obj)
 
-    def get_salary_monthly_from(self, obj):
-        return _salary_monthly_from(obj)
-
-    def get_salary_monthly_to(self, obj):
-        return _salary_monthly_to(obj)
-
     def get_moderation_status(self, obj):
         return obj.moderation_status
 
@@ -333,12 +339,6 @@ class VacancyMineSerializer(serializers.ModelSerializer):
         if not raw or ":" not in raw:
             return ""
         return raw.split(":", 1)[1].strip()
-
-    def get_salary_monthly_from(self, obj):
-        return _salary_monthly_from(obj)
-
-    def get_salary_monthly_to(self, obj):
-        return _salary_monthly_to(obj)
 
 class VacancyContactSerializer(serializers.ModelSerializer):
     class Meta:
