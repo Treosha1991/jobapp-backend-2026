@@ -3,8 +3,35 @@ import re
 from .models import Vacancy
 
 
+def _to_int_or_none(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _salary_monthly_from(obj):
+    salary_from = _to_int_or_none(getattr(obj, "salary_from", None))
+    hours = _to_int_or_none(getattr(obj, "salary_hours_month", None))
+    if salary_from is None or hours is None:
+        return None
+    return salary_from * hours
+
+
+def _salary_monthly_to(obj):
+    salary_to = _to_int_or_none(getattr(obj, "salary_to", None))
+    hours = _to_int_or_none(getattr(obj, "salary_hours_month", None))
+    if salary_to is None or hours is None:
+        return None
+    return salary_to * hours
+
+
 class VacancyListSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
+    salary_monthly_from = serializers.SerializerMethodField()
+    salary_monthly_to = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -17,6 +44,13 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "employment_type",
             "experience_required",
             "salary",
+            "salary_from",
+            "salary_to",
+            "salary_currency",
+            "salary_tax_type",
+            "salary_hours_month",
+            "salary_monthly_from",
+            "salary_monthly_to",
             "description",
             "housing_type",
             "housing_cost",
@@ -36,6 +70,8 @@ class VacancyListSerializer(serializers.ModelSerializer):
 
 class VacancyDetailSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
+    salary_monthly_from = serializers.SerializerMethodField()
+    salary_monthly_to = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -48,6 +84,13 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "employment_type",
             "experience_required",
             "salary",
+            "salary_from",
+            "salary_to",
+            "salary_currency",
+            "salary_tax_type",
+            "salary_hours_month",
+            "salary_monthly_from",
+            "salary_monthly_to",
             "description",
             "housing_type",
             "housing_cost",
@@ -76,6 +119,11 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "employment_type",
             "experience_required",
             "salary",
+            "salary_from",
+            "salary_to",
+            "salary_currency",
+            "salary_tax_type",
+            "salary_hours_month",
             "description",
             "housing_type",
             "housing_cost",
@@ -88,6 +136,14 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "creator_token",
         ]
         read_only_fields = ["creator_token"]
+        extra_kwargs = {
+            "salary": {"required": False, "allow_blank": True},
+            "salary_from": {"required": False, "allow_null": True},
+            "salary_to": {"required": False, "allow_null": True},
+            "salary_currency": {"required": False, "allow_blank": True},
+            "salary_tax_type": {"required": False, "allow_blank": True},
+            "salary_hours_month": {"required": False, "allow_null": True},
+        }
 
     def validate(self, attrs):
         errors = {}
@@ -129,6 +185,51 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
                 errors["email"] = "invalid email"
 
+        salary_from = attrs.get("salary_from")
+        salary_to = attrs.get("salary_to")
+        salary_currency = (attrs.get("salary_currency") or "").strip()
+        salary_tax_type = (attrs.get("salary_tax_type") or "").strip()
+        salary_hours_month = attrs.get("salary_hours_month")
+        salary_text = (attrs.get("salary") or "").strip()
+
+        structured_used = any(
+            x not in (None, "", [])
+            for x in [salary_from, salary_to, salary_currency, salary_tax_type, salary_hours_month]
+        )
+
+        if structured_used:
+            if salary_from is None and salary_to is None:
+                errors["salary_from"] = "required salary from/to"
+
+            if salary_from is not None and (salary_from < 1 or salary_from > 99):
+                errors["salary_from"] = "must be in range 1..99"
+            if salary_to is not None and (salary_to < 1 or salary_to > 99):
+                errors["salary_to"] = "must be in range 1..99"
+            if salary_from is not None and salary_to is not None and salary_from > salary_to:
+                errors["salary_to"] = "must be greater or equal salary_from"
+
+            if not salary_currency:
+                errors["salary_currency"] = "required"
+            if not salary_tax_type:
+                errors["salary_tax_type"] = "required"
+
+            if salary_hours_month is None:
+                errors["salary_hours_month"] = "required"
+            elif salary_hours_month < 1 or salary_hours_month > 300:
+                errors["salary_hours_month"] = "must be in range 1..300"
+
+            if not errors:
+                if salary_from is not None and salary_to is not None:
+                    range_text = f"from {salary_from} to {salary_to}"
+                elif salary_from is not None:
+                    range_text = f"from {salary_from}"
+                else:
+                    range_text = f"to {salary_to}"
+                attrs["salary"] = f"{range_text} {salary_currency} {salary_tax_type}"
+        else:
+            if not salary_text:
+                errors["salary"] = "required"
+
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
@@ -141,6 +242,8 @@ class VacancyMineSerializer(serializers.ModelSerializer):
     status_label_key = serializers.SerializerMethodField()
     rejection_reason_code = serializers.SerializerMethodField()
     rejection_reason_comment = serializers.SerializerMethodField()
+    salary_monthly_from = serializers.SerializerMethodField()
+    salary_monthly_to = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -153,6 +256,13 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "employment_type",
             "experience_required",
             "salary",
+            "salary_from",
+            "salary_to",
+            "salary_currency",
+            "salary_tax_type",
+            "salary_hours_month",
+            "salary_monthly_from",
+            "salary_monthly_to",
             "description",
             "housing_type",
             "housing_cost",
@@ -179,6 +289,18 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "email": obj.email or "",
             "viber": obj.viber or "",
         }
+
+    def get_salary_monthly_from(self, obj):
+        return _salary_monthly_from(obj)
+
+    def get_salary_monthly_to(self, obj):
+        return _salary_monthly_to(obj)
+
+    def get_salary_monthly_from(self, obj):
+        return _salary_monthly_from(obj)
+
+    def get_salary_monthly_to(self, obj):
+        return _salary_monthly_to(obj)
 
     def get_moderation_status(self, obj):
         return obj.moderation_status
@@ -211,6 +333,12 @@ class VacancyMineSerializer(serializers.ModelSerializer):
         if not raw or ":" not in raw:
             return ""
         return raw.split(":", 1)[1].strip()
+
+    def get_salary_monthly_from(self, obj):
+        return _salary_monthly_from(obj)
+
+    def get_salary_monthly_to(self, obj):
+        return _salary_monthly_to(obj)
 
 class VacancyContactSerializer(serializers.ModelSerializer):
     class Meta:

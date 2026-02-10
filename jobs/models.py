@@ -82,6 +82,28 @@ class Vacancy(models.Model):
         ("none", "None"),
     ]
 
+    SALARY_CURRENCY_CHOICES = [
+        ("EUR", "EUR"),
+        ("PLN", "PLN"),
+        ("USD", "USD"),
+        ("CAD", "CAD"),
+        ("CHF", "CHF"),
+        ("GBP", "GBP"),
+        ("UAH", "UAH"),
+        ("BYN", "BYN"),
+        ("CZK", "CZK"),
+        ("HUF", "HUF"),
+        ("RON", "RON"),
+        ("BGN", "BGN"),
+        ("SEK", "SEK"),
+        ("DKK", "DKK"),
+    ]
+
+    SALARY_TAX_TYPE_CHOICES = [
+        ("brutto", "Brutto"),
+        ("netto", "Netto"),
+    ]
+
 
     # Основное
     title = models.CharField(max_length=120)
@@ -91,6 +113,19 @@ class Vacancy(models.Model):
     employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES)
     experience_required = models.CharField(max_length=10, choices=EXPERIENCE_CHOICES, default="without")
     salary = models.CharField(max_length=80)
+    salary_from = models.PositiveSmallIntegerField(blank=True, null=True)
+    salary_to = models.PositiveSmallIntegerField(blank=True, null=True)
+    salary_currency = models.CharField(
+        max_length=3,
+        choices=SALARY_CURRENCY_CHOICES,
+        blank=True,
+    )
+    salary_tax_type = models.CharField(
+        max_length=6,
+        choices=SALARY_TAX_TYPE_CHOICES,
+        blank=True,
+    )
+    salary_hours_month = models.PositiveSmallIntegerField(blank=True, null=True)
     description = models.TextField(max_length=3000)
 
     # Контакты (скрытые)
