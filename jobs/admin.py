@@ -1,5 +1,29 @@
 from django.contrib import admin
+from django.contrib.admin.sites import NotRegistered
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import User
 from .models import Vacancy, UserProfile, PhoneVerification, EmailVerification
+
+
+try:
+    admin.site.unregister(User)
+except NotRegistered:
+    pass
+
+
+@admin.register(User)
+class UserAdmin(BaseUserAdmin):
+    list_display = BaseUserAdmin.list_display + ("phone_e164",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("profile")
+
+    @admin.display(description="Phone")
+    def phone_e164(self, obj):
+        profile = getattr(obj, "profile", None)
+        if not profile or not profile.phone_e164:
+            return "—"
+        return profile.phone_e164
 
 
 @admin.register(Vacancy)
