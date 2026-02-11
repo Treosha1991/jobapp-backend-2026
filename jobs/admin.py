@@ -13,17 +13,17 @@ except NotRegistered:
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = BaseUserAdmin.list_display + ("phone_e164",)
+    list_display = ("username", "email_with_phone", "first_name", "last_name", "is_staff")
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related("profile")
 
-    @admin.display(description="Phone")
-    def phone_e164(self, obj):
+    @admin.display(description="Email / Phone")
+    def email_with_phone(self, obj):
         profile = getattr(obj, "profile", None)
-        if not profile or not profile.phone_e164:
-            return "—"
-        return profile.phone_e164
+        phone = profile.phone_e164 if profile and profile.phone_e164 else "-"
+        email = obj.email or "-"
+        return f"{email} | {phone}"
 
 
 @admin.register(Vacancy)
