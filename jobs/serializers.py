@@ -126,6 +126,10 @@ class VacancyModerationSerializer(VacancyListSerializer):
         baseline = getattr(obj, "moderation_baseline", None) or {}
         if not isinstance(baseline, dict):
             return []
+        if not baseline:
+            return []
+        if not any(field in baseline for field in _MODERATION_COMPARISON_FIELDS):
+            return []
 
         changed = []
         for field in _MODERATION_COMPARISON_FIELDS:

@@ -6,10 +6,13 @@ from django.utils.dateparse import parse_date
 import secrets
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .models import Complaint, ComplaintActionLog, Vacancy, UserProfile
+from .models import Complaint, ComplaintActionLog, Vacancy, UserProfile, UnlockedContact
 from .serializers import (
     ComplaintListSerializer,
+    VacancyContactSerializer,
     VacancyListSerializer,
     VacancyModerationSerializer,
     VacancyDetailSerializer,
@@ -24,6 +27,7 @@ class VacancyListAPIView(generics.ListAPIView):
     def get_queryset(self):
         qs = Vacancy.objects.filter(
             is_approved=True,
+            is_deleted_by_moderator=False,
             expires_at__gt=timezone.now()
         ).order_by("-published_at")
 
@@ -59,11 +63,17 @@ class VacancyListAPIView(generics.ListAPIView):
         return qs
 
 
-class VacancyDetailAPIView(generics.RetrieveAPIView):
-    serializer_class = VacancyDetailSerializer
-
-    def get_queryset(self):
-        return Vacancy.objects.filter(is_approved=True, expires_at__gt=timezone.now())
+class VacancyDetailAPIView(APIView):
+    def get(self, request, pk):
+        vacancy = Vacancy.objects.filter(pk=pk).first()
+        if not vacancy:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        if not vacancy.is_approved or vacancy.expires_at <= timezone.now():
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = VacancyDetailSerializer(vacancy)
+        return Response(serializer.data, status=200)
 
 
 class VacancyCreateAPIView(generics.CreateAPIView):
@@ -94,11 +104,6 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             expires_at=timezone.now() + timedelta(days=30),
         )
 
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from .models import UnlockedContact
-from .serializers import VacancyContactSerializer
-
 def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff
 
@@ -128,6 +133,17 @@ def _vacancy_editable_snapshot(vacancy):
     }
 
 
+def _vacancy_moderation_state_snapshot(vacancy):
+    return {
+        "is_approved": bool(vacancy.is_approved),
+        "is_rejected": bool(vacancy.is_rejected),
+        "is_editing": bool(vacancy.is_editing),
+        "rejection_reason": vacancy.rejection_reason or "",
+        "last_moderator_rejection_reason": vacancy.last_moderator_rejection_reason or "",
+        "moderation_baseline": vacancy.moderation_baseline or {},
+    }
+
+
 def _notify_vacancy_owner_about_complaint_action(
     *,
     vacancy,
@@ -142,7 +158,7 @@ def _notify_vacancy_owner_about_complaint_action(
         return False, "owner_email_missing"
 
     action_title = {
-        "hide": "hidden from feed",
+        "delete_forever": "deleted forever",
         "reject": "rejected",
         "restore": "restored",
     }.get(action, action)
@@ -219,6 +235,8 @@ class VacancyContactAPIView(APIView):
 
     def get(self, request, pk):
         vacancy = Vacancy.objects.get(pk=pk)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
 
         unlocked = UnlockedContact.objects.filter(
             user=request.user,
@@ -254,6 +272,8 @@ class VacancyUnlockRequestAPIView(APIView):
 
     def post(self, request, pk):
         vacancy = Vacancy.objects.get(pk=pk)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
 
         # если уже открыто — сразу вернём "already_unlocked"
         if UnlockedContact.objects.filter(user=request.user, vacancy=vacancy).exists():
@@ -274,6 +294,8 @@ class VacancyUnlockConfirmAPIView(APIView):
 
     def post(self, request, pk):
         vacancy = Vacancy.objects.get(pk=pk)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         token = request.data.get("unlock_token")
 
         if not token:
@@ -311,6 +333,7 @@ class VacancyPendingListAPIView(generics.ListAPIView):
             is_approved=False,
             is_rejected=False,
             is_editing=False,
+            is_deleted_by_moderator=False,
         ).filter(
             Q(editing_started_at__isnull=True) | Q(editing_started_at__lte=visible_after)
         ).filter(
@@ -334,6 +357,8 @@ class VacancyApproveAPIView(APIView):
 
     def post(self, request, pk):
         vacancy = Vacancy.objects.get(pk=pk)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         if vacancy.is_editing:
             return Response({"error": "vacancy_editing"}, status=409)
         vacancy.is_approved = True
@@ -362,6 +387,8 @@ class VacancyRejectAPIView(APIView):
 
     def post(self, request, pk):
         vacancy = Vacancy.objects.get(pk=pk)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         if vacancy.is_editing:
             return Response({"error": "vacancy_editing"}, status=409)
         reason = request.data.get("reason", "").strip()
@@ -396,6 +423,8 @@ class VacancyResubmitAPIView(APIView):
 
     def post(self, request, pk):
         vacancy = Vacancy.objects.get(pk=pk)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         vacancy.is_approved = False
         vacancy.is_rejected = False
         vacancy.rejection_reason = ""
@@ -419,7 +448,10 @@ class VacancyMineAPIView(generics.ListAPIView):
 
     def get_queryset(self):
         return (
-            Vacancy.objects.filter(created_by=self.request.user)
+            Vacancy.objects.filter(
+                created_by=self.request.user,
+                is_deleted_by_moderator=False,
+            )
             .annotate(
                 bucket_order=Case(
                     When(is_approved=True, then=Value(2)),
@@ -439,6 +471,8 @@ class VacancyEditAPIView(APIView):
         vacancy = Vacancy.objects.get(pk=pk)
         if vacancy.created_by_id != request.user.id:
             return Response({"error": "invalid token"}, status=status.HTTP_403_FORBIDDEN)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
 
         data = request.data.copy()
         submit_raw = str(data.pop("submit", "")).lower()
@@ -482,6 +516,8 @@ class ComplaintAPIView(APIView):
         vacancy = Vacancy.objects.filter(id=vacancy_id).first()
         if not vacancy:
             return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
 
         allowed_reasons = {code for code, _ in Complaint.REASON_CHOICES}
         if reason not in allowed_reasons:
@@ -618,6 +654,12 @@ class ComplaintModerationActionAPIView(APIView):
             "is_rejected": bool(vacancy.is_rejected),
             "is_editing": bool(vacancy.is_editing),
             "rejection_reason": vacancy.rejection_reason or "",
+            "is_deleted_by_moderator": bool(vacancy.is_deleted_by_moderator),
+            "deleted_by_moderator_at": (
+                vacancy.deleted_by_moderator_at.isoformat()
+                if vacancy.deleted_by_moderator_at
+                else ""
+            ),
         }
 
     @staticmethod
@@ -648,15 +690,19 @@ class ComplaintModerationActionAPIView(APIView):
         vacancy = complaint.vacancy
         before_state = self._snapshot(vacancy)
 
-        if action == "hide":
+        if action == "delete_forever":
             action_reason = note or complaint.reason
-            vacancy.moderation_baseline = _vacancy_editable_snapshot(vacancy)
-            vacancy.last_moderator_rejection_reason = action_reason
+            if not vacancy.is_deleted_by_moderator:
+                vacancy.moderator_deleted_state = _vacancy_moderation_state_snapshot(vacancy)
             vacancy.is_approved = False
-            vacancy.is_rejected = False
+            vacancy.is_rejected = True
             vacancy.is_editing = False
-            vacancy.rejection_reason = ""
+            vacancy.rejection_reason = action_reason
+            vacancy.moderation_baseline = {}
+            vacancy.last_moderator_rejection_reason = action_reason
             vacancy.editing_started_at = None
+            vacancy.is_deleted_by_moderator = True
+            vacancy.deleted_by_moderator_at = timezone.now()
         elif action == "reject":
             action_reason = reject_reason or note or complaint.reason
             vacancy.moderation_baseline = _vacancy_editable_snapshot(vacancy)
@@ -666,14 +712,32 @@ class ComplaintModerationActionAPIView(APIView):
             vacancy.is_editing = False
             vacancy.rejection_reason = action_reason
             vacancy.editing_started_at = None
+            vacancy.is_deleted_by_moderator = False
+            vacancy.moderator_deleted_state = {}
+            vacancy.deleted_by_moderator_at = None
         elif action == "restore":
-            vacancy.is_approved = True
-            vacancy.is_rejected = False
-            vacancy.is_editing = False
-            vacancy.rejection_reason = ""
-            vacancy.last_moderator_rejection_reason = ""
-            vacancy.moderation_baseline = {}
+            deleted_state = vacancy.moderator_deleted_state or {}
+            if vacancy.is_deleted_by_moderator and isinstance(deleted_state, dict) and deleted_state:
+                vacancy.is_approved = bool(deleted_state.get("is_approved", False))
+                vacancy.is_rejected = bool(deleted_state.get("is_rejected", False))
+                vacancy.is_editing = bool(deleted_state.get("is_editing", False))
+                vacancy.rejection_reason = (deleted_state.get("rejection_reason") or "").strip()
+                vacancy.last_moderator_rejection_reason = (
+                    deleted_state.get("last_moderator_rejection_reason") or ""
+                ).strip()
+                baseline = deleted_state.get("moderation_baseline")
+                vacancy.moderation_baseline = baseline if isinstance(baseline, dict) else {}
+            else:
+                vacancy.is_approved = True
+                vacancy.is_rejected = False
+                vacancy.is_editing = False
+                vacancy.rejection_reason = ""
+                vacancy.last_moderator_rejection_reason = ""
+                vacancy.moderation_baseline = {}
             vacancy.editing_started_at = None
+            vacancy.is_deleted_by_moderator = False
+            vacancy.moderator_deleted_state = {}
+            vacancy.deleted_by_moderator_at = None
 
         vacancy.save(
             update_fields=[
@@ -684,6 +748,9 @@ class ComplaintModerationActionAPIView(APIView):
                 "last_moderator_rejection_reason",
                 "moderation_baseline",
                 "editing_started_at",
+                "is_deleted_by_moderator",
+                "moderator_deleted_state",
+                "deleted_by_moderator_at",
             ]
         )
         after_state = self._snapshot(vacancy)

@@ -155,6 +155,11 @@ class Vacancy(models.Model):
     moderation_baseline = models.JSONField(default=dict, blank=True)
     # Human-readable reason from previous moderator action for resubmissions.
     last_moderator_rejection_reason = models.TextField(blank=True)
+    # Soft-delete flag controlled only by moderators.
+    is_deleted_by_moderator = models.BooleanField(default=False)
+    # Snapshot of moderation state before moderator delete for restore action.
+    moderator_deleted_state = models.JSONField(default=dict, blank=True)
+    deleted_by_moderator_at = models.DateTimeField(blank=True, null=True)
     is_editing = models.BooleanField(default=False)
     editing_started_at = models.DateTimeField(blank=True, null=True)
 
@@ -318,7 +323,7 @@ class Complaint(models.Model):
 
 class ComplaintActionLog(models.Model):
     ACTION_CHOICES = [
-        ("hide", "Hide vacancy"),
+        ("delete_forever", "Delete vacancy forever"),
         ("reject", "Reject vacancy"),
         ("restore", "Restore vacancy"),
     ]
