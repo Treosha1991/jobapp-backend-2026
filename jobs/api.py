@@ -147,6 +147,36 @@ def _notify_vacancy_owner_about_complaint_action(
         return False, str(exc)
 
 
+def _notify_vacancy_owner_about_reject(*, vacancy, moderator, reason=""):
+    owner_email = (getattr(vacancy.created_by, "email", "") or "").strip()
+    if not owner_email:
+        return False, "owner_email_missing"
+
+    subject = f"JobHub moderation: vacancy #{vacancy.id} rejected"
+    body_lines = [
+        f"Vacancy ID: {vacancy.id}",
+        f"Title: {vacancy.title}",
+        f"Action: rejected",
+        f"Moderator: {moderator.email or moderator.username}",
+        f"Reason: {reason or '-'}",
+        "",
+        f"Support: {getattr(settings, 'SUPPORT_EMAIL', settings.DEFAULT_FROM_EMAIL)}",
+    ]
+
+    try:
+        send_mail(
+            subject,
+            "\n".join(body_lines),
+            settings.DEFAULT_FROM_EMAIL,
+            [owner_email],
+            fail_silently=False,
+        )
+        return True, ""
+    except Exception as exc:
+        print(f"[VACANCY-REJECT-NOTIFY-ERROR] vacancy={vacancy.id}: {exc}")
+        return False, str(exc)
+
+
 class IsModerator(permissions.BasePermission):
     def has_permission(self, request, view):
         return _is_moderator(request)
@@ -300,6 +330,11 @@ class VacancyRejectAPIView(APIView):
                 "is_editing",
                 "editing_started_at",
             ]
+        )
+        _notify_vacancy_owner_about_reject(
+            vacancy=vacancy,
+            moderator=request.user,
+            reason=reason,
         )
         return Response({"detail": "rejected"}, status=200)
 
