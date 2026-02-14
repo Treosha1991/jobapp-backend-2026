@@ -324,7 +324,7 @@ class VacancyEditAPIView(APIView):
 
 
 class ComplaintAPIView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         vacancy_id = request.data.get("vacancy_id")
@@ -337,18 +337,17 @@ class ComplaintAPIView(APIView):
         vacancy = Vacancy.objects.filter(id=vacancy_id).first()
         title = vacancy.title if vacancy else f"id={vacancy_id}"
 
-        reporter = ""
-        if request.user.is_authenticated:
-            reporter = request.user.email or request.user.username
-        else:
-            reporter = (request.data.get("email") or "").strip()
+        reporter_email = (request.user.email or "").strip()
+        if not reporter_email:
+            return Response({"error": "email_auth_required"}, status=status.HTTP_403_FORBIDDEN)
+        reporter = reporter_email
 
         subject = f"JobApp complaint: {reason}"
         body = "\n".join(
             [
                 f"Vacancy: {title}",
                 f"Vacancy ID: {vacancy_id}",
-                f"Reporter: {reporter or 'anonymous'}",
+                f"Reporter: {reporter}",
                 f"Reason: {reason}",
                 "",
                 "Message:",
