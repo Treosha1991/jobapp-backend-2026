@@ -13,6 +13,8 @@ from .api import (
     VacancyUnlockRequestAPIView,
     VacancyUnlockConfirmAPIView,
     ComplaintAPIView,
+    ComplaintByVacancyAPIView,
+    ComplaintModerationActionAPIView,
 )
 from .auth_api import (
     RegisterAPIView,
@@ -57,6 +59,8 @@ urlpatterns = [
     path("vacancies/<int:pk>/unlock/request/", VacancyUnlockRequestAPIView.as_view(), name="vacancy-unlock-request"),
     path("vacancies/<int:pk>/unlock/confirm/", VacancyUnlockConfirmAPIView.as_view(), name="vacancy-unlock-confirm"),
     path("complaints/", ComplaintAPIView.as_view(), name="complaints"),
+    path("moderation/complaints/by-vacancy/", ComplaintByVacancyAPIView.as_view(), name="complaints-by-vacancy"),
+    path("moderation/complaints/<int:pk>/action/", ComplaintModerationActionAPIView.as_view(), name="complaint-action"),
 
 
 ]

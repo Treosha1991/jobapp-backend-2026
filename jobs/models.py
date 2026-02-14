@@ -263,3 +263,77 @@ class PhoneVerification(models.Model):
         return f"PhoneVerification {self.phone_e164} {self.purpose}"
 
 
+class Complaint(models.Model):
+    REASON_CHOICES = [
+        ("spam", "Spam/advertising"),
+        ("fake", "Fake"),
+        ("abuse", "Abuse"),
+        ("wrong_info", "Wrong information"),
+        ("contacts", "Invalid contacts"),
+        ("not_actual", "Not actual"),
+        ("other", "Other"),
+    ]
+
+    STATUS_CHOICES = [
+        ("new", "New"),
+        ("in_review", "In review"),
+        ("resolved", "Resolved"),
+        ("rejected", "Rejected"),
+    ]
+
+    vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE, related_name="complaints")
+    reporter = models.ForeignKey(User, on_delete=models.CASCADE, related_name="complaints")
+    reason = models.CharField(max_length=20, choices=REASON_CHOICES)
+    message = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="new")
+    handled_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="handled_complaints",
+    )
+    handled_at = models.DateTimeField(blank=True, null=True)
+    resolution_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["vacancy", "status"]),
+            models.Index(fields=["reason", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Complaint #{self.id} vacancy={self.vacancy_id} reason={self.reason}"
+
+
+class ComplaintActionLog(models.Model):
+    ACTION_CHOICES = [
+        ("hide", "Hide vacancy"),
+        ("reject", "Reject vacancy"),
+        ("restore", "Restore vacancy"),
+    ]
+
+    complaint = models.ForeignKey(Complaint, on_delete=models.CASCADE, related_name="action_logs")
+    vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE, related_name="complaint_action_logs")
+    actor = models.ForeignKey(User, on_delete=models.CASCADE, related_name="complaint_action_logs")
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    note = models.TextField(blank=True)
+    before_state = models.JSONField(default=dict, blank=True)
+    after_state = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["action", "created_at"]),
+            models.Index(fields=["vacancy", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"ComplaintActionLog #{self.id} action={self.action} vacancy={self.vacancy_id}"
+
+
