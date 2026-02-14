@@ -1,6 +1,6 @@
 ﻿from rest_framework import serializers
 import re
-from .models import Vacancy
+from .models import Complaint, Vacancy
 
 
 def _to_int_or_none(value):
@@ -350,4 +350,35 @@ class VacancyContactSerializer(serializers.ModelSerializer):
             "telegram",
             "email",
         ]
+
+
+class ComplaintListSerializer(serializers.ModelSerializer):
+    vacancy_title = serializers.CharField(source="vacancy.title", read_only=True)
+    reporter_email = serializers.SerializerMethodField()
+    handled_by_email = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Complaint
+        fields = [
+            "id",
+            "vacancy_id",
+            "vacancy_title",
+            "reporter_email",
+            "reason",
+            "message",
+            "status",
+            "resolution_note",
+            "created_at",
+            "updated_at",
+            "handled_by_email",
+            "handled_at",
+        ]
+
+    def get_reporter_email(self, obj):
+        return obj.reporter.email or obj.reporter.username
+
+    def get_handled_by_email(self, obj):
+        if not obj.handled_by:
+            return ""
+        return obj.handled_by.email or obj.handled_by.username
 

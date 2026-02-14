@@ -2,12 +2,14 @@ from django.utils import timezone
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db.models import Case, Count, IntegerField, Max, Q, Value, When
+from django.utils.dateparse import parse_date
 import secrets
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 
 from .models import Complaint, ComplaintActionLog, Vacancy, UserProfile
 from .serializers import (
+    ComplaintListSerializer,
     VacancyListSerializer,
     VacancyDetailSerializer,
     VacancyCreateSerializer,
@@ -91,6 +93,59 @@ from .serializers import VacancyContactSerializer
 
 def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff
+
+
+def _notify_vacancy_owner_about_complaint_action(
+    *,
+    vacancy,
+    complaint,
+    action,
+    moderator,
+    note="",
+    reject_reason="",
+):
+    owner_email = (getattr(vacancy.created_by, "email", "") or "").strip()
+    if not owner_email:
+        return False, "owner_email_missing"
+
+    action_title = {
+        "hide": "hidden from feed",
+        "reject": "rejected",
+        "restore": "restored",
+    }.get(action, action)
+
+    subject = f"JobHub moderation update for vacancy #{vacancy.id}"
+    body_lines = [
+        f"Vacancy ID: {vacancy.id}",
+        f"Title: {vacancy.title}",
+        f"Action: {action_title}",
+        f"Reason from complaint: {complaint.reason}",
+        f"Moderator: {moderator.email or moderator.username}",
+    ]
+    if reject_reason:
+        body_lines.append(f"Reject reason: {reject_reason}")
+    if note:
+        body_lines.append(f"Note: {note}")
+    body_lines.extend(
+        [
+            "",
+            f"Support: {getattr(settings, 'SUPPORT_EMAIL', settings.DEFAULT_FROM_EMAIL)}",
+        ]
+    )
+
+    try:
+        send_mail(
+            subject,
+            "\n".join(body_lines),
+            settings.DEFAULT_FROM_EMAIL,
+            [owner_email],
+            fail_silently=False,
+        )
+        return True, ""
+    except Exception as exc:
+        print(f"[COMPLAINT-OWNER-NOTIFY-ERROR] vacancy={vacancy.id}: {exc}")
+        return False, str(exc)
+
 
 class IsModerator(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -426,6 +481,42 @@ class ComplaintByVacancyAPIView(APIView):
         return Response({"count": len(results), "results": results}, status=200)
 
 
+class ComplaintListAPIView(generics.ListAPIView):
+    permission_classes = [IsModerator]
+    serializer_class = ComplaintListSerializer
+
+    def get_queryset(self):
+        qs = Complaint.objects.select_related("vacancy", "reporter", "handled_by").order_by("-created_at")
+
+        status_filter = (self.request.query_params.get("status") or "").strip()
+        reason_filter = (self.request.query_params.get("reason") or "").strip()
+        vacancy_id = (self.request.query_params.get("vacancy_id") or "").strip()
+        date_from = (self.request.query_params.get("date_from") or "").strip()
+        date_to = (self.request.query_params.get("date_to") or "").strip()
+
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if reason_filter:
+            qs = qs.filter(reason=reason_filter)
+        if vacancy_id:
+            try:
+                qs = qs.filter(vacancy_id=int(vacancy_id))
+            except ValueError:
+                raise ValidationError({"vacancy_id": "must be integer"})
+        if date_from:
+            parsed = parse_date(date_from)
+            if not parsed:
+                raise ValidationError({"date_from": "must be YYYY-MM-DD"})
+            qs = qs.filter(created_at__date__gte=parsed)
+        if date_to:
+            parsed = parse_date(date_to)
+            if not parsed:
+                raise ValidationError({"date_to": "must be YYYY-MM-DD"})
+            qs = qs.filter(created_at__date__lte=parsed)
+
+        return qs
+
+
 class ComplaintModerationActionAPIView(APIView):
     permission_classes = [IsModerator]
 
@@ -518,15 +609,25 @@ class ComplaintModerationActionAPIView(APIView):
             after_state=after_state,
         )
 
-        return Response(
-            {
-                "detail": "action_applied",
-                "action": action,
-                "complaint_id": complaint.id,
-                "vacancy_id": vacancy.id,
-                "resolved_complaints": resolved_count,
-            },
-            status=200,
+        owner_notified, notify_error = _notify_vacancy_owner_about_complaint_action(
+            vacancy=vacancy,
+            complaint=complaint,
+            action=action,
+            moderator=request.user,
+            note=note,
+            reject_reason=reject_reason,
         )
+
+        payload = {
+            "detail": "action_applied",
+            "action": action,
+            "complaint_id": complaint.id,
+            "vacancy_id": vacancy.id,
+            "resolved_complaints": resolved_count,
+            "owner_notified": owner_notified,
+        }
+        if settings.DEBUG and notify_error:
+            payload["owner_notify_error"] = notify_error
+        return Response(payload, status=200)
 
 
