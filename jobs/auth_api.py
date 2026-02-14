@@ -358,6 +358,11 @@ class PhoneRequestCodeAPIView(APIView):
     def post(self, request):
         phone = _normalize_phone(request.data.get("phone"))
         purpose = (request.data.get("purpose") or "").strip()
+        channel = (request.data.get("channel") or "").strip().lower() or "whatsapp"
+        if channel not in {"whatsapp", "sms"}:
+            if purpose:
+                return Response({"error": "invalid channel"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "message": "invalid_channel"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not phone:
             if purpose:
@@ -368,7 +373,7 @@ class PhoneRequestCodeAPIView(APIView):
         if not purpose:
             if not _consume_phone_request_slot(phone):
                 return Response({"status": "error", "message": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-            ok, msg, http_code = _twilio_verify_start(phone, channel="whatsapp")
+            ok, msg, http_code = _twilio_verify_start(phone, channel=channel)
             if ok:
                 return Response({"status": "sent"})
             payload = {"status": "error", "message": "verification_not_sent"}
@@ -402,13 +407,13 @@ class PhoneRequestCodeAPIView(APIView):
         # Keep local record for throttling/audit even when Twilio Verify is used.
         _create_phone_code(phone, purpose, user=user)
 
-        ok, msg, http_code = _twilio_verify_start(phone, channel="whatsapp")
+        ok, msg, http_code = _twilio_verify_start(phone, channel=channel)
         if not ok:
-            payload = {"error": "whatsapp_delivery_failed"}
+            payload = {"error": f"{channel}_delivery_failed"}
             if settings.DEBUG and msg:
                 payload["detail"] = _debug_error_details(msg)
             return Response(payload, status=http_code)
-        return Response({"detail": "code_sent", "channel": "whatsapp"})
+        return Response({"detail": "code_sent", "channel": channel})
 
 
 class PhoneVerifyCodeAPIView(APIView):
