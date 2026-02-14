@@ -151,6 +151,10 @@ class Vacancy(models.Model):
     is_approved = models.BooleanField(default=False)
     is_rejected = models.BooleanField(default=False)
     rejection_reason = models.TextField(blank=True)
+    # Snapshot of vacancy fields at the moment moderator hid/rejected it.
+    moderation_baseline = models.JSONField(default=dict, blank=True)
+    # Human-readable reason from previous moderator action for resubmissions.
+    last_moderator_rejection_reason = models.TextField(blank=True)
     is_editing = models.BooleanField(default=False)
     editing_started_at = models.DateTimeField(blank=True, null=True)
 

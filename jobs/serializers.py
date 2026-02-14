@@ -28,10 +28,43 @@ def _salary_monthly_to(obj):
     return salary_to * hours
 
 
+_MODERATION_COMPARISON_FIELDS = [
+    "title",
+    "country",
+    "city",
+    "category",
+    "employment_type",
+    "experience_required",
+    "salary_from",
+    "salary_to",
+    "salary_currency",
+    "salary_tax_type",
+    "salary_hours_month",
+    "description",
+    "housing_type",
+    "housing_cost",
+    "phone",
+    "whatsapp",
+    "viber",
+    "telegram",
+    "email",
+    "source",
+]
+
+
+def _normalize_compare_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip()
+
+
 class VacancyListSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
+    is_resubmitted = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -57,6 +90,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "contacts",
             "published_at",
             "expires_at",
+            "is_resubmitted",
         ]
 
     def get_contacts(self, obj):
@@ -73,6 +107,33 @@ class VacancyListSerializer(serializers.ModelSerializer):
 
     def get_salary_monthly_to(self, obj):
         return _salary_monthly_to(obj)
+
+    def get_is_resubmitted(self, obj):
+        return (getattr(obj, "revision", 1) or 1) > 1
+
+
+class VacancyModerationSerializer(VacancyListSerializer):
+    previous_rejection_reason = serializers.CharField(source="last_moderator_rejection_reason", read_only=True)
+    resubmitted_changed_fields = serializers.SerializerMethodField()
+
+    class Meta(VacancyListSerializer.Meta):
+        fields = VacancyListSerializer.Meta.fields + [
+            "previous_rejection_reason",
+            "resubmitted_changed_fields",
+        ]
+
+    def get_resubmitted_changed_fields(self, obj):
+        baseline = getattr(obj, "moderation_baseline", None) or {}
+        if not isinstance(baseline, dict):
+            return []
+
+        changed = []
+        for field in _MODERATION_COMPARISON_FIELDS:
+            baseline_value = _normalize_compare_value(baseline.get(field))
+            current_value = _normalize_compare_value(getattr(obj, field, None))
+            if baseline_value != current_value:
+                changed.append(field)
+        return changed
 
 class VacancyDetailSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()

@@ -11,6 +11,7 @@ from .models import Complaint, ComplaintActionLog, Vacancy, UserProfile
 from .serializers import (
     ComplaintListSerializer,
     VacancyListSerializer,
+    VacancyModerationSerializer,
     VacancyDetailSerializer,
     VacancyCreateSerializer,
     VacancyMineSerializer,
@@ -100,6 +101,31 @@ from .serializers import VacancyContactSerializer
 
 def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff
+
+
+def _vacancy_editable_snapshot(vacancy):
+    return {
+        "title": vacancy.title or "",
+        "country": vacancy.country or "",
+        "city": vacancy.city or "",
+        "category": vacancy.category or "",
+        "employment_type": vacancy.employment_type or "",
+        "experience_required": vacancy.experience_required or "",
+        "salary_from": vacancy.salary_from,
+        "salary_to": vacancy.salary_to,
+        "salary_currency": vacancy.salary_currency or "",
+        "salary_tax_type": vacancy.salary_tax_type or "",
+        "salary_hours_month": vacancy.salary_hours_month,
+        "description": vacancy.description or "",
+        "housing_type": vacancy.housing_type or "",
+        "housing_cost": vacancy.housing_cost or "",
+        "phone": vacancy.phone or "",
+        "whatsapp": vacancy.whatsapp or "",
+        "viber": vacancy.viber or "",
+        "telegram": vacancy.telegram or "",
+        "email": vacancy.email or "",
+        "source": vacancy.source or "",
+    }
 
 
 def _notify_vacancy_owner_about_complaint_action(
@@ -276,7 +302,7 @@ class VacancyUnlockConfirmAPIView(APIView):
 
 
 class VacancyPendingListAPIView(generics.ListAPIView):
-    serializer_class = VacancyListSerializer
+    serializer_class = VacancyModerationSerializer
     permission_classes = [IsModerator]
 
     def get_queryset(self):
@@ -292,6 +318,17 @@ class VacancyPendingListAPIView(generics.ListAPIView):
         ).order_by("-published_at")
 
 
+class ModerationVacancyDetailAPIView(APIView):
+    permission_classes = [IsModerator]
+
+    def get(self, request, pk):
+        vacancy = Vacancy.objects.filter(pk=pk).first()
+        if not vacancy:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = VacancyModerationSerializer(vacancy)
+        return Response(serializer.data, status=200)
+
+
 class VacancyApproveAPIView(APIView):
     permission_classes = [IsModerator]
 
@@ -302,6 +339,8 @@ class VacancyApproveAPIView(APIView):
         vacancy.is_approved = True
         vacancy.is_rejected = False
         vacancy.rejection_reason = ""
+        vacancy.last_moderator_rejection_reason = ""
+        vacancy.moderation_baseline = {}
         vacancy.is_editing = False
         vacancy.editing_started_at = None
         vacancy.save(
@@ -309,6 +348,8 @@ class VacancyApproveAPIView(APIView):
                 "is_approved",
                 "is_rejected",
                 "rejection_reason",
+                "last_moderator_rejection_reason",
+                "moderation_baseline",
                 "is_editing",
                 "editing_started_at",
             ]
@@ -324,6 +365,8 @@ class VacancyRejectAPIView(APIView):
         if vacancy.is_editing:
             return Response({"error": "vacancy_editing"}, status=409)
         reason = request.data.get("reason", "").strip()
+        vacancy.moderation_baseline = _vacancy_editable_snapshot(vacancy)
+        vacancy.last_moderator_rejection_reason = reason
         vacancy.is_approved = False
         vacancy.is_rejected = True
         vacancy.rejection_reason = reason
@@ -334,6 +377,8 @@ class VacancyRejectAPIView(APIView):
                 "is_approved",
                 "is_rejected",
                 "rejection_reason",
+                "last_moderator_rejection_reason",
+                "moderation_baseline",
                 "is_editing",
                 "editing_started_at",
             ]
@@ -604,22 +649,30 @@ class ComplaintModerationActionAPIView(APIView):
         before_state = self._snapshot(vacancy)
 
         if action == "hide":
+            action_reason = note or complaint.reason
+            vacancy.moderation_baseline = _vacancy_editable_snapshot(vacancy)
+            vacancy.last_moderator_rejection_reason = action_reason
             vacancy.is_approved = False
             vacancy.is_rejected = False
             vacancy.is_editing = False
             vacancy.rejection_reason = ""
             vacancy.editing_started_at = None
         elif action == "reject":
+            action_reason = reject_reason or note or complaint.reason
+            vacancy.moderation_baseline = _vacancy_editable_snapshot(vacancy)
+            vacancy.last_moderator_rejection_reason = action_reason
             vacancy.is_approved = False
             vacancy.is_rejected = True
             vacancy.is_editing = False
-            vacancy.rejection_reason = reject_reason or note or complaint.reason
+            vacancy.rejection_reason = action_reason
             vacancy.editing_started_at = None
         elif action == "restore":
             vacancy.is_approved = True
             vacancy.is_rejected = False
             vacancy.is_editing = False
             vacancy.rejection_reason = ""
+            vacancy.last_moderator_rejection_reason = ""
+            vacancy.moderation_baseline = {}
             vacancy.editing_started_at = None
 
         vacancy.save(
@@ -628,6 +681,8 @@ class ComplaintModerationActionAPIView(APIView):
                 "is_rejected",
                 "is_editing",
                 "rejection_reason",
+                "last_moderator_rejection_reason",
+                "moderation_baseline",
                 "editing_started_at",
             ]
         )
