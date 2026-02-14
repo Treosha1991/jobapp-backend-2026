@@ -1,7 +1,7 @@
 from django.utils import timezone
 from django.conf import settings
 from django.core.mail import send_mail
-from django.db.models import Case, Count, IntegerField, Max, Q, Value, When
+from django.db.models import Case, Count, F, IntegerField, Max, Q, Value, When
 from django.utils.dateparse import parse_date
 import secrets
 from rest_framework import generics, permissions, status
@@ -49,6 +49,12 @@ class VacancyListAPIView(generics.ListAPIView):
         if search:
             qs = qs.filter(title__icontains=search)
 
+        if self.request.user.is_authenticated:
+            qs = qs.exclude(
+                complaints__reporter=self.request.user,
+                complaints__vacancy_revision_snapshot=F("revision"),
+            ).distinct()
+
         return qs
 
 
@@ -80,6 +86,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             is_rejected=False,
             rejection_reason="",
             is_editing=False,
+            revision=1,
             # Reuse this field as "submitted_at" for moderation visibility delay.
             editing_started_at=timezone.now(),
             creator_token=token,
@@ -393,12 +400,14 @@ class VacancyEditAPIView(APIView):
         submit_for_moderation = submit_raw in ("1", "true", "yes", "on")
         serializer = VacancyCreateSerializer(vacancy, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
+        next_revision = (vacancy.revision or 1) + 1
         if submit_for_moderation:
             serializer.save(
                 is_approved=False,
                 is_rejected=False,
                 rejection_reason="",
                 is_editing=False,
+                revision=next_revision,
                 # Marks resubmission time; pending list applies 60s delay.
                 editing_started_at=timezone.now(),
             )
@@ -408,6 +417,7 @@ class VacancyEditAPIView(APIView):
                 is_rejected=False,
                 rejection_reason="",
                 is_editing=True,
+                revision=next_revision,
                 editing_started_at=timezone.now(),
             )
         return Response(serializer.data, status=200)
@@ -447,6 +457,7 @@ class ComplaintAPIView(APIView):
             vacancy=vacancy,
             reporter=request.user,
             reason=reason,
+            vacancy_revision_snapshot=vacancy.revision or 1,
             message=message,
         )
 

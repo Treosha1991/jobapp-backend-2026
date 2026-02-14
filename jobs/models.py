@@ -146,6 +146,7 @@ class Vacancy(models.Model):
     creator_token = models.CharField(max_length=64, unique=True, blank=True, null=True)
     published_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
+    revision = models.PositiveIntegerField(default=1)
 
     is_approved = models.BooleanField(default=False)
     is_rejected = models.BooleanField(default=False)
@@ -284,6 +285,7 @@ class Complaint(models.Model):
     vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE, related_name="complaints")
     reporter = models.ForeignKey(User, on_delete=models.CASCADE, related_name="complaints")
     reason = models.CharField(max_length=20, choices=REASON_CHOICES)
+    vacancy_revision_snapshot = models.PositiveIntegerField(default=1)
     message = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="new")
     handled_by = models.ForeignKey(
