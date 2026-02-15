@@ -20,10 +20,11 @@ from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import EmailVerification, PhoneVerification, UserProfile
+from .models import AccountDeletionRequest, EmailVerification, PhoneVerification, UserProfile, Vacancy
 
 _PHONE_REQUEST_WINDOW = timedelta(minutes=10)
 _PHONE_REQUEST_MAX_ATTEMPTS = 3
+_ACCOUNT_DELETION_DELAY = timedelta(days=30)
 _phone_request_attempts = {}
 _phone_request_lock = threading.Lock()
 
@@ -62,6 +63,9 @@ def _send_email_code(email, code, purpose="register"):
     elif purpose == "link_email":
         subject = "JobApp email linking code"
         message = f"Your email linking code: {code}\nIt is valid for 10 minutes."
+    elif purpose == "delete_account":
+        subject = "JobHub account deletion confirmation code"
+        message = f"Your account deletion confirmation code: {code}\nIt is valid for 10 minutes."
     else:
         subject = "JobApp verification code"
         message = f"Your verification code: {code}\nIt is valid for 10 minutes."
@@ -252,6 +256,79 @@ def _create_phone_code(phone_e164, purpose, user=None):
         expires_at=timezone.now() + timedelta(minutes=10),
     )
     return record
+
+
+def _email_code_too_frequent(user, purpose):
+    return EmailVerification.objects.filter(
+        user=user,
+        purpose=purpose,
+        created_at__gt=timezone.now() - timedelta(seconds=45),
+    ).exists()
+
+
+def _create_email_code(user, purpose, target_email=""):
+    EmailVerification.objects.filter(
+        user=user,
+        purpose=purpose,
+        is_used=False,
+    ).update(is_used=True)
+    code = _generate_code()
+    rec = EmailVerification.objects.create(
+        user=user,
+        code=code,
+        purpose=purpose,
+        target_email=target_email,
+        expires_at=timezone.now() + timedelta(minutes=10),
+    )
+    return rec
+
+
+def _hide_user_vacancies(user):
+    now = timezone.now()
+    Vacancy.objects.filter(created_by=user).update(
+        is_approved=False,
+        is_rejected=True,
+        is_editing=False,
+        rejection_reason="Account scheduled for deletion",
+        last_moderator_rejection_reason="Account scheduled for deletion",
+        editing_started_at=None,
+        expires_at=now,
+    )
+
+
+def _schedule_account_deletion(user, confirmed_via, note=""):
+    now = timezone.now()
+    req = AccountDeletionRequest.objects.filter(user=user, status="pending").order_by("-requested_at").first()
+    if req is None:
+        req = AccountDeletionRequest.objects.create(
+            user=user,
+            user_id_snapshot=user.id,
+            email_snapshot=(user.email or "").strip(),
+            status="pending",
+            confirmed_via=confirmed_via,
+            execute_after=now + _ACCOUNT_DELETION_DELAY,
+            note=(note or "").strip(),
+        )
+    else:
+        req.confirmed_via = confirmed_via
+        if note:
+            req.note = note.strip()
+        req.execute_after = now + _ACCOUNT_DELETION_DELAY
+        req.save(update_fields=["confirmed_via", "note", "execute_after"])
+
+    _hide_user_vacancies(user)
+
+    profile = UserProfile.objects.filter(user=user).first()
+    if profile:
+        profile.phone_verified = False
+        profile.save(update_fields=["phone_verified"])
+
+    if user.is_active:
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+
+    Token.objects.filter(user=user).delete()
+    return req
 
 
 _log_twilio_verify_health()
@@ -622,6 +699,131 @@ class MeAPIView(APIView):
     def get(self, request):
         token, _ = Token.objects.get_or_create(user=request.user)
         return Response(_auth_payload(request.user, token))
+
+
+class AccountDeletionRequestAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        channel = (request.data.get("channel") or "email").strip().lower()
+        user = request.user
+
+        if channel not in {"email", "sms"}:
+            return Response({"error": "invalid_channel"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if channel == "email":
+            if not (user.email or "").strip():
+                return Response({"error": "email_not_linked"}, status=status.HTTP_400_BAD_REQUEST)
+            if _email_code_too_frequent(user, "delete_account"):
+                return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+            rec = _create_email_code(user, "delete_account", target_email=user.email)
+            _send_email_code(user.email, rec.code, "delete_account")
+            return Response({"detail": "code_sent", "channel": "email"})
+
+        profile = UserProfile.objects.filter(user=user).first()
+        if not profile or not profile.phone_verified or not profile.phone_e164:
+            return Response({"error": "phone_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if _phone_code_too_frequent(profile.phone_e164, "delete_account"):
+            return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        _create_phone_code(profile.phone_e164, "delete_account", user=user)
+        ok, msg, http_code = _twilio_verify_start(profile.phone_e164, channel="sms")
+        if not ok:
+            payload = {"error": "sms_delivery_failed"}
+            if settings.DEBUG and msg:
+                payload["detail"] = _debug_error_details(msg)
+            return Response(payload, status=http_code)
+
+        return Response({"detail": "code_sent", "channel": "sms"})
+
+
+class AccountDeletionConfirmAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        password = request.data.get("password") or ""
+        code = (request.data.get("code") or "").strip()
+        channel = (request.data.get("channel") or "").strip().lower()
+        note = (request.data.get("note") or "").strip()
+
+        confirmed_via = ""
+
+        if password:
+            if not user.has_usable_password():
+                return Response({"error": "password_not_set"}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.check_password(password):
+                return Response({"error": "invalid_password"}, status=status.HTTP_400_BAD_REQUEST)
+            confirmed_via = "password"
+
+        elif code and channel == "email":
+            rec = EmailVerification.objects.filter(
+                user=user,
+                purpose="delete_account",
+                code=code,
+                is_used=False,
+            ).order_by("-created_at").first()
+
+            if not rec or not rec.is_valid():
+                return Response({"error": "invalid_or_expired_code"}, status=status.HTTP_400_BAD_REQUEST)
+
+            rec.is_used = True
+            rec.save(update_fields=["is_used"])
+            confirmed_via = "email_code"
+
+        elif code and channel == "sms":
+            profile = UserProfile.objects.filter(user=user).first()
+            if not profile or not profile.phone_verified or not profile.phone_e164:
+                return Response({"error": "phone_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if _twilio_verify_service_sid():
+                approved, msg, http_code = _twilio_verify_check(profile.phone_e164, code)
+                if not approved:
+                    if msg == "denied":
+                        return Response({"error": "invalid_or_expired_code"}, status=status.HTTP_400_BAD_REQUEST)
+                    payload = {"error": "verification_check_failed"}
+                    if settings.DEBUG and msg:
+                        payload["detail"] = _debug_error_details(msg)
+                    return Response(payload, status=http_code)
+
+                local_rec = PhoneVerification.objects.filter(
+                    phone_e164=profile.phone_e164,
+                    purpose="delete_account",
+                    is_used=False,
+                ).order_by("-created_at").first()
+                if local_rec:
+                    local_rec.is_used = True
+                    local_rec.save(update_fields=["is_used"])
+            else:
+                local_rec = PhoneVerification.objects.filter(
+                    phone_e164=profile.phone_e164,
+                    purpose="delete_account",
+                    code=code,
+                    is_used=False,
+                ).order_by("-created_at").first()
+                if not local_rec or not local_rec.is_valid():
+                    return Response({"error": "invalid_or_expired_code"}, status=status.HTTP_400_BAD_REQUEST)
+                local_rec.is_used = True
+                local_rec.save(update_fields=["is_used"])
+
+            confirmed_via = "sms_code"
+
+        else:
+            return Response(
+                {"error": "password_or_code_required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        req = _schedule_account_deletion(user, confirmed_via=confirmed_via, note=note)
+        return Response(
+            {
+                "detail": "account_deletion_scheduled",
+                "status": req.status,
+                "execute_after": req.execute_after.isoformat(),
+            }
+        )
 
 
 class LinkEmailRequestAPIView(APIView):

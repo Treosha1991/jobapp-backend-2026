@@ -348,3 +348,34 @@ class ComplaintActionLog(models.Model):
         return f"ComplaintActionLog #{self.id} action={self.action} vacancy={self.vacancy_id}"
 
 
+class AccountDeletionRequest(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("completed", "Completed"),
+        ("cancelled", "Cancelled"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="account_deletion_requests",
+    )
+    user_id_snapshot = models.PositiveIntegerField(db_index=True)
+    email_snapshot = models.EmailField(blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending", db_index=True)
+    confirmed_via = models.CharField(max_length=20, blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    execute_after = models.DateTimeField(db_index=True)
+    processed_at = models.DateTimeField(blank=True, null=True)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-requested_at"]
+        indexes = [
+            models.Index(fields=["status", "execute_after"]),
+        ]
+
+    def __str__(self):
+        return f"AccountDeletionRequest #{self.id} user={self.user_id_snapshot} status={self.status}"

@@ -3,7 +3,7 @@ from django.contrib.admin.sites import NotRegistered
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 from django.utils import timezone
-from .models import Complaint, ComplaintActionLog, Vacancy, UserProfile, PhoneVerification, EmailVerification
+from .models import AccountDeletionRequest, Complaint, ComplaintActionLog, Vacancy, UserProfile, PhoneVerification, EmailVerification
 
 
 try:
@@ -143,3 +143,12 @@ class ComplaintActionLogAdmin(admin.ModelAdmin):
     @admin.display(description="Complaint ID")
     def complaint_id_display(self, obj):
         return obj.complaint_id
+
+
+@admin.register(AccountDeletionRequest)
+class AccountDeletionRequestAdmin(admin.ModelAdmin):
+    list_display = ("id", "user_id_snapshot", "email_snapshot", "status", "confirmed_via", "requested_at", "execute_after", "processed_at")
+    list_filter = ("status", "confirmed_via", "requested_at", "execute_after")
+    search_fields = ("user_id_snapshot", "email_snapshot")
+    ordering = ("-requested_at",)
+    readonly_fields = ("requested_at", "processed_at", "user_id_snapshot", "email_snapshot")
