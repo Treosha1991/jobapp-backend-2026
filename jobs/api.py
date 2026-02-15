@@ -116,6 +116,40 @@ class VacancyBlockOwnerAPIView(APIView):
         return Response({"status": "unblocked", "deleted": bool(deleted_count)}, status=status.HTTP_200_OK)
 
 
+class UserBlockListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        blocks = (
+            UserBlock.objects.filter(blocker=request.user)
+            .select_related("blocked_user")
+            .order_by("-created_at")
+        )
+        results = [
+            {
+                "blocked_user_id": block.blocked_user_id,
+                "blocked_user_email": (block.blocked_user.email or "").strip(),
+                "blocked_user_username": block.blocked_user.username,
+                "created_at": block.created_at,
+            }
+            for block in blocks
+        ]
+        return Response({"count": len(results), "results": results}, status=status.HTTP_200_OK)
+
+
+class UserBlockRemoveAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, blocked_user_id):
+        deleted_count, _ = UserBlock.objects.filter(
+            blocker=request.user,
+            blocked_user_id=blocked_user_id,
+        ).delete()
+        if deleted_count == 0:
+            return Response({"error": "block_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"status": "unblocked"}, status=status.HTTP_200_OK)
+
+
 class VacancyCreateAPIView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = VacancyCreateSerializer

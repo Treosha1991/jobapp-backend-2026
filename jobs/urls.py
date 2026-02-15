@@ -12,6 +12,8 @@ from .api import (
     VacancyEditAPIView,
     VacancyContactAPIView,
     VacancyBlockOwnerAPIView,
+    UserBlockListAPIView,
+    UserBlockRemoveAPIView,
     VacancyUnlockRequestAPIView,
     VacancyUnlockConfirmAPIView,
     ComplaintAPIView,
@@ -64,6 +66,8 @@ urlpatterns = [
 
     path("vacancies/<int:pk>/contacts/", VacancyContactAPIView.as_view()),
     path("vacancies/<int:pk>/block-owner/", VacancyBlockOwnerAPIView.as_view(), name="vacancy-block-owner"),
+    path("user-blocks/", UserBlockListAPIView.as_view(), name="user-blocks"),
+    path("user-blocks/<int:blocked_user_id>/", UserBlockRemoveAPIView.as_view(), name="user-block-remove"),
 
     path("vacancies/<int:pk>/unlock/request/", VacancyUnlockRequestAPIView.as_view(), name="vacancy-unlock-request"),
     path("vacancies/<int:pk>/unlock/confirm/", VacancyUnlockConfirmAPIView.as_view(), name="vacancy-unlock-confirm"),
