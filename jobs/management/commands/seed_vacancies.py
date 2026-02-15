@@ -84,7 +84,7 @@ class Command(BaseCommand):
                 salary=random.choice(salaries),
                 description=random.choice(descriptions),
                 phone=f"+48 6{random.randint(10000000, 99999999)}",
-                telegram=f"@jobapp_{random.randint(1000, 9999)}",
+                telegram=f"@jobhub_{random.randint(1000, 9999)}",
                 whatsapp=f"+48 6{random.randint(10000000, 99999999)}",
                 viber="",
                 email=f"hr{random.randint(100,999)}@example.com",

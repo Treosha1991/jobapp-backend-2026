@@ -58,27 +58,27 @@ def _auth_payload(user, token):
 
 def _send_email_code(email, code, purpose="register"):
     if purpose == "reset":
-        subject = "JobApp password reset code"
+        subject = "JobHub password reset code"
         message = f"Your password reset code: {code}\nIt is valid for 10 minutes."
     elif purpose == "link_email":
-        subject = "JobApp email linking code"
+        subject = "JobHub email linking code"
         message = f"Your email linking code: {code}\nIt is valid for 10 minutes."
     elif purpose == "delete_account":
         subject = "JobHub account deletion confirmation code"
         message = f"Your account deletion confirmation code: {code}\nIt is valid for 10 minutes."
     else:
-        subject = "JobApp verification code"
+        subject = "JobHub verification code"
         message = f"Your verification code: {code}\nIt is valid for 10 minutes."
     send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=False)
 
 
 def _send_whatsapp_code(phone_e164, code, purpose):
     if purpose == "reset":
-        text = f"JobApp: password reset code {code}. Valid 10 minutes."
+        text = f"JobHub: password reset code {code}. Valid 10 minutes."
     elif purpose == "login":
-        text = f"JobApp: login code {code}. Valid 10 minutes."
+        text = f"JobHub: login code {code}. Valid 10 minutes."
     else:
-        text = f"JobApp: phone verification code {code}. Valid 10 minutes."
+        text = f"JobHub: phone verification code {code}. Valid 10 minutes."
 
     sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
     token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()

@@ -616,7 +616,7 @@ class ComplaintAPIView(APIView):
             message=message,
         )
 
-        subject = f"JobApp complaint: {reason}"
+        subject = f"JobHub complaint: {reason}"
         body = "\n".join(
             [
                 f"Complaint ID: {complaint.id}",
