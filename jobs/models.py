@@ -348,6 +348,25 @@ class ComplaintActionLog(models.Model):
         return f"ComplaintActionLog #{self.id} action={self.action} vacancy={self.vacancy_id}"
 
 
+class UserBlock(models.Model):
+    blocker = models.ForeignKey(User, on_delete=models.CASCADE, related_name="outgoing_blocks")
+    blocked_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="incoming_blocks")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["blocker", "blocked_user"], name="jobs_unique_user_block"),
+        ]
+        indexes = [
+            models.Index(fields=["blocker", "created_at"]),
+            models.Index(fields=["blocked_user", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"UserBlock blocker={self.blocker_id} blocked={self.blocked_user_id}"
+
+
 class AccountDeletionRequest(models.Model):
     STATUS_CHOICES = [
         ("pending", "Pending"),

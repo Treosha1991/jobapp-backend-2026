@@ -3,7 +3,7 @@ from django.contrib.admin.sites import NotRegistered
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 from django.utils import timezone
-from .models import AccountDeletionRequest, Complaint, ComplaintActionLog, Vacancy, UserProfile, PhoneVerification, EmailVerification
+from .models import AccountDeletionRequest, Complaint, ComplaintActionLog, Vacancy, UserProfile, PhoneVerification, EmailVerification, UserBlock
 
 
 try:
@@ -152,3 +152,11 @@ class AccountDeletionRequestAdmin(admin.ModelAdmin):
     search_fields = ("user_id_snapshot", "email_snapshot")
     ordering = ("-requested_at",)
     readonly_fields = ("requested_at", "processed_at", "user_id_snapshot", "email_snapshot")
+
+
+@admin.register(UserBlock)
+class UserBlockAdmin(admin.ModelAdmin):
+    list_display = ("id", "blocker", "blocked_user", "created_at")
+    search_fields = ("blocker__username", "blocker__email", "blocked_user__username", "blocked_user__email")
+    list_filter = ("created_at",)
+    ordering = ("-created_at",)

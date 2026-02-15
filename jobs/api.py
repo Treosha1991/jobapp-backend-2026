@@ -9,7 +9,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Complaint, ComplaintActionLog, Vacancy, UserProfile, UnlockedContact
+from .models import Complaint, ComplaintActionLog, UserBlock, Vacancy, UserProfile, UnlockedContact
 from .serializers import (
     ComplaintListSerializer,
     VacancyContactSerializer,
@@ -55,6 +55,7 @@ class VacancyListAPIView(generics.ListAPIView):
             qs = qs.filter(title__icontains=search)
 
         if self.request.user.is_authenticated:
+            qs = qs.exclude(created_by__incoming_blocks__blocker=self.request.user)
             qs = qs.exclude(
                 complaints__reporter=self.request.user,
                 complaints__vacancy_revision_snapshot=F("revision"),
@@ -72,8 +73,47 @@ class VacancyDetailAPIView(APIView):
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         if not vacancy.is_approved or vacancy.expires_at <= timezone.now():
             return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if request.user.is_authenticated and UserBlock.objects.filter(
+            blocker=request.user,
+            blocked_user=vacancy.created_by,
+        ).exists():
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
         serializer = VacancyDetailSerializer(vacancy)
         return Response(serializer.data, status=200)
+
+
+class VacancyBlockOwnerAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        vacancy = Vacancy.objects.select_related("created_by").filter(pk=pk).first()
+        if not vacancy or vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        owner = vacancy.created_by
+        if owner.id == request.user.id:
+            return Response({"error": "cannot_block_self"}, status=status.HTTP_400_BAD_REQUEST)
+
+        _, created = UserBlock.objects.get_or_create(
+            blocker=request.user,
+            blocked_user=owner,
+        )
+        return Response({"status": "blocked", "created": created}, status=status.HTTP_200_OK)
+
+    def delete(self, request, pk):
+        vacancy = Vacancy.objects.select_related("created_by").filter(pk=pk).first()
+        if not vacancy or vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        owner = vacancy.created_by
+        if owner.id == request.user.id:
+            return Response({"error": "cannot_block_self"}, status=status.HTTP_400_BAD_REQUEST)
+
+        deleted_count, _ = UserBlock.objects.filter(
+            blocker=request.user,
+            blocked_user=owner,
+        ).delete()
+        return Response({"status": "unblocked", "deleted": bool(deleted_count)}, status=status.HTTP_200_OK)
 
 
 class VacancyCreateAPIView(generics.CreateAPIView):

@@ -10,6 +10,7 @@ from jobs.models import (
     ComplaintActionLog,
     EmailVerification,
     PhoneVerification,
+    UserBlock,
     UnlockedContact,
     UnlockRequest,
     UserProfile,
@@ -55,6 +56,8 @@ class Command(BaseCommand):
             UnlockRequest.objects.filter(user=user).delete()
             ComplaintActionLog.objects.filter(actor=user).delete()
             Complaint.objects.filter(reporter=user).delete()
+            UserBlock.objects.filter(blocker=user).delete()
+            UserBlock.objects.filter(blocked_user=user).delete()
             Vacancy.objects.filter(created_by=user).delete()
             UserProfile.objects.filter(user=user).delete()
             User.objects.filter(id=user_id).delete()
