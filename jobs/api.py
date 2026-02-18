@@ -58,8 +58,11 @@ class VacancyListAPIView(generics.ListAPIView):
         if self.request.user.is_authenticated:
             qs = qs.exclude(created_by__incoming_blocks__blocker=self.request.user)
             qs = qs.exclude(
-                complaints__reporter=self.request.user,
-                complaints__vacancy_revision_snapshot=F("revision"),
+                Q(
+                    complaints__reporter=self.request.user,
+                    complaints__vacancy_revision_snapshot=F("revision"),
+                )
+                & ~Q(created_by=self.request.user)
             ).distinct()
 
         return qs
