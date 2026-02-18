@@ -2,7 +2,7 @@ from django.utils import timezone
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db.models import Case, Count, F, IntegerField, Max, Q, Value, When
-from django.utils.dateparse import parse_date
+from django.utils.dateparse import parse_date, parse_datetime
 import secrets
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
@@ -27,6 +27,7 @@ class VacancyListAPIView(generics.ListAPIView):
     def get_queryset(self):
         qs = Vacancy.objects.filter(
             is_approved=True,
+            is_paused_by_owner=False,
             is_deleted_by_moderator=False,
             expires_at__gt=timezone.now()
         ).order_by("-published_at")
@@ -71,6 +72,8 @@ class VacancyDetailAPIView(APIView):
             return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
         if vacancy.is_deleted_by_moderator:
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        if vacancy.is_paused_by_owner:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
         if not vacancy.is_approved or vacancy.expires_at <= timezone.now():
             return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
         if request.user.is_authenticated and UserBlock.objects.filter(
@@ -169,6 +172,8 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             created_by=self.request.user,
             is_approved=is_moderator,
             is_rejected=False,
+            is_paused_by_owner=False,
+            paused_by_owner_at=None,
             rejection_reason="",
             is_editing=False,
             revision=1,
@@ -211,6 +216,12 @@ def _vacancy_moderation_state_snapshot(vacancy):
     return {
         "is_approved": bool(vacancy.is_approved),
         "is_rejected": bool(vacancy.is_rejected),
+        "is_paused_by_owner": bool(vacancy.is_paused_by_owner),
+        "paused_by_owner_at": (
+            vacancy.paused_by_owner_at.isoformat()
+            if vacancy.paused_by_owner_at
+            else ""
+        ),
         "is_editing": bool(vacancy.is_editing),
         "rejection_reason": vacancy.rejection_reason or "",
         "last_moderator_rejection_reason": vacancy.last_moderator_rejection_reason or "",
@@ -311,6 +322,8 @@ class VacancyContactAPIView(APIView):
         vacancy = Vacancy.objects.get(pk=pk)
         if vacancy.is_deleted_by_moderator:
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        if vacancy.is_paused_by_owner:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         unlocked = UnlockedContact.objects.filter(
             user=request.user,
@@ -348,6 +361,8 @@ class VacancyUnlockRequestAPIView(APIView):
         vacancy = Vacancy.objects.get(pk=pk)
         if vacancy.is_deleted_by_moderator:
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        if vacancy.is_paused_by_owner:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         # если уже открыто — сразу вернём "already_unlocked"
         if UnlockedContact.objects.filter(user=request.user, vacancy=vacancy).exists():
@@ -370,6 +385,8 @@ class VacancyUnlockConfirmAPIView(APIView):
         vacancy = Vacancy.objects.get(pk=pk)
         if vacancy.is_deleted_by_moderator:
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        if vacancy.is_paused_by_owner:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
         token = request.data.get("unlock_token")
 
         if not token:
@@ -437,6 +454,8 @@ class VacancyApproveAPIView(APIView):
             return Response({"error": "vacancy_editing"}, status=409)
         vacancy.is_approved = True
         vacancy.is_rejected = False
+        vacancy.is_paused_by_owner = False
+        vacancy.paused_by_owner_at = None
         vacancy.rejection_reason = ""
         vacancy.last_moderator_rejection_reason = ""
         vacancy.moderation_baseline = {}
@@ -446,6 +465,8 @@ class VacancyApproveAPIView(APIView):
             update_fields=[
                 "is_approved",
                 "is_rejected",
+                "is_paused_by_owner",
+                "paused_by_owner_at",
                 "rejection_reason",
                 "last_moderator_rejection_reason",
                 "moderation_baseline",
@@ -470,6 +491,8 @@ class VacancyRejectAPIView(APIView):
         vacancy.last_moderator_rejection_reason = reason
         vacancy.is_approved = False
         vacancy.is_rejected = True
+        vacancy.is_paused_by_owner = False
+        vacancy.paused_by_owner_at = None
         vacancy.rejection_reason = reason
         vacancy.is_editing = False
         vacancy.editing_started_at = None
@@ -477,6 +500,8 @@ class VacancyRejectAPIView(APIView):
             update_fields=[
                 "is_approved",
                 "is_rejected",
+                "is_paused_by_owner",
+                "paused_by_owner_at",
                 "rejection_reason",
                 "last_moderator_rejection_reason",
                 "moderation_baseline",
@@ -501,6 +526,8 @@ class VacancyResubmitAPIView(APIView):
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         vacancy.is_approved = False
         vacancy.is_rejected = False
+        vacancy.is_paused_by_owner = False
+        vacancy.paused_by_owner_at = None
         vacancy.rejection_reason = ""
         vacancy.is_editing = False
         vacancy.editing_started_at = None
@@ -508,12 +535,56 @@ class VacancyResubmitAPIView(APIView):
             update_fields=[
                 "is_approved",
                 "is_rejected",
+                "is_paused_by_owner",
+                "paused_by_owner_at",
                 "rejection_reason",
                 "is_editing",
                 "editing_started_at",
             ]
         )
         return Response({"detail": "resubmitted"}, status=200)
+
+
+class VacancyOwnerPauseAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @staticmethod
+    def _to_bool(value, default):
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def post(self, request, pk):
+        vacancy = Vacancy.objects.filter(pk=pk, created_by=request.user).first()
+        if not vacancy:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        if not vacancy.is_approved:
+            return Response({"error": "only_approved_vacancy_allowed"}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_paused = self._to_bool(
+            request.data.get("paused"),
+            default=not vacancy.is_paused_by_owner,
+        )
+        vacancy.is_paused_by_owner = target_paused
+        vacancy.paused_by_owner_at = timezone.now() if target_paused else None
+        vacancy.save(update_fields=["is_paused_by_owner", "paused_by_owner_at"])
+
+        return Response(
+            {
+                "detail": "updated",
+                "is_paused_by_owner": bool(vacancy.is_paused_by_owner),
+                "paused_by_owner_at": (
+                    vacancy.paused_by_owner_at.isoformat()
+                    if vacancy.paused_by_owner_at
+                    else ""
+                ),
+            },
+            status=200,
+        )
 
 
 class VacancyMineAPIView(generics.ListAPIView):
@@ -560,6 +631,8 @@ class VacancyEditAPIView(APIView):
                 is_rejected=False,
                 rejection_reason="",
                 is_editing=False,
+                is_paused_by_owner=False,
+                paused_by_owner_at=None,
                 revision=next_revision,
                 # Marks resubmission time; pending list applies 60s delay.
                 editing_started_at=timezone.now(),
@@ -570,6 +643,8 @@ class VacancyEditAPIView(APIView):
                 is_rejected=False,
                 rejection_reason="",
                 is_editing=True,
+                is_paused_by_owner=False,
+                paused_by_owner_at=None,
                 revision=next_revision,
                 editing_started_at=timezone.now(),
             )
@@ -726,6 +801,12 @@ class ComplaintModerationActionAPIView(APIView):
         return {
             "is_approved": bool(vacancy.is_approved),
             "is_rejected": bool(vacancy.is_rejected),
+            "is_paused_by_owner": bool(vacancy.is_paused_by_owner),
+            "paused_by_owner_at": (
+                vacancy.paused_by_owner_at.isoformat()
+                if vacancy.paused_by_owner_at
+                else ""
+            ),
             "is_editing": bool(vacancy.is_editing),
             "rejection_reason": vacancy.rejection_reason or "",
             "is_deleted_by_moderator": bool(vacancy.is_deleted_by_moderator),
@@ -770,6 +851,8 @@ class ComplaintModerationActionAPIView(APIView):
                 vacancy.moderator_deleted_state = _vacancy_moderation_state_snapshot(vacancy)
             vacancy.is_approved = False
             vacancy.is_rejected = True
+            vacancy.is_paused_by_owner = False
+            vacancy.paused_by_owner_at = None
             vacancy.is_editing = False
             vacancy.rejection_reason = action_reason
             vacancy.moderation_baseline = {}
@@ -783,6 +866,8 @@ class ComplaintModerationActionAPIView(APIView):
             vacancy.last_moderator_rejection_reason = action_reason
             vacancy.is_approved = False
             vacancy.is_rejected = True
+            vacancy.is_paused_by_owner = False
+            vacancy.paused_by_owner_at = None
             vacancy.is_editing = False
             vacancy.rejection_reason = action_reason
             vacancy.editing_started_at = None
@@ -794,6 +879,10 @@ class ComplaintModerationActionAPIView(APIView):
             if vacancy.is_deleted_by_moderator and isinstance(deleted_state, dict) and deleted_state:
                 vacancy.is_approved = bool(deleted_state.get("is_approved", False))
                 vacancy.is_rejected = bool(deleted_state.get("is_rejected", False))
+                vacancy.is_paused_by_owner = bool(deleted_state.get("is_paused_by_owner", False))
+                paused_raw = (deleted_state.get("paused_by_owner_at") or "").strip()
+                paused_parsed = parse_datetime(paused_raw) if paused_raw else None
+                vacancy.paused_by_owner_at = paused_parsed if vacancy.is_paused_by_owner else None
                 vacancy.is_editing = bool(deleted_state.get("is_editing", False))
                 vacancy.rejection_reason = (deleted_state.get("rejection_reason") or "").strip()
                 vacancy.last_moderator_rejection_reason = (
@@ -804,6 +893,8 @@ class ComplaintModerationActionAPIView(APIView):
             else:
                 vacancy.is_approved = True
                 vacancy.is_rejected = False
+                vacancy.is_paused_by_owner = False
+                vacancy.paused_by_owner_at = None
                 vacancy.is_editing = False
                 vacancy.rejection_reason = ""
                 vacancy.last_moderator_rejection_reason = ""
@@ -817,6 +908,8 @@ class ComplaintModerationActionAPIView(APIView):
             update_fields=[
                 "is_approved",
                 "is_rejected",
+                "is_paused_by_owner",
+                "paused_by_owner_at",
                 "is_editing",
                 "rejection_reason",
                 "last_moderator_rejection_reason",

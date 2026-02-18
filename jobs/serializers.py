@@ -349,6 +349,8 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "is_approved",
             "is_rejected",
             "rejection_reason",
+            "is_paused_by_owner",
+            "paused_by_owner_at",
             "is_editing",
             "editing_started_at",
             "moderation_status",
@@ -386,6 +388,8 @@ class VacancyMineSerializer(serializers.ModelSerializer):
     def get_status_label_key(self, obj):
         if obj.is_editing:
             return "statusEditing"
+        if obj.is_approved and obj.is_paused_by_owner:
+            return "statusPaused"
         if obj.is_approved:
             return "statusApproved"
         if obj.is_rejected:

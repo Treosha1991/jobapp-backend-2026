@@ -8,6 +8,7 @@ from .api import (
     VacancyApproveAPIView,
     VacancyRejectAPIView,
     VacancyResubmitAPIView,
+    VacancyOwnerPauseAPIView,
     VacancyMineAPIView,
     VacancyEditAPIView,
     VacancyContactAPIView,
@@ -63,6 +64,7 @@ urlpatterns = [
     path("vacancies/<int:pk>/approve/", VacancyApproveAPIView.as_view(), name="vacancy-approve"),
     path("vacancies/<int:pk>/reject/", VacancyRejectAPIView.as_view(), name="vacancy-reject"),
     path("vacancies/<int:pk>/resubmit/", VacancyResubmitAPIView.as_view(), name="vacancy-resubmit"),
+    path("vacancies/<int:pk>/pause/", VacancyOwnerPauseAPIView.as_view(), name="vacancy-owner-pause"),
 
     path("vacancies/<int:pk>/contacts/", VacancyContactAPIView.as_view()),
     path("vacancies/<int:pk>/block-owner/", VacancyBlockOwnerAPIView.as_view(), name="vacancy-block-owner"),

@@ -160,6 +160,9 @@ class Vacancy(models.Model):
     # Snapshot of moderation state before moderator delete for restore action.
     moderator_deleted_state = models.JSONField(default=dict, blank=True)
     deleted_by_moderator_at = models.DateTimeField(blank=True, null=True)
+    # Owner can temporarily hide approved vacancy from public feed.
+    is_paused_by_owner = models.BooleanField(default=False)
+    paused_by_owner_at = models.DateTimeField(blank=True, null=True)
     is_editing = models.BooleanField(default=False)
     editing_started_at = models.DateTimeField(blank=True, null=True)
 
