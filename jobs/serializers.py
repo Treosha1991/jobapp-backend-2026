@@ -60,6 +60,17 @@ def _normalize_compare_value(value):
     return str(value).strip()
 
 
+def _creator_nickname(obj):
+    creator = getattr(obj, "created_by", None)
+    if not creator:
+        return ""
+    try:
+        profile = creator.profile
+    except Exception:
+        profile = None
+    return (getattr(profile, "nickname", "") or "").strip()
+
+
 class VacancyListSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
@@ -95,6 +106,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
 
     def get_contacts(self, obj):
         return {
+            "nickname": _creator_nickname(obj),
             "phone": obj.phone or "",
             "telegram": obj.telegram or "",
             "whatsapp": obj.whatsapp or "",
@@ -172,6 +184,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
 
     def get_contacts(self, obj):
         return {
+            "nickname": _creator_nickname(obj),
             "phone": obj.phone or "",
             "telegram": obj.telegram or "",
             "whatsapp": obj.whatsapp or "",
@@ -362,6 +375,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
 
     def get_contacts(self, obj):
         return {
+            "nickname": _creator_nickname(obj),
             "phone": obj.phone or "",
             "telegram": obj.telegram or "",
             "whatsapp": obj.whatsapp or "",
@@ -410,15 +424,21 @@ class VacancyMineSerializer(serializers.ModelSerializer):
         return raw.split(":", 1)[1].strip()
 
 class VacancyContactSerializer(serializers.ModelSerializer):
+    nickname = serializers.SerializerMethodField()
+
     class Meta:
         model = Vacancy
         fields = [
+            "nickname",
             "phone",
             "whatsapp",
             "viber",
             "telegram",
             "email",
         ]
+
+    def get_nickname(self, obj):
+        return _creator_nickname(obj)
 
 
 class ComplaintListSerializer(serializers.ModelSerializer):

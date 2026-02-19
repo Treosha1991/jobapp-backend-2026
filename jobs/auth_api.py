@@ -51,6 +51,7 @@ def _auth_payload(user, token):
         "token": token.key,
         "is_staff": user.is_staff,
         "email": user.email or "",
+        "nickname": (profile.nickname if profile else "") or "",
         "phone": (profile.phone_e164 if profile else "") or "",
         "phone_verified": bool(profile and profile.phone_verified),
     }
@@ -699,6 +700,20 @@ class MeAPIView(APIView):
     def get(self, request):
         token, _ = Token.objects.get_or_create(user=request.user)
         return Response(_auth_payload(request.user, token))
+
+    def patch(self, request):
+        nickname = (request.data.get("nickname") or "").strip()
+        if len(nickname) > 32:
+            return Response({"error": "nickname_too_long"}, status=status.HTTP_400_BAD_REQUEST)
+
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        profile.nickname = nickname
+        profile.save(update_fields=["nickname"])
+
+        token, _ = Token.objects.get_or_create(user=request.user)
+        payload = _auth_payload(request.user, token)
+        payload["detail"] = "nickname_updated"
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class AccountDeletionRequestAPIView(APIView):
