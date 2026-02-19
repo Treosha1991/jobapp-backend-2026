@@ -53,7 +53,10 @@ class VacancyListAPIView(generics.ListAPIView):
         if housing_type:
             qs = qs.filter(housing_type=housing_type)
         if search:
-            qs = qs.filter(title__icontains=search)
+            qs = qs.filter(
+                Q(title__icontains=search) |
+                Q(city__icontains=search)
+            )
 
         if self.request.user.is_authenticated:
             qs = qs.exclude(created_by__incoming_blocks__blocker=self.request.user)
