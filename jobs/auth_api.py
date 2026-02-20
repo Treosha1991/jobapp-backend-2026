@@ -57,6 +57,33 @@ def _auth_payload(user, token):
     }
 
 
+def _login_candidates(identifier):
+    value = (identifier or "").strip()
+    if not value:
+        return []
+
+    users = []
+    seen_ids = set()
+
+    for user in User.objects.filter(username__iexact=value):
+        if user.id in seen_ids:
+            continue
+        users.append(user)
+        seen_ids.add(user.id)
+
+    nickname_matches = UserProfile.objects.filter(
+        nickname__iexact=value
+    ).select_related("user")
+    for profile in nickname_matches:
+        user = profile.user
+        if not user or user.id in seen_ids:
+            continue
+        users.append(user)
+        seen_ids.add(user.id)
+
+    return users
+
+
 def _send_email_code(email, code, purpose="register"):
     if purpose == "reset":
         subject = "JobHub password reset code"
@@ -679,16 +706,40 @@ class LoginAPIView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        email = (request.data.get("email") or "").strip().lower()
+        identifier = (request.data.get("identifier") or request.data.get("email") or "").strip()
         password = request.data.get("password") or ""
 
-        user = User.objects.filter(username=email).first()
-        if user and not user.is_active:
-            return Response({"error": "email_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = authenticate(username=email, password=password)
-        if not user:
+        if not identifier or not password:
             return Response({"error": "invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+
+        candidates = _login_candidates(identifier)
+        if not candidates:
+            return Response({"error": "invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if "@" in identifier:
+            email_candidate = next(
+                (u for u in candidates if (u.username or "").lower() == identifier.lower()),
+                None,
+            )
+            if email_candidate and not email_candidate.is_active:
+                return Response({"error": "email_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
+
+        authenticated_users = []
+        seen_ids = set()
+        for candidate in candidates:
+            user = authenticate(username=candidate.username, password=password)
+            if not user or user.id in seen_ids:
+                continue
+            authenticated_users.append(user)
+            seen_ids.add(user.id)
+
+        if not authenticated_users:
+            return Response({"error": "invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(authenticated_users) > 1:
+            return Response({"error": "nickname_not_unique"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = authenticated_users[0]
 
         token, _ = Token.objects.get_or_create(user=user)
         return Response(_auth_payload(user, token))
