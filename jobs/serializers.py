@@ -1,5 +1,6 @@
 ﻿from rest_framework import serializers
 import re
+from .avatar_utils import avatar_public_url
 from .models import Complaint, Vacancy
 
 
@@ -69,6 +70,27 @@ def _creator_nickname(obj):
     except Exception:
         profile = None
     return (getattr(profile, "nickname", "") or "").strip()
+
+def _creator_display_name(obj):
+    creator = getattr(obj, "created_by", None)
+    if not creator:
+        return ""
+    nickname = _creator_nickname(obj)
+    if nickname:
+        return nickname
+    return f"Employer #{creator.id}"
+
+
+def _creator_avatar_url(obj):
+    creator = getattr(obj, "created_by", None)
+    if not creator:
+        return ""
+    try:
+        profile = creator.profile
+    except Exception:
+        profile = None
+    avatar_key = (getattr(profile, "avatar_key", "") or "").strip()
+    return avatar_public_url(avatar_key)
 
 
 class VacancyListSerializer(serializers.ModelSerializer):
@@ -425,10 +447,16 @@ class VacancyMineSerializer(serializers.ModelSerializer):
 
 class VacancyContactSerializer(serializers.ModelSerializer):
     nickname = serializers.SerializerMethodField()
+    owner_user_id = serializers.SerializerMethodField()
+    owner_nickname = serializers.SerializerMethodField()
+    owner_avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
         fields = [
+            "owner_user_id",
+            "owner_nickname",
+            "owner_avatar_url",
             "nickname",
             "phone",
             "whatsapp",
@@ -437,8 +465,17 @@ class VacancyContactSerializer(serializers.ModelSerializer):
             "email",
         ]
 
+    def get_owner_user_id(self, obj):
+        return getattr(obj.created_by, "id", None)
+
+    def get_owner_nickname(self, obj):
+        return _creator_display_name(obj)
+
+    def get_owner_avatar_url(self, obj):
+        return _creator_avatar_url(obj)
+
     def get_nickname(self, obj):
-        return _creator_nickname(obj)
+        return _creator_display_name(obj)
 
 
 class ComplaintListSerializer(serializers.ModelSerializer):

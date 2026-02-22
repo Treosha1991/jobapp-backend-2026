@@ -1,14 +1,17 @@
 from django.utils import timezone
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.core.mail import send_mail
 from django.db.models import Case, Count, F, IntegerField, Max, Q, Value, When
 from django.utils.dateparse import parse_date, parse_datetime
 import secrets
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .avatar_utils import avatar_public_url
 from .models import Complaint, ComplaintActionLog, UserBlock, Vacancy, UserProfile, UnlockedContact
 from .serializers import (
     ComplaintListSerializer,
@@ -193,6 +196,32 @@ def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff
 
 
+def _masked_email(email):
+    value = (email or "").strip()
+    if not value or "@" not in value:
+        return ""
+    local, domain = value.split("@", 1)
+    if not local:
+        return f"***@{domain}"
+    if len(local) == 1:
+        return f"{local}***@{domain}"
+    return f"{local[:2]}***@{domain}"
+
+
+def _owner_nickname_or_fallback(owner):
+    profile = getattr(owner, "profile", None)
+    nickname = (getattr(profile, "nickname", "") or "").strip() if profile else ""
+    if nickname:
+        return nickname
+    return f"Employer #{owner.id}"
+
+
+def _owner_avatar_url(owner):
+    profile = getattr(owner, "profile", None)
+    avatar_key = (getattr(profile, "avatar_key", "") or "").strip() if profile else ""
+    return avatar_public_url(avatar_key)
+
+
 def _vacancy_editable_snapshot(vacancy):
     return {
         "title": vacancy.title or "",
@@ -355,7 +384,65 @@ class VacancyContactAPIView(APIView):
 
         serializer = VacancyContactSerializer(vacancy)
         return Response(serializer.data)
-    
+
+
+class EmployerProfileAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, owner_user_id):
+        owner = (
+            User.objects.filter(id=owner_user_id)
+            .select_related("profile")
+            .first()
+        )
+        if not owner:
+            return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        blocked = UserBlock.objects.filter(
+            Q(blocker=request.user, blocked_user=owner)
+            | Q(blocker=owner, blocked_user=request.user)
+        ).exists()
+        if blocked:
+            return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        qs = Vacancy.objects.filter(
+            created_by=owner,
+            is_approved=True,
+            is_paused_by_owner=False,
+            is_deleted_by_moderator=False,
+            expires_at__gt=timezone.now(),
+        ).order_by("-published_at")
+
+        qs = qs.exclude(
+            Q(
+                complaints__reporter=request.user,
+                complaints__vacancy_revision_snapshot=F("revision"),
+            )
+            & ~Q(created_by=request.user)
+        ).distinct()
+
+        paginator = PageNumberPagination()
+        page = paginator.paginate_queryset(qs, request, view=self)
+        serializer = VacancyListSerializer(page, many=True)
+        paginated = paginator.get_paginated_response(serializer.data).data
+
+        return Response(
+            {
+                "employer": {
+                    "id": owner.id,
+                    "nickname": _owner_nickname_or_fallback(owner),
+                    "email_masked": _masked_email(owner.email),
+                    "avatar_url": _owner_avatar_url(owner),
+                },
+                "count": paginated.get("count", 0),
+                "next": paginated.get("next"),
+                "previous": paginated.get("previous"),
+                "results": paginated.get("results", []),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 from .models import UnlockRequest
 from rest_framework import status
 

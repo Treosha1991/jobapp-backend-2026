@@ -4,6 +4,7 @@ import random
 import re
 import threading
 import base64
+from importlib import util as importlib_util
 from datetime import timedelta
 from urllib import parse, request as urllib_request
 from urllib.error import HTTPError
@@ -20,6 +21,16 @@ from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .avatar_storage import (
+    delete_avatar_object,
+    is_avatar_storage_configured,
+    upload_avatar_bytes,
+)
+from .avatar_utils import (
+    avatar_public_url,
+    build_avatar_object_key,
+    process_avatar_image,
+)
 from .models import AccountDeletionRequest, EmailVerification, PhoneVerification, UserProfile, Vacancy
 
 _PHONE_REQUEST_WINDOW = timedelta(minutes=10)
@@ -47,11 +58,13 @@ def _normalize_phone(raw_phone):
 
 def _auth_payload(user, token):
     profile = UserProfile.objects.filter(user=user).first()
+    avatar_key = (profile.avatar_key if profile else "") or ""
     return {
         "token": token.key,
         "is_staff": user.is_staff,
         "email": user.email or "",
         "nickname": (profile.nickname if profile else "") or "",
+        "avatar_url": avatar_public_url(avatar_key),
         "phone": (profile.phone_e164 if profile else "") or "",
         "phone_verified": bool(profile and profile.phone_verified),
     }
@@ -765,6 +778,92 @@ class MeAPIView(APIView):
         payload = _auth_payload(request.user, token)
         payload["detail"] = "nickname_updated"
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class MeAvatarAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not is_avatar_storage_configured():
+            return Response(
+                {"error": "avatar_storage_not_configured"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        if importlib_util.find_spec("PIL") is None:
+            return Response(
+                {"error": "avatar_processing_unavailable"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        avatar_file = request.FILES.get("avatar")
+        try:
+            payload, content_type, ext = process_avatar_image(avatar_file)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            print(f"[AVATAR-PROCESS-ERROR] user={request.user.id}: {exc}")
+            return Response(
+                {"error": "avatar_processing_failed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        old_key = (profile.avatar_key or "").strip()
+        new_key = build_avatar_object_key(
+            user_id=request.user.id,
+            filename=f"avatar{ext}",
+        )
+
+        try:
+            upload_avatar_bytes(
+                object_key=new_key,
+                payload=payload,
+                content_type=content_type,
+            )
+        except Exception as exc:
+            print(f"[AVATAR-UPLOAD-ERROR] user={request.user.id}: {exc}")
+            return Response(
+                {"error": "avatar_upload_failed"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        profile.avatar_key = new_key
+        profile.avatar_updated_at = timezone.now()
+        profile.save(update_fields=["avatar_key", "avatar_updated_at"])
+
+        if old_key and old_key != new_key:
+            try:
+                delete_avatar_object(old_key)
+            except Exception as exc:
+                # Non-blocking by design: keep successful update even if cleanup failed.
+                print(f"[AVATAR-DELETE-OLD-ERROR] user={request.user.id}: {exc}")
+
+        token, _ = Token.objects.get_or_create(user=request.user)
+        auth_payload = _auth_payload(request.user, token)
+        auth_payload["detail"] = "avatar_updated"
+        return Response(auth_payload, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        profile = UserProfile.objects.filter(user=request.user).first()
+        old_key = (profile.avatar_key or "").strip() if profile else ""
+
+        if profile:
+            profile.avatar_key = ""
+            profile.avatar_updated_at = timezone.now()
+            profile.save(update_fields=["avatar_key", "avatar_updated_at"])
+
+        if old_key:
+            try:
+                delete_avatar_object(old_key)
+            except Exception as exc:
+                # Non-blocking by design: local state already cleaned.
+                print(f"[AVATAR-DELETE-ERROR] user={request.user.id}: {exc}")
+
+        token, _ = Token.objects.get_or_create(user=request.user)
+        auth_payload = _auth_payload(request.user, token)
+        auth_payload["detail"] = "avatar_deleted"
+        return Response(auth_payload, status=status.HTTP_200_OK)
 
 
 class AccountDeletionRequestAPIView(APIView):

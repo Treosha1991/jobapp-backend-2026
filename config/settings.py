@@ -164,4 +164,16 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no
 SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", DEFAULT_FROM_EMAIL)
 COMPLAINT_EMAIL = os.environ.get("COMPLAINT_EMAIL", "complaint@jobhub.today")
 
+# Avatar / Cloudflare R2 (public read URL expected)
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "").strip()
+R2_BUCKET = os.environ.get("R2_BUCKET", "").strip()
+R2_REGION = os.environ.get("R2_REGION", "auto").strip()
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+R2_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL", "").strip()
+AVATAR_PUBLIC_BASE_URL = (
+    os.environ.get("AVATAR_PUBLIC_BASE_URL", "").strip()
+    or os.environ.get("R2_PUBLIC_BASE_URL", "").strip()
+)
+
 
