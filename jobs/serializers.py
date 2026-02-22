@@ -93,6 +93,21 @@ def _creator_avatar_url(obj):
     return avatar_public_url(avatar_key)
 
 
+def _contact_payload(obj):
+    return {
+        "owner_user_id": getattr(getattr(obj, "created_by", None), "id", None),
+        "owner_nickname": _creator_display_name(obj),
+        "owner_avatar_url": _creator_avatar_url(obj),
+        # compatibility with existing mobile fields
+        "nickname": _creator_nickname(obj),
+        "phone": obj.phone or "",
+        "telegram": obj.telegram or "",
+        "whatsapp": obj.whatsapp or "",
+        "email": obj.email or "",
+        "viber": obj.viber or "",
+    }
+
+
 class VacancyListSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
@@ -127,14 +142,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
         ]
 
     def get_contacts(self, obj):
-        return {
-            "nickname": _creator_nickname(obj),
-            "phone": obj.phone or "",
-            "telegram": obj.telegram or "",
-            "whatsapp": obj.whatsapp or "",
-            "email": obj.email or "",
-            "viber": obj.viber or "",
-        }
+        return _contact_payload(obj)
 
     def get_salary_monthly_from(self, obj):
         return _salary_monthly_from(obj)
@@ -205,14 +213,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_contacts(self, obj):
-        return {
-            "nickname": _creator_nickname(obj),
-            "phone": obj.phone or "",
-            "telegram": obj.telegram or "",
-            "whatsapp": obj.whatsapp or "",
-            "email": obj.email or "",
-            "viber": obj.viber or "",
-        }
+        return _contact_payload(obj)
 
     def get_salary_monthly_from(self, obj):
         return _salary_monthly_from(obj)
@@ -396,14 +397,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
         ]
 
     def get_contacts(self, obj):
-        return {
-            "nickname": _creator_nickname(obj),
-            "phone": obj.phone or "",
-            "telegram": obj.telegram or "",
-            "whatsapp": obj.whatsapp or "",
-            "email": obj.email or "",
-            "viber": obj.viber or "",
-        }
+        return _contact_payload(obj)
 
     def get_salary_monthly_from(self, obj):
         return _salary_monthly_from(obj)
