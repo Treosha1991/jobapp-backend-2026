@@ -60,13 +60,8 @@ def process_avatar_image(uploaded_file):
     if getattr(uploaded_file, "size", 0) > AVATAR_MAX_BYTES:
         raise ValueError("avatar_too_large")
 
-    filename = (getattr(uploaded_file, "name", "") or "").strip()
-    content_type = (getattr(uploaded_file, "content_type", "") or "").strip().lower()
-
-    if not is_avatar_extension_allowed(filename):
-        raise ValueError("avatar_invalid_type")
-    if content_type and not is_avatar_content_type_allowed(content_type):
-        raise ValueError("avatar_invalid_type")
+    # Some mobile galleries send generic/incorrect MIME or uncommon extensions
+    # (e.g. jfif, heic). Validate by actual decode instead of metadata only.
 
     raw = uploaded_file.read()
     if not raw:
