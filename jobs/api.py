@@ -134,7 +134,7 @@ class UserBlockListAPIView(APIView):
     def get(self, request):
         blocks = (
             UserBlock.objects.filter(blocker=request.user)
-            .select_related("blocked_user")
+            .select_related("blocked_user", "blocked_user__profile")
             .order_by("-created_at")
         )
         results = [
@@ -142,6 +142,8 @@ class UserBlockListAPIView(APIView):
                 "blocked_user_id": block.blocked_user_id,
                 "blocked_user_email": (block.blocked_user.email or "").strip(),
                 "blocked_user_username": block.blocked_user.username,
+                "blocked_user_nickname": _owner_nickname_or_fallback(block.blocked_user),
+                "blocked_user_avatar_url": _owner_avatar_url(block.blocked_user),
                 "created_at": block.created_at,
             }
             for block in blocks
