@@ -45,6 +45,8 @@ _MODERATION_COMPARISON_FIELDS = [
     "housing_type",
     "housing_cost",
     "phone",
+    "additional_phone",
+    "hide_primary_phone",
     "whatsapp",
     "viber",
     "telegram",
@@ -94,17 +96,33 @@ def _creator_avatar_url(obj):
 
 
 def _contact_payload(obj):
+    primary_phone = (obj.phone or "").strip()
+    additional_phone = (getattr(obj, "additional_phone", "") or "").strip()
+    hide_primary_phone = bool(getattr(obj, "hide_primary_phone", False))
+    public_phone = additional_phone if hide_primary_phone else primary_phone
+    raw_whatsapp = (obj.whatsapp or "").strip()
+    raw_viber = (obj.viber or "").strip()
+    raw_telegram = (obj.telegram or "").strip()
+    public_whatsapp = additional_phone if hide_primary_phone and raw_whatsapp else raw_whatsapp
+    public_viber = additional_phone if hide_primary_phone and raw_viber else raw_viber
+    public_telegram = additional_phone if hide_primary_phone and raw_telegram else raw_telegram
     return {
         "owner_user_id": getattr(getattr(obj, "created_by", None), "id", None),
         "owner_nickname": _creator_display_name(obj),
         "owner_avatar_url": _creator_avatar_url(obj),
         # compatibility with existing mobile fields
         "nickname": _creator_nickname(obj),
-        "phone": obj.phone or "",
-        "telegram": obj.telegram or "",
-        "whatsapp": obj.whatsapp or "",
+        "phone": primary_phone,
+        "additional_phone": additional_phone,
+        "hide_primary_phone": hide_primary_phone,
+        "public_phone": public_phone,
+        "telegram": raw_telegram,
+        "whatsapp": raw_whatsapp,
         "email": obj.email or "",
-        "viber": obj.viber or "",
+        "viber": raw_viber,
+        "public_telegram": public_telegram,
+        "public_whatsapp": public_whatsapp,
+        "public_viber": public_viber,
     }
 
 
@@ -241,6 +259,8 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "housing_type",
             "housing_cost",
             "phone",
+            "additional_phone",
+            "hide_primary_phone",
             "whatsapp",
             "viber",
             "telegram",
@@ -256,6 +276,8 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "salary_currency": {"required": False, "allow_blank": True},
             "salary_tax_type": {"required": False, "allow_blank": True},
             "salary_hours_month": {"required": False, "allow_null": True},
+            "additional_phone": {"required": False, "allow_blank": True},
+            "hide_primary_phone": {"required": False},
         }
 
     def validate(self, attrs):
@@ -272,6 +294,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
         _check_len("city", 20)
         _check_len("salary", 80)
         _check_len("phone", 15)
+        _check_len("additional_phone", 15)
         _check_len("telegram", 15)
         _check_len("whatsapp", 15)
         _check_len("viber", 15)
@@ -287,16 +310,27 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
                     errors["description"] = "max 50 lines"
 
         contact_pattern = re.compile(r"^[0-9+()\-\ ]+$")
-        for field in ("phone", "telegram", "whatsapp", "viber"):
+        for field in ("phone", "additional_phone", "telegram", "whatsapp", "viber"):
             val = attrs.get(field)
             if val:
                 if not contact_pattern.match(val):
                     errors[field] = "only digits and symbols"
 
-        email = attrs.get("email")
+        primary_phone = (attrs.get("phone") or "").strip()
+        additional_phone = (attrs.get("additional_phone") or "").strip()
+        hide_primary_phone = bool(attrs.get("hide_primary_phone"))
+        public_phone = additional_phone if hide_primary_phone else primary_phone
+
+        if hide_primary_phone and not additional_phone:
+            errors["additional_phone"] = "required when primary phone is hidden"
+
+        email = (attrs.get("email") or "").strip()
         if email:
             if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
                 errors["email"] = "invalid email"
+
+        if not public_phone and not email:
+            errors["contacts"] = "provide at least one contact"
 
         salary_from = attrs.get("salary_from")
         salary_to = attrs.get("salary_to")
@@ -444,6 +478,12 @@ class VacancyContactSerializer(serializers.ModelSerializer):
     owner_user_id = serializers.SerializerMethodField()
     owner_nickname = serializers.SerializerMethodField()
     owner_avatar_url = serializers.SerializerMethodField()
+    phone = serializers.SerializerMethodField()
+    whatsapp = serializers.SerializerMethodField()
+    viber = serializers.SerializerMethodField()
+    telegram = serializers.SerializerMethodField()
+    additional_phone = serializers.SerializerMethodField()
+    hide_primary_phone = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -453,6 +493,8 @@ class VacancyContactSerializer(serializers.ModelSerializer):
             "owner_avatar_url",
             "nickname",
             "phone",
+            "additional_phone",
+            "hide_primary_phone",
             "whatsapp",
             "viber",
             "telegram",
@@ -470,6 +512,36 @@ class VacancyContactSerializer(serializers.ModelSerializer):
 
     def get_nickname(self, obj):
         return _creator_display_name(obj)
+
+    def get_hide_primary_phone(self, obj):
+        return bool(getattr(obj, "hide_primary_phone", False))
+
+    def get_additional_phone(self, obj):
+        return (getattr(obj, "additional_phone", "") or "").strip()
+
+    def get_phone(self, obj):
+        primary = (obj.phone or "").strip()
+        additional = self.get_additional_phone(obj)
+        if self.get_hide_primary_phone(obj):
+            return additional
+        return primary
+
+    def _public_messenger(self, obj, raw_value):
+        raw = (raw_value or "").strip()
+        if not raw:
+            return ""
+        if self.get_hide_primary_phone(obj):
+            return self.get_additional_phone(obj)
+        return raw
+
+    def get_whatsapp(self, obj):
+        return self._public_messenger(obj, obj.whatsapp)
+
+    def get_viber(self, obj):
+        return self._public_messenger(obj, obj.viber)
+
+    def get_telegram(self, obj):
+        return self._public_messenger(obj, obj.telegram)
 
 
 class ComplaintListSerializer(serializers.ModelSerializer):

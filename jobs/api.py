@@ -239,6 +239,8 @@ def _vacancy_editable_snapshot(vacancy):
         "housing_type": vacancy.housing_type or "",
         "housing_cost": vacancy.housing_cost or "",
         "phone": vacancy.phone or "",
+        "additional_phone": vacancy.additional_phone or "",
+        "hide_primary_phone": bool(vacancy.hide_primary_phone),
         "whatsapp": vacancy.whatsapp or "",
         "viber": vacancy.viber or "",
         "telegram": vacancy.telegram or "",
