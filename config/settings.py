@@ -176,4 +176,17 @@ AVATAR_PUBLIC_BASE_URL = (
     or os.environ.get("R2_PUBLIC_BASE_URL", "").strip()
 )
 
+# Push notifications
+# PUSH_PROVIDER:
+# - "" / missing: disabled
+# - "log": simulate successful send and print payload in logs
+# - "fcm_legacy": send through Firebase legacy HTTP API (requires FCM_SERVER_KEY)
+# - "fcm_v1": send through Firebase HTTP v1 via service account credentials
+PUSH_PROVIDER = os.environ.get("PUSH_PROVIDER", "").strip().lower()
+FCM_SERVER_KEY = os.environ.get("FCM_SERVER_KEY", "").strip()
+FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "").strip()
+FIREBASE_CLIENT_EMAIL = os.environ.get("FIREBASE_CLIENT_EMAIL", "").strip()
+FIREBASE_PRIVATE_KEY = os.environ.get("FIREBASE_PRIVATE_KEY", "")
+
 

@@ -407,3 +407,108 @@ class AccountDeletionRequest(models.Model):
 
     def __str__(self):
         return f"AccountDeletionRequest #{self.id} user={self.user_id_snapshot} status={self.status}"
+
+
+class PushDevice(models.Model):
+    PLATFORM_CHOICES = [
+        ("android", "Android"),
+        ("ios", "iOS"),
+        ("web", "Web"),
+        ("other", "Other"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="push_devices",
+    )
+    token = models.CharField(max_length=512, db_index=True)
+    platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES, default="android")
+    app_language = models.CharField(max_length=10, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_seen_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "token"], name="jobs_unique_push_device_per_user"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "is_active"]),
+            models.Index(fields=["token", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"PushDevice user={self.user_id} platform={self.platform} active={self.is_active}"
+
+
+class VacancyAlertSubscription(models.Model):
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="vacancy_alert_subscription",
+    )
+    enabled = models.BooleanField(default=False)
+    country = models.CharField(max_length=10, blank=True, default="")
+    city = models.CharField(max_length=80, blank=True, default="")
+    category = models.CharField(max_length=30, blank=True, default="")
+    employment_type = models.CharField(max_length=20, blank=True, default="")
+    housing_type = models.CharField(max_length=10, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["enabled", "updated_at"]),
+        ]
+
+    def __str__(self):
+        return f"VacancyAlertSubscription user={self.user_id} enabled={self.enabled}"
+
+
+class VacancyAlertDelivery(models.Model):
+    STATUS_CHOICES = [
+        ("sent", "Sent"),
+        ("failed", "Failed"),
+        ("skipped_no_device", "Skipped (no device)"),
+        ("skipped_not_configured", "Skipped (provider not configured)"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="vacancy_alert_deliveries",
+    )
+    subscription = models.ForeignKey(
+        VacancyAlertSubscription,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="deliveries",
+    )
+    vacancy = models.ForeignKey(
+        Vacancy,
+        on_delete=models.CASCADE,
+        related_name="alert_deliveries",
+    )
+    status = models.CharField(max_length=40, choices=STATUS_CHOICES)
+    device_platform = models.CharField(max_length=20, blank=True, default="")
+    device_token_tail = models.CharField(max_length=12, blank=True, default="")
+    provider_message_id = models.CharField(max_length=255, blank=True, default="")
+    error_text = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "vacancy"], name="jobs_unique_alert_delivery_user_vacancy"),
+        ]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["vacancy", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"VacancyAlertDelivery user={self.user_id} vacancy={self.vacancy_id} status={self.status}"

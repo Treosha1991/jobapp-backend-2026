@@ -11,10 +11,22 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .alerts import dispatch_vacancy_alerts, preview_vacancy_alerts
 from .avatar_utils import avatar_public_url
-from .models import Complaint, ComplaintActionLog, UserBlock, Vacancy, UserProfile, UnlockedContact
+from .models import (
+    Complaint,
+    ComplaintActionLog,
+    PushDevice,
+    UserBlock,
+    Vacancy,
+    VacancyAlertSubscription,
+    UserProfile,
+    UnlockedContact,
+)
 from .serializers import (
     ComplaintListSerializer,
+    PushDeviceRegisterSerializer,
+    VacancyAlertSubscriptionSerializer,
     VacancyContactSerializer,
     VacancyListSerializer,
     VacancyModerationSerializer,
@@ -179,7 +191,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             raise ValidationError({"error": "phone_verification_required"})
         is_moderator = _is_moderator(self.request)
         token = secrets.token_hex(32)
-        serializer.save(
+        vacancy = serializer.save(
             created_by=self.request.user,
             is_approved=is_moderator,
             is_rejected=False,
@@ -193,6 +205,12 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             creator_token=token,
             expires_at=timezone.now() + timedelta(days=30),
         )
+        if vacancy.is_approved and not vacancy.is_deleted_by_moderator:
+            try:
+                summary = dispatch_vacancy_alerts(vacancy)
+                print(f"[VACANCY-ALERTS] vacancy={vacancy.id} summary={summary}")
+            except Exception as exc:
+                print(f"[VACANCY-ALERTS-ERROR] vacancy={vacancy.id}: {exc}")
 
 def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff
@@ -353,6 +371,94 @@ def _notify_vacancy_owner_about_reject(*, vacancy, moderator, reason=""):
 class IsModerator(permissions.BasePermission):
     def has_permission(self, request, view):
         return _is_moderator(request)
+
+
+class PushDeviceAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = PushDeviceRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+
+        token = payload["token"]
+        platform = payload.get("platform") or "android"
+        app_language = payload.get("app_language") or ""
+
+        PushDevice.objects.filter(token=token).exclude(user=request.user).update(is_active=False)
+        device, created = PushDevice.objects.update_or_create(
+            user=request.user,
+            token=token,
+            defaults={
+                "platform": platform,
+                "app_language": app_language,
+                "is_active": True,
+            },
+        )
+        return Response(
+            {
+                "detail": "device_registered",
+                "created": created,
+                "platform": device.platform,
+                "app_language": device.app_language,
+                "is_active": bool(device.is_active),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request):
+        token = (request.data.get("token") or request.query_params.get("token") or "").strip()
+        devices = PushDevice.objects.filter(user=request.user, is_active=True)
+        if token:
+            devices = devices.filter(token=token)
+        updated = devices.update(is_active=False)
+        return Response(
+            {
+                "detail": "device_deactivated",
+                "updated": int(updated),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class VacancyAlertSubscriptionAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        subscription, _ = VacancyAlertSubscription.objects.get_or_create(user=request.user)
+        serializer = VacancyAlertSubscriptionSerializer(subscription)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        return self._save(request, partial=False)
+
+    def patch(self, request):
+        return self._save(request, partial=True)
+
+    def _save(self, request, *, partial):
+        subscription, _ = VacancyAlertSubscription.objects.get_or_create(user=request.user)
+        serializer = VacancyAlertSubscriptionSerializer(
+            subscription,
+            data=request.data,
+            partial=partial,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+        payload = dict(serializer.data)
+        payload["detail"] = "vacancy_alert_subscription_updated"
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class VacancyAlertPreviewAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, vacancy_id):
+        vacancy = Vacancy.objects.filter(id=vacancy_id).first()
+        if not vacancy:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        preview = preview_vacancy_alerts(vacancy)
+        return Response(preview, status=status.HTTP_200_OK)
+
 
 class VacancyContactAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -571,6 +677,11 @@ class VacancyApproveAPIView(APIView):
                 "editing_started_at",
             ]
         )
+        try:
+            summary = dispatch_vacancy_alerts(vacancy)
+            print(f"[VACANCY-ALERTS] vacancy={vacancy.id} summary={summary}")
+        except Exception as exc:
+            print(f"[VACANCY-ALERTS-ERROR] vacancy={vacancy.id}: {exc}")
         return Response({"detail": "approved"}, status=200)
 
 

@@ -3,7 +3,19 @@ from django.contrib.admin.sites import NotRegistered
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 from django.utils import timezone
-from .models import AccountDeletionRequest, Complaint, ComplaintActionLog, Vacancy, UserProfile, PhoneVerification, EmailVerification, UserBlock
+from .models import (
+    AccountDeletionRequest,
+    Complaint,
+    ComplaintActionLog,
+    EmailVerification,
+    PhoneVerification,
+    PushDevice,
+    UserBlock,
+    UserProfile,
+    Vacancy,
+    VacancyAlertDelivery,
+    VacancyAlertSubscription,
+)
 
 
 try:
@@ -163,4 +175,28 @@ class UserBlockAdmin(admin.ModelAdmin):
     list_display = ("id", "blocker", "blocked_user", "created_at")
     search_fields = ("blocker__username", "blocker__email", "blocked_user__username", "blocked_user__email")
     list_filter = ("created_at",)
+    ordering = ("-created_at",)
+
+
+@admin.register(PushDevice)
+class PushDeviceAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "platform", "is_active", "last_seen_at")
+    search_fields = ("user__username", "user__email", "token")
+    list_filter = ("platform", "is_active", "last_seen_at")
+    ordering = ("-last_seen_at",)
+
+
+@admin.register(VacancyAlertSubscription)
+class VacancyAlertSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "enabled", "country", "city", "category", "employment_type", "housing_type", "updated_at")
+    search_fields = ("user__username", "user__email", "city")
+    list_filter = ("enabled", "country", "category", "employment_type", "housing_type")
+    ordering = ("-updated_at",)
+
+
+@admin.register(VacancyAlertDelivery)
+class VacancyAlertDeliveryAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "vacancy", "status", "device_platform", "created_at")
+    search_fields = ("user__username", "user__email", "vacancy__title", "provider_message_id")
+    list_filter = ("status", "device_platform", "created_at")
     ordering = ("-created_at",)

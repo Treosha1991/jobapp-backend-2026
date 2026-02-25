@@ -22,6 +22,9 @@ from .api import (
     ComplaintByVacancyAPIView,
     ComplaintListAPIView,
     ComplaintModerationActionAPIView,
+    PushDeviceAPIView,
+    VacancyAlertPreviewAPIView,
+    VacancyAlertSubscriptionAPIView,
 )
 from .auth_api import (
     RegisterAPIView,
@@ -56,6 +59,9 @@ urlpatterns = [
     path("auth/link-email/confirm/", LinkEmailConfirmAPIView.as_view(), name="api-link-email-confirm"),
     path("auth/reset/request/", ResetPasswordRequestAPIView.as_view(), name="api-reset-request"),
     path("auth/reset/confirm/", ResetPasswordConfirmAPIView.as_view(), name="api-reset-confirm"),
+    path("notifications/devices/", PushDeviceAPIView.as_view(), name="notifications-devices"),
+    path("notifications/alerts/subscription/", VacancyAlertSubscriptionAPIView.as_view(), name="notifications-alert-subscription"),
+    path("notifications/alerts/preview/<int:vacancy_id>/", VacancyAlertPreviewAPIView.as_view(), name="notifications-alert-preview"),
 
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),
     path("vacancies/<int:pk>/", VacancyDetailAPIView.as_view(), name="vacancy-detail"),

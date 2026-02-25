@@ -1,7 +1,7 @@
 ﻿from rest_framework import serializers
 import re
 from .avatar_utils import avatar_public_url
-from .models import Complaint, Vacancy
+from .models import Complaint, PushDevice, Vacancy, VacancyAlertSubscription
 
 
 def _to_int_or_none(value):
@@ -542,6 +542,87 @@ class VacancyContactSerializer(serializers.ModelSerializer):
 
     def get_telegram(self, obj):
         return self._public_messenger(obj, obj.telegram)
+
+
+class PushDeviceRegisterSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=512)
+    platform = serializers.ChoiceField(
+        choices=[code for code, _ in PushDevice.PLATFORM_CHOICES],
+        required=False,
+        default="android",
+    )
+    app_language = serializers.CharField(required=False, allow_blank=True, max_length=10, default="")
+
+    def validate_token(self, value):
+        token = (value or "").strip()
+        if len(token) < 32:
+            raise serializers.ValidationError("invalid_device_token")
+        return token
+
+    def validate_app_language(self, value):
+        lang = (value or "").strip().lower()
+        if not lang:
+            return ""
+        if len(lang) > 10:
+            raise serializers.ValidationError("invalid_app_language")
+        return lang
+
+
+class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VacancyAlertSubscription
+        fields = [
+            "enabled",
+            "country",
+            "city",
+            "category",
+            "employment_type",
+            "housing_type",
+            "updated_at",
+        ]
+        read_only_fields = ["updated_at"]
+
+    def validate_country(self, value):
+        code = (value or "").strip().upper()
+        if not code:
+            return ""
+        allowed = {c for c, _ in Vacancy.COUNTRY_CHOICES}
+        if code not in allowed:
+            raise serializers.ValidationError("invalid_country")
+        return code
+
+    def validate_city(self, value):
+        city = (value or "").strip()
+        if len(city) > 80:
+            raise serializers.ValidationError("city_too_long")
+        return city
+
+    def validate_category(self, value):
+        code = (value or "").strip().lower()
+        if not code:
+            return ""
+        allowed = {c for c, _ in Vacancy.CATEGORY_CHOICES}
+        if code not in allowed:
+            raise serializers.ValidationError("invalid_category")
+        return code
+
+    def validate_employment_type(self, value):
+        code = (value or "").strip().lower()
+        if not code:
+            return ""
+        allowed = {c for c, _ in Vacancy.EMPLOYMENT_TYPE_CHOICES}
+        if code not in allowed:
+            raise serializers.ValidationError("invalid_employment_type")
+        return code
+
+    def validate_housing_type(self, value):
+        code = (value or "").strip().lower()
+        if not code:
+            return ""
+        allowed = {c for c, _ in Vacancy.HOUSING_TYPE_CHOICES}
+        if code not in allowed:
+            raise serializers.ValidationError("invalid_housing_type")
+        return code
 
 
 class ComplaintListSerializer(serializers.ModelSerializer):
