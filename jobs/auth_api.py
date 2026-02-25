@@ -38,6 +38,14 @@ _PHONE_REQUEST_MAX_ATTEMPTS = 3
 _ACCOUNT_DELETION_DELAY = timedelta(days=30)
 _phone_request_attempts = {}
 _phone_request_lock = threading.Lock()
+_RESERVED_NICKNAME_PARTS = (
+    "jobhub",
+    "support",
+    "moderator",
+    "admin",
+    "creator",
+    "administrator",
+)
 
 
 def _generate_code():
@@ -95,6 +103,13 @@ def _login_candidates(identifier):
         seen_ids.add(user.id)
 
     return users
+
+
+def _nickname_reserved_matches(nickname):
+    lowered = (nickname or "").strip().casefold()
+    if not lowered:
+        return []
+    return [word for word in _RESERVED_NICKNAME_PARTS if word in lowered]
 
 
 def _send_email_code(email, code, purpose="register"):
@@ -769,6 +784,15 @@ class MeAPIView(APIView):
         nickname = (request.data.get("nickname") or "").strip()
         if len(nickname) > 32:
             return Response({"error": "nickname_too_long"}, status=status.HTTP_400_BAD_REQUEST)
+        reserved_matches = _nickname_reserved_matches(nickname)
+        if reserved_matches:
+            return Response(
+                {
+                    "error": "nickname_reserved",
+                    "blocked": reserved_matches,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
         profile.nickname = nickname
