@@ -3,6 +3,7 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
 from django.db.models import Case, Count, F, IntegerField, Max, Q, Value, When
+from django.db.models.functions import Coalesce
 from django.utils.dateparse import parse_date, parse_datetime
 import secrets
 from rest_framework import generics, permissions, status
@@ -214,6 +215,34 @@ class VacancyCreateAPIView(generics.CreateAPIView):
 
 def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff
+
+
+def _auto_pause_due_owner_vacancies(owner):
+    """
+    Auto-pause approved live vacancies after 30 days from:
+    - creation/publish time; or
+    - last pause time (if vacancy was paused before).
+    """
+    if not owner or not owner.is_authenticated:
+        return 0
+
+    now = timezone.now()
+    cutoff = now - timedelta(days=30)
+    due_qs = (
+        Vacancy.objects.filter(
+            created_by=owner,
+            is_approved=True,
+            is_paused_by_owner=False,
+            is_deleted_by_moderator=False,
+        )
+        .annotate(live_anchor=Coalesce("paused_by_owner_at", "published_at"))
+        .filter(live_anchor__lte=cutoff)
+    )
+    updated = due_qs.update(
+        is_paused_by_owner=True,
+        paused_by_owner_at=now,
+    )
+    return updated
 
 
 def _masked_email(email):
@@ -778,7 +807,10 @@ class VacancyOwnerPauseAPIView(APIView):
             default=not vacancy.is_paused_by_owner,
         )
         vacancy.is_paused_by_owner = target_paused
-        vacancy.paused_by_owner_at = timezone.now() if target_paused else None
+        # Keep last pause timestamp even after resume:
+        # auto-pause timer uses "created_at or last pause".
+        if target_paused:
+            vacancy.paused_by_owner_at = timezone.now()
         vacancy.save(update_fields=["is_paused_by_owner", "paused_by_owner_at"])
 
         return Response(
@@ -800,6 +832,7 @@ class VacancyMineAPIView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        _auto_pause_due_owner_vacancies(self.request.user)
         return (
             Vacancy.objects.filter(
                 created_by=self.request.user,
