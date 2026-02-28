@@ -3,6 +3,11 @@ import re
 from .avatar_utils import avatar_public_url
 from .models import Complaint, PushDevice, Vacancy, VacancyAlertSubscription
 
+_URL_PREFIX_RE = re.compile(r"(?i)(https?://|ftp://|www\.)")
+_URL_DOMAIN_RE = re.compile(
+    r"(?i)(^|[\s(])(?:[a-z0-9-]{2,}\.)+[a-z]{2,}(?:[/?:#]|$)"
+)
+
 
 def _to_int_or_none(value):
     if value in (None, ""):
@@ -61,6 +66,17 @@ def _normalize_compare_value(value):
     if isinstance(value, bool):
         return value
     return str(value).strip()
+
+
+def _contains_link(value):
+    text = (value or "").strip()
+    if not text:
+        return False
+    if _URL_PREFIX_RE.search(text):
+        return True
+    if _URL_DOMAIN_RE.search(text):
+        return True
+    return False
 
 
 def _creator_nickname(obj):
@@ -299,6 +315,11 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
         _check_len("whatsapp", 15)
         _check_len("viber", 15)
         _check_len("email", 30)
+
+        for field in ("title", "city", "description"):
+            val = attrs.get(field)
+            if isinstance(val, str) and _contains_link(val):
+                errors[field] = "links are not allowed"
 
         desc = attrs.get("description")
         if desc is not None:
