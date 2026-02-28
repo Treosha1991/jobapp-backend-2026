@@ -38,6 +38,7 @@ _PHONE_REQUEST_MAX_ATTEMPTS = 3
 _ACCOUNT_DELETION_DELAY = timedelta(days=30)
 _phone_request_attempts = {}
 _phone_request_lock = threading.Lock()
+_PASSWORD_MIN_LENGTH = 8
 _RESERVED_NICKNAME_PARTS = (
     "jobhub",
     "support",
@@ -110,6 +111,17 @@ def _nickname_reserved_matches(nickname):
     if not lowered:
         return []
     return [word for word in _RESERVED_NICKNAME_PARTS if word in lowered]
+
+
+def _is_password_policy_valid(password):
+    value = (password or "")
+    if len(value) < _PASSWORD_MIN_LENGTH:
+        return False
+    if not re.search(r"[A-Z]", value):
+        return False
+    if not re.search(r"[a-z]", value):
+        return False
+    return True
 
 
 def _send_email_code(email, code, purpose="register"):
@@ -401,6 +413,8 @@ class RegisterAPIView(APIView):
             return Response({"error": "email and password required"}, status=status.HTTP_400_BAD_REQUEST)
         if "@" not in email:
             return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
+        if not _is_password_policy_valid(password):
+            return Response({"error": "password_policy_violation"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.filter(username=email).first()
         if user and user.is_active:
@@ -685,6 +699,8 @@ class ResetPasswordConfirmAPIView(APIView):
 
         if not code or not new_password:
             return Response({"error": "code and new_password required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not _is_password_policy_valid(new_password):
+            return Response({"error": "password_policy_violation"}, status=status.HTTP_400_BAD_REQUEST)
 
         if phone:
             prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
@@ -762,7 +778,7 @@ class LoginAPIView(APIView):
             seen_ids.add(user.id)
 
         if not authenticated_users:
-            return Response({"error": "invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "invalid_password"}, status=status.HTTP_400_BAD_REQUEST)
 
         if len(authenticated_users) > 1:
             return Response({"error": "nickname_not_unique"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1027,8 +1043,8 @@ class LinkEmailRequestAPIView(APIView):
             return Response({"error": "email and password required"}, status=status.HTTP_400_BAD_REQUEST)
         if "@" not in email:
             return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
-        if len(password) < 6:
-            return Response({"error": "password_too_short"}, status=status.HTTP_400_BAD_REQUEST)
+        if not _is_password_policy_valid(password):
+            return Response({"error": "password_policy_violation"}, status=status.HTTP_400_BAD_REQUEST)
         if user.email:
             return Response({"error": "email_already_linked"}, status=status.HTTP_400_BAD_REQUEST)
 
