@@ -55,6 +55,7 @@ class VacancyListAPIView(generics.ListAPIView):
         source = self.request.query_params.get("source")
         housing_type = self.request.query_params.get("housing_type")
         search = self.request.query_params.get("search")
+        search_alt = self.request.query_params.get("search_alt")
 
         if country:
             qs = qs.filter(country=country)
@@ -68,11 +69,27 @@ class VacancyListAPIView(generics.ListAPIView):
             qs = qs.filter(source=source)
         if housing_type:
             qs = qs.filter(housing_type=housing_type)
-        if search:
-            qs = qs.filter(
-                Q(title__icontains=search) |
-                Q(city__icontains=search)
-            )
+        if search or search_alt:
+            raw_terms = []
+            if search:
+                raw_terms.append(search)
+            if search_alt:
+                raw_terms.extend(search_alt.split("||"))
+
+            terms = []
+            seen_terms = set()
+            for term in raw_terms:
+                normalized = (term or "").strip()
+                key = normalized.lower()
+                if normalized and key not in seen_terms:
+                    terms.append(normalized)
+                    seen_terms.add(key)
+
+            if terms:
+                search_q = Q()
+                for term in terms:
+                    search_q |= Q(title__icontains=term) | Q(city__icontains=term)
+                qs = qs.filter(search_q)
 
         if self.request.user.is_authenticated:
             qs = qs.exclude(created_by__incoming_blocks__blocker=self.request.user)
