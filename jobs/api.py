@@ -37,6 +37,35 @@ from .serializers import (
 )
 from datetime import timedelta
 
+
+def _transliterate_ru_uk_to_latin(value):
+    """
+    Lightweight transliteration for RU/UK queries.
+    Used only as a search fallback to improve multilingual city lookup.
+    """
+    src = (value or "").strip()
+    if not src:
+        return ""
+
+    table = {
+        "а": "a", "б": "b", "в": "v", "г": "g", "ґ": "g", "д": "d", "е": "e", "ё": "e",
+        "є": "ie", "ж": "zh", "з": "z", "и": "i", "і": "i", "ї": "yi", "й": "y",
+        "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s",
+        "т": "t", "у": "u", "ў": "u", "ф": "f", "х": "kh", "ц": "ts", "ч": "ch",
+        "ш": "sh", "щ": "shch", "ь": "", "ъ": "", "ы": "y", "э": "e", "ю": "yu", "я": "ya",
+    }
+
+    out = []
+    for ch in src:
+        lower = ch.lower()
+        mapped = table.get(lower)
+        if mapped is None:
+            out.append(ch.lower())
+        else:
+            out.append(mapped)
+    return "".join(out).strip()
+
+
 class VacancyListAPIView(generics.ListAPIView):
     serializer_class = VacancyListSerializer
 
@@ -84,11 +113,25 @@ class VacancyListAPIView(generics.ListAPIView):
                 if normalized and key not in seen_terms:
                     terms.append(normalized)
                     seen_terms.add(key)
+                translit = _transliterate_ru_uk_to_latin(normalized)
+                translit_key = translit.lower()
+                if translit and translit_key not in seen_terms:
+                    terms.append(translit)
+                    seen_terms.add(translit_key)
 
             if terms:
                 search_q = Q()
                 for term in terms:
                     search_q |= Q(title__icontains=term) | Q(city__icontains=term)
+                    compact = term.strip().lower()
+                    if len(compact) >= 5 and " " not in compact:
+                        # Fallback for close latin variants (e.g. lelistad -> lelystad).
+                        prefix = compact[:3]
+                        suffix = compact[-3:]
+                        search_q |= (
+                            (Q(title__istartswith=prefix) & Q(title__iendswith=suffix))
+                            | (Q(city__istartswith=prefix) & Q(city__iendswith=suffix))
+                        )
                 qs = qs.filter(search_q)
 
         if self.request.user.is_authenticated:
