@@ -39,6 +39,7 @@ _ACCOUNT_DELETION_DELAY = timedelta(days=30)
 _phone_request_attempts = {}
 _phone_request_lock = threading.Lock()
 _PASSWORD_MIN_LENGTH = 8
+_PROFILE_DESCRIPTION_MAX_LENGTH = 160
 _RESERVED_NICKNAME_PARTS = (
     "jobhub",
     "support",
@@ -73,6 +74,7 @@ def _auth_payload(user, token):
         "is_staff": user.is_staff,
         "email": user.email or "",
         "nickname": (profile.nickname if profile else "") or "",
+        "profile_description": (profile.description if profile else "") or "",
         "avatar_url": avatar_public_url(avatar_key),
         "phone": (profile.phone_e164 if profile else "") or "",
         "phone_verified": bool(profile and profile.phone_verified),
@@ -797,11 +799,27 @@ class MeAPIView(APIView):
         return Response(_auth_payload(request.user, token))
 
     def patch(self, request):
-        nickname = (request.data.get("nickname") or "").strip()
-        if len(nickname) > 32:
+        has_nickname = "nickname" in request.data
+        nickname = (
+            (request.data.get("nickname") or "").strip()
+            if has_nickname
+            else None
+        )
+        has_profile_description = "profile_description" in request.data
+        profile_description = (
+            (request.data.get("profile_description") or "").strip()
+            if has_profile_description
+            else None
+        )
+        if nickname is not None and len(nickname) > 32:
             return Response({"error": "nickname_too_long"}, status=status.HTTP_400_BAD_REQUEST)
-        reserved_matches = _nickname_reserved_matches(nickname)
-        if reserved_matches:
+        if (
+            profile_description is not None
+            and len(profile_description) > _PROFILE_DESCRIPTION_MAX_LENGTH
+        ):
+            return Response({"error": "profile_description_too_long"}, status=status.HTTP_400_BAD_REQUEST)
+        reserved_matches = _nickname_reserved_matches(nickname or "")
+        if nickname is not None and reserved_matches:
             return Response(
                 {
                     "error": "nickname_reserved",
@@ -811,8 +829,18 @@ class MeAPIView(APIView):
             )
 
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
-        profile.nickname = nickname
-        profile.save(update_fields=["nickname"])
+        updated_fields = []
+        if nickname is not None and profile.nickname != nickname:
+            profile.nickname = nickname
+            updated_fields.append("nickname")
+        if (
+            profile_description is not None
+            and profile.description != profile_description
+        ):
+            profile.description = profile_description
+            updated_fields.append("description")
+        if updated_fields:
+            profile.save(update_fields=updated_fields)
 
         token, _ = Token.objects.get_or_create(user=request.user)
         payload = _auth_payload(request.user, token)

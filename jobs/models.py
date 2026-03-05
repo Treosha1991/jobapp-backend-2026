@@ -248,6 +248,7 @@ class EmailVerification(models.Model):
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     nickname = models.CharField(max_length=32, blank=True, default="")
+    description = models.CharField(max_length=160, blank=True, default="")
     phone_e164 = models.CharField(max_length=20, blank=True, null=True, unique=True)
     phone_verified = models.BooleanField(default=False)
     phone_verified_at = models.DateTimeField(blank=True, null=True)
