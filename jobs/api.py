@@ -35,6 +35,7 @@ from .serializers import (
     VacancyCreateSerializer,
     VacancyMineSerializer,
 )
+from .text_filters import censor_minimal, contains_link
 from datetime import timedelta
 
 
@@ -783,7 +784,12 @@ class VacancyRejectAPIView(APIView):
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         if vacancy.is_editing:
             return Response({"error": "vacancy_editing"}, status=409)
-        reason = request.data.get("reason", "").strip()
+        reason = censor_minimal((request.data.get("reason") or "").strip())
+        if contains_link(reason):
+            return Response(
+                {"error": "links_not_allowed_in_reason"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         vacancy.moderation_baseline = _vacancy_editable_snapshot(vacancy)
         vacancy.last_moderator_rejection_reason = reason
         vacancy.is_approved = False
@@ -958,7 +964,12 @@ class ComplaintAPIView(APIView):
     def post(self, request):
         vacancy_id = request.data.get("vacancy_id")
         reason = (request.data.get("reason") or "").strip()
-        message = (request.data.get("message") or "").strip()
+        message = censor_minimal((request.data.get("message") or "").strip())
+        if contains_link(message):
+            return Response(
+                {"error": "links_not_allowed_in_message"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not vacancy_id or not reason:
             return Response({"error": "vacancy_id and reason required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1132,8 +1143,13 @@ class ComplaintModerationActionAPIView(APIView):
             return Response({"error": "complaint_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         action = (request.data.get("action") or "").strip()
-        note = (request.data.get("note") or "").strip()
-        reject_reason = (request.data.get("rejection_reason") or "").strip()
+        note = censor_minimal((request.data.get("note") or "").strip())
+        reject_reason = censor_minimal((request.data.get("rejection_reason") or "").strip())
+        if contains_link(note) or contains_link(reject_reason):
+            return Response(
+                {"error": "links_not_allowed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         resolve_all = self._to_bool(request.data.get("resolve_all"), default=True)
 
         allowed_actions = {code for code, _ in ComplaintActionLog.ACTION_CHOICES}

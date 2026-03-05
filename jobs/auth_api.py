@@ -32,6 +32,13 @@ from .avatar_utils import (
     process_avatar_image,
 )
 from .models import AccountDeletionRequest, EmailVerification, PhoneVerification, UserProfile, Vacancy
+from .text_filters import (
+    censor_minimal,
+    contains_digit_or_number_emoji,
+    contains_link,
+    line_constraints_error,
+    normalize_newlines,
+)
 
 _PHONE_REQUEST_WINDOW = timedelta(minutes=10)
 _PHONE_REQUEST_MAX_ATTEMPTS = 3
@@ -40,6 +47,8 @@ _phone_request_attempts = {}
 _phone_request_lock = threading.Lock()
 _PASSWORD_MIN_LENGTH = 8
 _PROFILE_DESCRIPTION_MAX_LENGTH = 160
+_PROFILE_DESCRIPTION_MAX_LINES = 3
+_PROFILE_DESCRIPTION_MAX_CHARS_PER_LINE = 27
 _RESERVED_NICKNAME_PARTS = (
     "jobhub",
     "support",
@@ -807,17 +816,61 @@ class MeAPIView(APIView):
         )
         has_profile_description = "profile_description" in request.data
         profile_description = (
-            (request.data.get("profile_description") or "").strip()
+            normalize_newlines((request.data.get("profile_description") or "").strip())
             if has_profile_description
             else None
         )
+        if nickname is not None:
+            nickname = censor_minimal(nickname)
+        if profile_description is not None:
+            profile_description = censor_minimal(profile_description).strip()
+
         if nickname is not None and len(nickname) > 32:
             return Response({"error": "nickname_too_long"}, status=status.HTTP_400_BAD_REQUEST)
+        if nickname is not None and contains_link(nickname):
+            return Response(
+                {"error": "nickname_links_not_allowed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if nickname is not None and contains_digit_or_number_emoji(nickname):
+            return Response(
+                {"error": "nickname_digits_not_allowed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if (
             profile_description is not None
             and len(profile_description) > _PROFILE_DESCRIPTION_MAX_LENGTH
         ):
             return Response({"error": "profile_description_too_long"}, status=status.HTTP_400_BAD_REQUEST)
+        if profile_description is not None and contains_link(profile_description):
+            return Response(
+                {"error": "profile_description_links_not_allowed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if profile_description is not None and contains_digit_or_number_emoji(profile_description):
+            return Response(
+                {"error": "profile_description_digits_not_allowed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        profile_desc_line_error = (
+            line_constraints_error(
+                profile_description,
+                max_lines=_PROFILE_DESCRIPTION_MAX_LINES,
+                max_chars_per_line=_PROFILE_DESCRIPTION_MAX_CHARS_PER_LINE,
+            )
+            if profile_description is not None
+            else None
+        )
+        if profile_desc_line_error == "too_many_lines":
+            return Response(
+                {"error": "profile_description_too_many_lines"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if profile_desc_line_error == "line_too_long":
+            return Response(
+                {"error": "profile_description_line_too_long"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         reserved_matches = _nickname_reserved_matches(nickname or "")
         if nickname is not None and reserved_matches:
             return Response(
