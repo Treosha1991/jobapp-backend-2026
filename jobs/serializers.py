@@ -283,6 +283,22 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         errors = {}
+        raw_values = {
+            field: attrs.get(field)
+            for field in (
+                "title",
+                "city",
+                "description",
+                "salary",
+                "phone",
+                "additional_phone",
+                "telegram",
+                "whatsapp",
+                "viber",
+                "email",
+                "housing_cost",
+            )
+        }
 
         # Apply minimal profanity censorship to textual content.
         for field in ("title", "city", "description", "salary", "housing_cost"):
@@ -291,7 +307,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
                 attrs[field] = censor_minimal(val).strip()
 
         def _check_len(field, max_len):
-            val = attrs.get(field)
+            val = raw_values.get(field, attrs.get(field))
             if val is None:
                 return
             if isinstance(val, str) and len(val) > max_len:
@@ -312,7 +328,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             if isinstance(val, str) and contains_link(val):
                 errors[field] = "links are not allowed"
 
-        desc = attrs.get("description")
+        desc = raw_values.get("description", attrs.get("description"))
         if desc is not None:
             if len(desc) > 300:
                 errors["description"] = "max 300 chars"
@@ -604,10 +620,10 @@ class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):
         return code
 
     def validate_city(self, value):
-        city = (value or "").strip()
-        if len(city) > 80:
+        raw_city = value or ""
+        if len(raw_city) > 80:
             raise serializers.ValidationError("city_too_long")
-        return city
+        return raw_city.strip()
 
     def validate_category(self, value):
         code = (value or "").strip().lower()

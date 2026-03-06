@@ -49,6 +49,7 @@ _PASSWORD_MIN_LENGTH = 8
 _PROFILE_DESCRIPTION_MAX_LENGTH = 160
 _PROFILE_DESCRIPTION_MAX_LINES = 3
 _PROFILE_DESCRIPTION_MAX_CHARS_PER_LINE = 27
+_EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
 _RESERVED_NICKNAME_PARTS = (
     "jobhub",
     "support",
@@ -128,11 +129,22 @@ def _is_password_policy_valid(password):
     value = (password or "")
     if len(value) < _PASSWORD_MIN_LENGTH:
         return False
+    if re.search(r"\s", value):
+        return False
     if not re.search(r"[A-Z]", value):
         return False
     if not re.search(r"[a-z]", value):
         return False
     return True
+
+
+def _is_valid_email(email):
+    value = (email or "").strip().lower()
+    if not value:
+        return False
+    if contains_link(value):
+        return False
+    return bool(_EMAIL_RE.match(value))
 
 
 def _send_email_code(email, code, purpose="register"):
@@ -422,7 +434,7 @@ class RegisterAPIView(APIView):
 
         if not email or not password:
             return Response({"error": "email and password required"}, status=status.HTTP_400_BAD_REQUEST)
-        if "@" not in email:
+        if not _is_valid_email(email):
             return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
         if not _is_password_policy_valid(password):
             return Response({"error": "password_policy_violation"}, status=status.HTTP_400_BAD_REQUEST)
@@ -459,6 +471,8 @@ class VerifyEmailAPIView(APIView):
 
         if not email or not code:
             return Response({"error": "email and code required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not _is_valid_email(email):
+            return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.filter(username=email).first()
         if not user:
@@ -491,6 +505,8 @@ class ResendCodeAPIView(APIView):
         email = (request.data.get("email") or "").strip().lower()
         if not email:
             return Response({"error": "email required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not _is_valid_email(email):
+            return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.filter(username=email).first()
         if not user:
@@ -681,6 +697,9 @@ class ResetPasswordRequestAPIView(APIView):
                 return Response({"error": "whatsapp_delivery_failed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
             return Response({"detail": "reset_code_sent", "channel": "whatsapp"})
 
+        if not _is_valid_email(email):
+            return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
+
         user = User.objects.filter(username=email).first()
         if not user:
             return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
@@ -734,6 +753,8 @@ class ResetPasswordConfirmAPIView(APIView):
 
         if not email:
             return Response({"error": "email or phone required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not _is_valid_email(email):
+            return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.filter(username=email).first()
         if not user:
@@ -810,20 +831,20 @@ class MeAPIView(APIView):
     def patch(self, request):
         has_nickname = "nickname" in request.data
         nickname = (
-            (request.data.get("nickname") or "").strip()
+            (request.data.get("nickname") or "")
             if has_nickname
             else None
         )
         has_profile_description = "profile_description" in request.data
         profile_description = (
-            normalize_newlines((request.data.get("profile_description") or "").strip())
+            normalize_newlines((request.data.get("profile_description") or ""))
             if has_profile_description
             else None
         )
         if nickname is not None:
             nickname = censor_minimal(nickname)
         if profile_description is not None:
-            profile_description = censor_minimal(profile_description).strip()
+            profile_description = censor_minimal(profile_description)
 
         if nickname is not None and len(nickname) > 32:
             return Response({"error": "nickname_too_long"}, status=status.HTTP_400_BAD_REQUEST)
@@ -871,7 +892,12 @@ class MeAPIView(APIView):
                 {"error": "profile_description_line_too_long"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        reserved_matches = _nickname_reserved_matches(nickname or "")
+        nickname_to_store = nickname.strip() if nickname is not None else None
+        profile_description_to_store = (
+            profile_description.strip() if profile_description is not None else None
+        )
+
+        reserved_matches = _nickname_reserved_matches(nickname_to_store or "")
         if nickname is not None and reserved_matches:
             return Response(
                 {
@@ -883,14 +909,14 @@ class MeAPIView(APIView):
 
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
         updated_fields = []
-        if nickname is not None and profile.nickname != nickname:
-            profile.nickname = nickname
+        if nickname_to_store is not None and profile.nickname != nickname_to_store:
+            profile.nickname = nickname_to_store
             updated_fields.append("nickname")
         if (
-            profile_description is not None
-            and profile.description != profile_description
+            profile_description_to_store is not None
+            and profile.description != profile_description_to_store
         ):
-            profile.description = profile_description
+            profile.description = profile_description_to_store
             updated_fields.append("description")
         if updated_fields:
             profile.save(update_fields=updated_fields)
@@ -1122,7 +1148,7 @@ class LinkEmailRequestAPIView(APIView):
 
         if not email or not password:
             return Response({"error": "email and password required"}, status=status.HTTP_400_BAD_REQUEST)
-        if "@" not in email:
+        if not _is_valid_email(email):
             return Response({"error": "invalid email"}, status=status.HTTP_400_BAD_REQUEST)
         if not _is_password_policy_valid(password):
             return Response({"error": "password_policy_violation"}, status=status.HTTP_400_BAD_REQUEST)
