@@ -631,6 +631,9 @@ class EmployerProfileAPIView(APIView):
                 "employer": {
                     "id": owner.id,
                     "nickname": _owner_nickname_or_fallback(owner),
+                    "profile_description": (
+                        (getattr(getattr(owner, "profile", None), "description", "") or "").strip()
+                    ),
                     "email_masked": _masked_email(owner.email),
                     "avatar_url": _owner_avatar_url(owner),
                 },
