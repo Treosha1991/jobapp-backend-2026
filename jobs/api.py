@@ -159,11 +159,6 @@ class VacancyDetailAPIView(APIView):
             return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
         if not vacancy.is_approved or vacancy.expires_at <= timezone.now():
             return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
-        if request.user.is_authenticated and UserBlock.objects.filter(
-            blocker=request.user,
-            blocked_user=vacancy.created_by,
-        ).exists():
-            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
         serializer = VacancyDetailSerializer(vacancy)
         return Response(serializer.data, status=200)
 
@@ -598,6 +593,11 @@ class EmployerProfileAPIView(APIView):
         if not owner:
             return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
+        source = (request.query_params.get("source") or "").strip().lower()
+        viewer_blocked_owner = UserBlock.objects.filter(
+            blocker=request.user,
+            blocked_user=owner,
+        ).exists()
         blocked_by_owner = UserBlock.objects.filter(
             blocker=owner,
             blocked_user=request.user,
@@ -613,13 +613,14 @@ class EmployerProfileAPIView(APIView):
             expires_at__gt=timezone.now(),
         ).order_by("-published_at")
 
-        qs = qs.exclude(
-            Q(
-                complaints__reporter=request.user,
-                complaints__vacancy_revision_snapshot=F("revision"),
-            )
-            & ~Q(created_by=request.user)
-        ).distinct()
+        if not (source == "blacklist" and viewer_blocked_owner):
+            qs = qs.exclude(
+                Q(
+                    complaints__reporter=request.user,
+                    complaints__vacancy_revision_snapshot=F("revision"),
+                )
+                & ~Q(created_by=request.user)
+            ).distinct()
 
         paginator = PageNumberPagination()
         page = paginator.paginate_queryset(qs, request, view=self)
