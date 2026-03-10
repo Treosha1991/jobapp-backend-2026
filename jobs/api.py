@@ -598,11 +598,11 @@ class EmployerProfileAPIView(APIView):
         if not owner:
             return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
-        blocked = UserBlock.objects.filter(
-            Q(blocker=request.user, blocked_user=owner)
-            | Q(blocker=owner, blocked_user=request.user)
+        blocked_by_owner = UserBlock.objects.filter(
+            blocker=owner,
+            blocked_user=request.user,
         ).exists()
-        if blocked:
+        if blocked_by_owner:
             return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         qs = Vacancy.objects.filter(
