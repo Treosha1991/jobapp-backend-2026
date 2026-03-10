@@ -2,7 +2,7 @@ from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
-from django.db.models import Case, Count, F, IntegerField, Max, Q, Value, When
+from django.db.models import Case, Count, IntegerField, Max, Q, Value, When
 from django.db.models.functions import Coalesce
 from django.utils.dateparse import parse_date, parse_datetime
 import secrets
@@ -137,13 +137,6 @@ class VacancyListAPIView(generics.ListAPIView):
 
         if self.request.user.is_authenticated:
             qs = qs.exclude(created_by__incoming_blocks__blocker=self.request.user)
-            qs = qs.exclude(
-                Q(
-                    complaints__reporter=self.request.user,
-                    complaints__vacancy_revision_snapshot=F("revision"),
-                )
-                & ~Q(created_by=self.request.user)
-            ).distinct()
 
         return qs
 
@@ -593,11 +586,6 @@ class EmployerProfileAPIView(APIView):
         if not owner:
             return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
-        source = (request.query_params.get("source") or "").strip().lower()
-        viewer_blocked_owner = UserBlock.objects.filter(
-            blocker=request.user,
-            blocked_user=owner,
-        ).exists()
         blocked_by_owner = UserBlock.objects.filter(
             blocker=owner,
             blocked_user=request.user,
@@ -612,15 +600,6 @@ class EmployerProfileAPIView(APIView):
             is_deleted_by_moderator=False,
             expires_at__gt=timezone.now(),
         ).order_by("-published_at")
-
-        if not (source == "blacklist" and viewer_blocked_owner):
-            qs = qs.exclude(
-                Q(
-                    complaints__reporter=request.user,
-                    complaints__vacancy_revision_snapshot=F("revision"),
-                )
-                & ~Q(created_by=request.user)
-            ).distinct()
 
         paginator = PageNumberPagination()
         page = paginator.paginate_queryset(qs, request, view=self)
