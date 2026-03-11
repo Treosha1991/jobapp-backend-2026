@@ -87,6 +87,7 @@ class VacancyListAPIView(generics.ListAPIView):
         housing_type = self.request.query_params.get("housing_type")
         search = self.request.query_params.get("search")
         search_alt = self.request.query_params.get("search_alt")
+        subscribed = (self.request.query_params.get("subscribed") or "").strip().lower()
 
         if country:
             qs = qs.filter(country=country)
@@ -100,6 +101,12 @@ class VacancyListAPIView(generics.ListAPIView):
             qs = qs.filter(source=source)
         if housing_type:
             qs = qs.filter(housing_type=housing_type)
+        if subscribed in {"1", "true", "yes", "on"}:
+            if not self.request.user.is_authenticated:
+                return qs.none()
+            qs = qs.filter(
+                created_by__employer_followers__subscriber=self.request.user
+            ).distinct()
         if search or search_alt:
             raw_terms = []
             if search:
@@ -663,6 +670,36 @@ class EmployerSubscriptionAPIView(APIView):
             employer=owner,
         ).delete()
         return Response({"subscribed": False}, status=status.HTTP_200_OK)
+
+
+class EmployerSubscriptionListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        search = (request.query_params.get("search") or "").strip()
+        qs = (
+            EmployerSubscription.objects.filter(subscriber=request.user)
+            .select_related("employer", "employer__profile")
+            .order_by("-created_at")
+        )
+        if search:
+            qs = qs.filter(employer__profile__nickname__icontains=search)
+
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        page = paginator.paginate_queryset(qs, request, view=self)
+
+        results = [
+            {
+                "employer_id": item.employer_id,
+                "nickname": _owner_nickname_or_fallback(item.employer),
+                "avatar_url": _owner_avatar_url(item.employer),
+                "subscribed_at": item.created_at,
+            }
+            for item in (page or [])
+        ]
+
+        return paginator.get_paginated_response(results)
 
 
 from .models import UnlockRequest
