@@ -18,6 +18,7 @@ from .api import (
     VacancyUnlockRequestAPIView,
     VacancyUnlockConfirmAPIView,
     EmployerProfileAPIView,
+    EmployerSubscriptionAPIView,
     ComplaintAPIView,
     ComplaintByVacancyAPIView,
     ComplaintListAPIView,
@@ -77,6 +78,7 @@ urlpatterns = [
 
     path("vacancies/<int:pk>/contacts/", VacancyContactAPIView.as_view()),
     path("employers/<int:owner_user_id>/profile/", EmployerProfileAPIView.as_view(), name="employer-profile"),
+    path("employers/<int:owner_user_id>/subscription/", EmployerSubscriptionAPIView.as_view(), name="employer-subscription"),
     path("vacancies/<int:pk>/block-owner/", VacancyBlockOwnerAPIView.as_view(), name="vacancy-block-owner"),
     path("user-blocks/", UserBlockListAPIView.as_view(), name="user-blocks"),
     path("user-blocks/<int:blocked_user_id>/", UserBlockRemoveAPIView.as_view(), name="user-block-remove"),

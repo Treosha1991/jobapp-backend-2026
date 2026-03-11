@@ -377,6 +377,36 @@ class UserBlock(models.Model):
         return f"UserBlock blocker={self.blocker_id} blocked={self.blocked_user_id}"
 
 
+class EmployerSubscription(models.Model):
+    subscriber = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="employer_subscriptions",
+    )
+    employer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="employer_followers",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["subscriber", "employer"],
+                name="jobs_unique_employer_subscription",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["subscriber", "created_at"]),
+            models.Index(fields=["employer", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"EmployerSubscription subscriber={self.subscriber_id} employer={self.employer_id}"
+
+
 class AccountDeletionRequest(models.Model):
     STATUS_CHOICES = [
         ("pending", "Pending"),

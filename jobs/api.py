@@ -17,6 +17,7 @@ from .avatar_utils import avatar_public_url
 from .models import (
     Complaint,
     ComplaintActionLog,
+    EmployerSubscription,
     PushDevice,
     UserBlock,
     Vacancy,
@@ -593,6 +594,14 @@ class EmployerProfileAPIView(APIView):
         if blocked_by_owner:
             return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
+        can_subscribe = owner.id != request.user.id
+        is_subscribed = False
+        if can_subscribe:
+            is_subscribed = EmployerSubscription.objects.filter(
+                subscriber=request.user,
+                employer=owner,
+            ).exists()
+
         qs = Vacancy.objects.filter(
             created_by=owner,
             is_approved=True,
@@ -616,6 +625,8 @@ class EmployerProfileAPIView(APIView):
                     ),
                     "email_masked": _masked_email(owner.email),
                     "avatar_url": _owner_avatar_url(owner),
+                    "can_subscribe": can_subscribe,
+                    "is_subscribed": is_subscribed,
                 },
                 "count": paginated.get("count", 0),
                 "next": paginated.get("next"),
@@ -624,6 +635,34 @@ class EmployerProfileAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class EmployerSubscriptionAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, owner_user_id):
+        owner = User.objects.filter(id=owner_user_id).first()
+        if not owner:
+            return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if owner.id == request.user.id:
+            return Response({"error": "cannot_subscribe_self"}, status=status.HTTP_400_BAD_REQUEST)
+
+        _, created = EmployerSubscription.objects.get_or_create(
+            subscriber=request.user,
+            employer=owner,
+        )
+        return Response({"subscribed": True, "created": created}, status=status.HTTP_200_OK)
+
+    def delete(self, request, owner_user_id):
+        owner = User.objects.filter(id=owner_user_id).first()
+        if not owner:
+            return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        EmployerSubscription.objects.filter(
+            subscriber=request.user,
+            employer=owner,
+        ).delete()
+        return Response({"subscribed": False}, status=status.HTTP_200_OK)
 
 
 from .models import UnlockRequest
