@@ -1,7 +1,13 @@
 ﻿from rest_framework import serializers
 import re
 from .avatar_utils import avatar_public_url
-from .models import Complaint, PushDevice, Vacancy, VacancyAlertSubscription
+from .models import (
+    Complaint,
+    EmployerSubscription,
+    PushDevice,
+    Vacancy,
+    VacancyAlertSubscription,
+)
 from .text_filters import censor_minimal, contains_link
 
 
@@ -132,6 +138,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
     is_resubmitted = serializers.SerializerMethodField()
+    is_owner_subscribed = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -158,6 +165,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "published_at",
             "expires_at",
             "is_resubmitted",
+            "is_owner_subscribed",
         ]
 
     def get_contacts(self, obj):
@@ -171,6 +179,25 @@ class VacancyListSerializer(serializers.ModelSerializer):
 
     def get_is_resubmitted(self, obj):
         return (getattr(obj, "revision", 1) or 1) > 1
+
+    def get_is_owner_subscribed(self, obj):
+        annotated = getattr(obj, "is_owner_subscribed", None)
+        if annotated is not None:
+            return bool(annotated)
+
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not getattr(user, "is_authenticated", False):
+            return False
+
+        owner_id = getattr(obj, "created_by_id", None)
+        if not owner_id:
+            return False
+
+        return EmployerSubscription.objects.filter(
+            subscriber=user,
+            employer_id=owner_id,
+        ).exists()
 
 
 class VacancyModerationSerializer(VacancyListSerializer):

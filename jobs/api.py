@@ -2,7 +2,7 @@ from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
-from django.db.models import Case, Count, IntegerField, Max, Q, Value, When
+from django.db.models import Case, Count, Exists, IntegerField, Max, OuterRef, Q, Value, When
 from django.db.models.functions import Coalesce
 from django.utils.dateparse import parse_date, parse_datetime
 import secrets
@@ -145,6 +145,14 @@ class VacancyListAPIView(generics.ListAPIView):
 
         if self.request.user.is_authenticated:
             qs = qs.exclude(created_by__incoming_blocks__blocker=self.request.user)
+            qs = qs.annotate(
+                is_owner_subscribed=Exists(
+                    EmployerSubscription.objects.filter(
+                        subscriber=self.request.user,
+                        employer_id=OuterRef("created_by_id"),
+                    )
+                )
+            )
 
         return qs
 
