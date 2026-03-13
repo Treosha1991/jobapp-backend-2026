@@ -161,6 +161,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "description",
             "housing_type",
             "housing_cost",
+            "source",
             "contacts",
             "published_at",
             "expires_at",
