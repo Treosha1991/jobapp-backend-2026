@@ -172,6 +172,8 @@ class Vacancy(models.Model):
     def moderation_status(self):
         if self.is_editing:
             return "editing"
+        if self.is_approved and self.is_paused_by_owner:
+            return "paused"
         if self.is_approved:
             return "approved"
         if self.is_rejected:

@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.core.mail import send_mail
 from django.db.models import Case, Count, Exists, IntegerField, Max, OuterRef, Q, Value, When
 from django.db.models.functions import Coalesce
-from django.utils.dateparse import parse_date, parse_datetime
+from django.utils.dateparse import parse_date
 import secrets
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
@@ -38,6 +38,9 @@ from .serializers import (
 )
 from .text_filters import censor_minimal, contains_link
 from datetime import timedelta
+
+
+VACANCY_LIVE_WINDOW = timedelta(days=30)
 
 
 def _transliterate_ru_uk_to_latin(value):
@@ -157,17 +160,24 @@ class VacancyListAPIView(generics.ListAPIView):
         return qs
 
 
+def _public_vacancy_error_response(vacancy, *, now=None):
+    if not vacancy:
+        return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+    if vacancy.is_deleted_by_moderator:
+        return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+
+    current_time = now or timezone.now()
+    if vacancy.is_paused_by_owner or not vacancy.is_approved or vacancy.expires_at <= current_time:
+        return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+    return None
+
+
 class VacancyDetailAPIView(APIView):
     def get(self, request, pk):
         vacancy = Vacancy.objects.filter(pk=pk).first()
-        if not vacancy:
-            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
-        if vacancy.is_deleted_by_moderator:
-            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
-        if vacancy.is_paused_by_owner:
-            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
-        if not vacancy.is_approved or vacancy.expires_at <= timezone.now():
-            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
         serializer = VacancyDetailSerializer(vacancy)
         return Response(serializer.data, status=200)
 
@@ -327,7 +337,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             # Reuse this field as "submitted_at" for moderation visibility delay.
             editing_started_at=timezone.now(),
             creator_token=token,
-            expires_at=timezone.now() + timedelta(days=30),
+            expires_at=timezone.now() + VACANCY_LIVE_WINDOW,
         )
         if vacancy.is_approved and not vacancy.is_deleted_by_moderator:
             try:
@@ -342,15 +352,14 @@ def _is_moderator(request):
 
 def _auto_pause_due_owner_vacancies(owner):
     """
-    Auto-pause approved live vacancies after 30 days from:
-    - creation/publish time; or
-    - last pause time (if vacancy was paused before).
+    Auto-pause approved live vacancies after the live window elapses
+    from the latest approved publication time.
     """
     if not owner or not owner.is_authenticated:
         return 0
 
     now = timezone.now()
-    cutoff = now - timedelta(days=30)
+    cutoff = now - VACANCY_LIVE_WINDOW
     due_qs = (
         Vacancy.objects.filter(
             created_by=owner,
@@ -358,14 +367,28 @@ def _auto_pause_due_owner_vacancies(owner):
             is_paused_by_owner=False,
             is_deleted_by_moderator=False,
         )
-        .annotate(live_anchor=Coalesce("paused_by_owner_at", "published_at"))
-        .filter(live_anchor__lte=cutoff)
+        .filter(published_at__lte=cutoff)
     )
     updated = due_qs.update(
         is_paused_by_owner=True,
         paused_by_owner_at=now,
     )
     return updated
+
+
+def _set_vacancy_live(vacancy, *, now=None):
+    current_time = now or timezone.now()
+    vacancy.is_approved = True
+    vacancy.is_rejected = False
+    vacancy.is_paused_by_owner = False
+    vacancy.paused_by_owner_at = None
+    vacancy.rejection_reason = ""
+    vacancy.last_moderator_rejection_reason = ""
+    vacancy.moderation_baseline = {}
+    vacancy.is_editing = False
+    vacancy.editing_started_at = None
+    vacancy.published_at = current_time
+    vacancy.expires_at = current_time + VACANCY_LIVE_WINDOW
 
 
 def _masked_email(email):
@@ -629,11 +652,10 @@ class VacancyContactAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, pk):
-        vacancy = Vacancy.objects.get(pk=pk)
-        if vacancy.is_deleted_by_moderator:
-            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
-        if vacancy.is_paused_by_owner:
-            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        vacancy = Vacancy.objects.filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
 
         unlocked = UnlockedContact.objects.filter(
             user=request.user,
@@ -650,7 +672,10 @@ class VacancyContactAPIView(APIView):
         return Response(serializer.data)
 
     def post(self, request, pk):
-        vacancy = Vacancy.objects.get(pk=pk)
+        vacancy = Vacancy.objects.filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
 
         UnlockedContact.objects.get_or_create(
             user=request.user,
@@ -789,11 +814,10 @@ class VacancyUnlockRequestAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
-        vacancy = Vacancy.objects.get(pk=pk)
-        if vacancy.is_deleted_by_moderator:
-            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
-        if vacancy.is_paused_by_owner:
-            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        vacancy = Vacancy.objects.filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
 
         # если уже открыто — сразу вернём "already_unlocked"
         if UnlockedContact.objects.filter(user=request.user, vacancy=vacancy).exists():
@@ -813,11 +837,10 @@ class VacancyUnlockConfirmAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
-        vacancy = Vacancy.objects.get(pk=pk)
-        if vacancy.is_deleted_by_moderator:
-            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
-        if vacancy.is_paused_by_owner:
-            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        vacancy = Vacancy.objects.filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
         token = request.data.get("unlock_token")
 
         if not token:
@@ -860,7 +883,9 @@ class VacancyPendingListAPIView(generics.ListAPIView):
             Q(editing_started_at__isnull=True) | Q(editing_started_at__lte=visible_after)
         ).filter(
             Q(rejection_reason="") | Q(rejection_reason__isnull=True)
-        ).order_by("-published_at")
+        ).annotate(
+            queue_anchor=Coalesce("editing_started_at", "published_at")
+        ).order_by("-queue_anchor", "-published_at")
 
 
 class ModerationVacancyDetailAPIView(APIView):
@@ -883,15 +908,7 @@ class VacancyApproveAPIView(APIView):
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         if vacancy.is_editing:
             return Response({"error": "vacancy_editing"}, status=409)
-        vacancy.is_approved = True
-        vacancy.is_rejected = False
-        vacancy.is_paused_by_owner = False
-        vacancy.paused_by_owner_at = None
-        vacancy.rejection_reason = ""
-        vacancy.last_moderator_rejection_reason = ""
-        vacancy.moderation_baseline = {}
-        vacancy.is_editing = False
-        vacancy.editing_started_at = None
+        _set_vacancy_live(vacancy)
         vacancy.save(
             update_fields=[
                 "is_approved",
@@ -903,6 +920,8 @@ class VacancyApproveAPIView(APIView):
                 "moderation_baseline",
                 "is_editing",
                 "editing_started_at",
+                "published_at",
+                "expires_at",
             ]
         )
         try:
@@ -1010,22 +1029,94 @@ class VacancyOwnerPauseAPIView(APIView):
             request.data.get("paused"),
             default=not vacancy.is_paused_by_owner,
         )
-        vacancy.is_paused_by_owner = target_paused
-        # Keep last pause timestamp even after resume:
-        # auto-pause timer uses "created_at or last pause".
+        if target_paused == vacancy.is_paused_by_owner:
+            return Response(
+                {
+                    "detail": "updated",
+                    "is_approved": bool(vacancy.is_approved),
+                    "is_rejected": bool(vacancy.is_rejected),
+                    "is_paused_by_owner": bool(vacancy.is_paused_by_owner),
+                    "paused_by_owner_at": (
+                        vacancy.paused_by_owner_at.isoformat()
+                        if vacancy.paused_by_owner_at
+                        else ""
+                    ),
+                    "is_editing": bool(vacancy.is_editing),
+                    "editing_started_at": (
+                        vacancy.editing_started_at.isoformat()
+                        if vacancy.editing_started_at
+                        else ""
+                    ),
+                    "revision": vacancy.revision or 1,
+                    "status_label_key": (
+                        "statusPaused"
+                        if vacancy.is_paused_by_owner
+                        else "statusApproved"
+                    ),
+                },
+                status=200,
+            )
+
         if target_paused:
             vacancy.paused_by_owner_at = timezone.now()
-        vacancy.save(update_fields=["is_paused_by_owner", "paused_by_owner_at"])
+            vacancy.is_paused_by_owner = True
+            vacancy.save(update_fields=["is_paused_by_owner", "paused_by_owner_at"])
+            return Response(
+                {
+                    "detail": "updated",
+                    "is_approved": bool(vacancy.is_approved),
+                    "is_rejected": bool(vacancy.is_rejected),
+                    "is_paused_by_owner": True,
+                    "paused_by_owner_at": vacancy.paused_by_owner_at.isoformat(),
+                    "is_editing": bool(vacancy.is_editing),
+                    "editing_started_at": (
+                        vacancy.editing_started_at.isoformat()
+                        if vacancy.editing_started_at
+                        else ""
+                    ),
+                    "revision": vacancy.revision or 1,
+                    "status_label_key": "statusPaused",
+                },
+                status=200,
+            )
+
+        submitted_at = timezone.now()
+        vacancy.is_approved = False
+        vacancy.is_rejected = False
+        vacancy.is_paused_by_owner = False
+        vacancy.paused_by_owner_at = None
+        vacancy.rejection_reason = ""
+        vacancy.last_moderator_rejection_reason = ""
+        vacancy.moderation_baseline = {}
+        vacancy.is_editing = False
+        vacancy.editing_started_at = submitted_at
+        vacancy.revision = (vacancy.revision or 1) + 1
+        vacancy.save(
+            update_fields=[
+                "is_approved",
+                "is_rejected",
+                "is_paused_by_owner",
+                "paused_by_owner_at",
+                "rejection_reason",
+                "last_moderator_rejection_reason",
+                "moderation_baseline",
+                "is_editing",
+                "editing_started_at",
+                "revision",
+            ]
+        )
 
         return Response(
             {
-                "detail": "updated",
-                "is_paused_by_owner": bool(vacancy.is_paused_by_owner),
-                "paused_by_owner_at": (
-                    vacancy.paused_by_owner_at.isoformat()
-                    if vacancy.paused_by_owner_at
-                    else ""
-                ),
+                "detail": "sent_to_moderation",
+                "is_approved": False,
+                "is_rejected": False,
+                "is_paused_by_owner": False,
+                "paused_by_owner_at": "",
+                "is_editing": False,
+                "editing_started_at": submitted_at.isoformat(),
+                "revision": vacancy.revision or 1,
+                "status_label_key": "statusPending",
             },
             status=200,
         )
@@ -1113,10 +1204,9 @@ class ComplaintAPIView(APIView):
             return Response({"error": "vacancy_id and reason required"}, status=status.HTTP_400_BAD_REQUEST)
 
         vacancy = Vacancy.objects.filter(id=vacancy_id).first()
-        if not vacancy:
-            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
-        if vacancy.is_deleted_by_moderator:
-            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
 
         allowed_reasons = {code for code, _ in Complaint.REASON_CHOICES}
         if reason not in allowed_reasons:
@@ -1330,31 +1420,17 @@ class ComplaintModerationActionAPIView(APIView):
             vacancy.moderator_deleted_state = {}
             vacancy.deleted_by_moderator_at = None
         elif action == "restore":
-            deleted_state = vacancy.moderator_deleted_state or {}
-            if vacancy.is_deleted_by_moderator and isinstance(deleted_state, dict) and deleted_state:
-                vacancy.is_approved = bool(deleted_state.get("is_approved", False))
-                vacancy.is_rejected = bool(deleted_state.get("is_rejected", False))
-                vacancy.is_paused_by_owner = bool(deleted_state.get("is_paused_by_owner", False))
-                paused_raw = (deleted_state.get("paused_by_owner_at") or "").strip()
-                paused_parsed = parse_datetime(paused_raw) if paused_raw else None
-                vacancy.paused_by_owner_at = paused_parsed if vacancy.is_paused_by_owner else None
-                vacancy.is_editing = bool(deleted_state.get("is_editing", False))
-                vacancy.rejection_reason = (deleted_state.get("rejection_reason") or "").strip()
-                vacancy.last_moderator_rejection_reason = (
-                    deleted_state.get("last_moderator_rejection_reason") or ""
-                ).strip()
-                baseline = deleted_state.get("moderation_baseline")
-                vacancy.moderation_baseline = baseline if isinstance(baseline, dict) else {}
-            else:
-                vacancy.is_approved = True
-                vacancy.is_rejected = False
-                vacancy.is_paused_by_owner = False
-                vacancy.paused_by_owner_at = None
-                vacancy.is_editing = False
-                vacancy.rejection_reason = ""
-                vacancy.last_moderator_rejection_reason = ""
-                vacancy.moderation_baseline = {}
-            vacancy.editing_started_at = None
+            submitted_at = timezone.now()
+            vacancy.is_approved = False
+            vacancy.is_rejected = False
+            vacancy.is_paused_by_owner = False
+            vacancy.paused_by_owner_at = None
+            vacancy.is_editing = False
+            vacancy.rejection_reason = ""
+            vacancy.last_moderator_rejection_reason = ""
+            vacancy.moderation_baseline = {}
+            vacancy.editing_started_at = submitted_at
+            vacancy.revision = (vacancy.revision or 1) + 1
             vacancy.is_deleted_by_moderator = False
             vacancy.moderator_deleted_state = {}
             vacancy.deleted_by_moderator_at = None
@@ -1370,6 +1446,7 @@ class ComplaintModerationActionAPIView(APIView):
                 "last_moderator_rejection_reason",
                 "moderation_baseline",
                 "editing_started_at",
+                "revision",
                 "is_deleted_by_moderator",
                 "moderator_deleted_state",
                 "deleted_by_moderator_at",
