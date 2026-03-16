@@ -172,6 +172,64 @@ class VacancyDetailAPIView(APIView):
         return Response(serializer.data, status=200)
 
 
+class VacancyBookmarkStatusAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    max_ids = 100
+
+    def post(self, request):
+        raw_ids = request.data.get("ids", [])
+        if not isinstance(raw_ids, list):
+            return Response({"error": "ids_must_be_list"}, status=status.HTTP_400_BAD_REQUEST)
+
+        normalized_ids = []
+        seen = set()
+        for raw_id in raw_ids:
+            try:
+                vacancy_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if vacancy_id <= 0 or vacancy_id in seen:
+                continue
+            seen.add(vacancy_id)
+            normalized_ids.append(vacancy_id)
+            if len(normalized_ids) > self.max_ids:
+                return Response(
+                    {"error": "too_many_ids", "max_ids": self.max_ids},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if not normalized_ids:
+            return Response({"count": 0, "results": []}, status=status.HTTP_200_OK)
+
+        now = timezone.now()
+        vacancies = Vacancy.objects.filter(id__in=normalized_ids).only(
+            "id",
+            "is_deleted_by_moderator",
+            "is_paused_by_owner",
+            "is_approved",
+            "expires_at",
+        )
+        vacancies_by_id = {vacancy.id: vacancy for vacancy in vacancies}
+        results = []
+        for vacancy_id in normalized_ids:
+            vacancy = vacancies_by_id.get(vacancy_id)
+            results.append(
+                {
+                    "id": vacancy_id,
+                    "status": (
+                        _vacancy_bookmark_status(vacancy, now=now)
+                        if vacancy
+                        else "unavailable"
+                    ),
+                }
+            )
+
+        return Response(
+            {"count": len(results), "results": results},
+            status=status.HTTP_200_OK,
+        )
+
+
 class VacancyBlockOwnerAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -378,6 +436,19 @@ def _vacancy_moderation_state_snapshot(vacancy):
         "last_moderator_rejection_reason": vacancy.last_moderator_rejection_reason or "",
         "moderation_baseline": vacancy.moderation_baseline or {},
     }
+
+
+def _vacancy_bookmark_status(vacancy, *, now=None):
+    current_time = now or timezone.now()
+    if vacancy.is_deleted_by_moderator:
+        return "deleted"
+    if vacancy.is_paused_by_owner:
+        return "paused"
+    if vacancy.expires_at <= current_time:
+        return "expired"
+    if not vacancy.is_approved:
+        return "unavailable"
+    return "active"
 
 
 def _notify_vacancy_owner_about_complaint_action(

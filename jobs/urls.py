@@ -2,6 +2,7 @@ from django.urls import path
 from .api import (
     VacancyListAPIView,
     VacancyDetailAPIView,
+    VacancyBookmarkStatusAPIView,
     VacancyCreateAPIView,
     VacancyPendingListAPIView,
     ModerationVacancyDetailAPIView,
@@ -66,6 +67,7 @@ urlpatterns = [
     path("notifications/alerts/preview/<int:vacancy_id>/", VacancyAlertPreviewAPIView.as_view(), name="notifications-alert-preview"),
 
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),
+    path("vacancies/bookmark-status/", VacancyBookmarkStatusAPIView.as_view(), name="vacancy-bookmark-status"),
     path("vacancies/<int:pk>/", VacancyDetailAPIView.as_view(), name="vacancy-detail"),
     path("vacancies/create/", VacancyCreateAPIView.as_view(), name="vacancy-create"),
     path("vacancies/mine/", VacancyMineAPIView.as_view(), name="vacancy-mine"),
