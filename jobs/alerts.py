@@ -24,7 +24,12 @@ def _build_subscription_queryset(vacancy):
     return qs.distinct()
 
 
-def _city_matches(subscription_city, vacancy_city):
+def _city_matches(subscription_city_code, subscription_city, vacancy_city_code, vacancy_city):
+    sub_city_code = _normalized(subscription_city_code).lower()
+    vacancy_city_code = _normalized(vacancy_city_code).lower()
+    if sub_city_code and vacancy_city_code:
+        return sub_city_code == vacancy_city_code
+
     sub_city = _normalized(subscription_city).lower()
     vacancy_city = _normalized(vacancy_city).lower()
     if not sub_city:
@@ -60,7 +65,11 @@ def _localized_body(lang, vacancy):
 
 def preview_vacancy_alerts(vacancy):
     base_qs = _build_subscription_queryset(vacancy)
-    matched_subscriptions = [sub for sub in base_qs if _city_matches(sub.city, vacancy.city)]
+    matched_subscriptions = [
+        sub
+        for sub in base_qs
+        if _city_matches(sub.city_code, sub.city, vacancy.city_code, vacancy.city)
+    ]
     matched_user_ids = [sub.user_id for sub in matched_subscriptions]
     already_delivered_user_ids = set(
         VacancyAlertDelivery.objects.filter(vacancy=vacancy, user_id__in=matched_user_ids).values_list("user_id", flat=True)
@@ -98,7 +107,11 @@ def dispatch_vacancy_alerts(vacancy):
         "skipped_not_configured": 0,
     }
 
-    subscriptions = [sub for sub in _build_subscription_queryset(vacancy) if _city_matches(sub.city, vacancy.city)]
+    subscriptions = [
+        sub
+        for sub in _build_subscription_queryset(vacancy)
+        if _city_matches(sub.city_code, sub.city, vacancy.city_code, vacancy.city)
+    ]
     summary["matched_subscriptions"] = len(subscriptions)
 
     for sub in subscriptions:

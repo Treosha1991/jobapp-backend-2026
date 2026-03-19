@@ -40,6 +40,7 @@ _MODERATION_COMPARISON_FIELDS = [
     "title",
     "country",
     "city",
+    "city_code",
     "category",
     "employment_type",
     "experience_required",
@@ -147,6 +148,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "title",
             "country",
             "city",
+            "city_code",
             "category",
             "employment_type",
             "experience_required",
@@ -240,6 +242,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "title",
             "country",
             "city",
+            "city_code",
             "category",
             "employment_type",
             "experience_required",
@@ -276,6 +279,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "title",
             "country",
             "city",
+            "city_code",
             "category",
             "employment_type",
             "experience_required",
@@ -317,6 +321,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             for field in (
                 "title",
                 "city",
+                "city_code",
                 "description",
                 "salary",
                 "phone",
@@ -344,6 +349,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
 
         _check_len("title", 30)
         _check_len("city", 20)
+        _check_len("city_code", 64)
         _check_len("salary", 80)
         _check_len("phone", 15)
         _check_len("additional_phone", 15)
@@ -356,6 +362,12 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             val = attrs.get(field)
             if isinstance(val, str) and contains_link(val):
                 errors[field] = "links are not allowed"
+
+        city_code = (attrs.get("city_code") or "").strip().lower()
+        if city_code:
+            if not re.match(r"^[a-z0-9_]+$", city_code):
+                errors["city_code"] = "invalid city code"
+            attrs["city_code"] = city_code
 
         desc = raw_values.get("description", attrs.get("description"))
         if desc is not None:
@@ -456,6 +468,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "title",
             "country",
             "city",
+            "city_code",
             "category",
             "employment_type",
             "experience_required",
@@ -633,6 +646,7 @@ class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):
             "enabled",
             "country",
             "city",
+            "city_code",
             "category",
             "employment_type",
             "housing_type",
@@ -654,6 +668,16 @@ class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):
         if len(raw_city) > 80:
             raise serializers.ValidationError("city_too_long")
         return raw_city.strip()
+
+    def validate_city_code(self, value):
+        raw_code = (value or "").strip().lower()
+        if not raw_code:
+            return ""
+        if len(raw_code) > 64:
+            raise serializers.ValidationError("city_code_too_long")
+        if not re.match(r"^[a-z0-9_]+$", raw_code):
+            raise serializers.ValidationError("invalid_city_code")
+        return raw_code
 
     def validate_category(self, value):
         code = (value or "").strip().lower()

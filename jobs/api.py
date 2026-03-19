@@ -84,6 +84,7 @@ class VacancyListAPIView(generics.ListAPIView):
 
         country = self.request.query_params.get("country")
         city = self.request.query_params.get("city")
+        city_code = (self.request.query_params.get("city_code") or "").strip().lower()
         category = self.request.query_params.get("category")
         employment_type = self.request.query_params.get("employment_type")
         source = self.request.query_params.get("source")
@@ -94,7 +95,11 @@ class VacancyListAPIView(generics.ListAPIView):
 
         if country:
             qs = qs.filter(country=country)
-        if city:
+        if city_code and city:
+            qs = qs.filter(Q(city_code=city_code) | Q(city__icontains=city))
+        elif city_code:
+            qs = qs.filter(city_code=city_code)
+        elif city:
             qs = qs.filter(city__icontains=city)
         if category:
             qs = qs.filter(category=category)
@@ -422,6 +427,7 @@ def _vacancy_editable_snapshot(vacancy):
         "title": vacancy.title or "",
         "country": vacancy.country or "",
         "city": vacancy.city or "",
+        "city_code": vacancy.city_code or "",
         "category": vacancy.category or "",
         "employment_type": vacancy.employment_type or "",
         "experience_required": vacancy.experience_required or "",

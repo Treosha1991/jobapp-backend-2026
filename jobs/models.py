@@ -52,6 +52,7 @@ class Vacancy(models.Model):
         ("transport", "Transport"),
         ("healthcare", "Healthcare"),
         ("it", "IT"),
+        ("freelance", "Freelance"),
         ("service", "Service"),
         ("other", "Other"),
     ]
@@ -109,6 +110,7 @@ class Vacancy(models.Model):
     title = models.CharField(max_length=120)
     country = models.CharField(max_length=10, choices=COUNTRY_CHOICES)
     city = models.CharField(max_length=80)
+    city_code = models.CharField(max_length=64, blank=True, default="")
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES)
     employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES)
     experience_required = models.CharField(max_length=10, choices=EXPERIENCE_CHOICES, default="without")
@@ -485,6 +487,7 @@ class VacancyAlertSubscription(models.Model):
     enabled = models.BooleanField(default=False)
     country = models.CharField(max_length=10, blank=True, default="")
     city = models.CharField(max_length=80, blank=True, default="")
+    city_code = models.CharField(max_length=64, blank=True, default="")
     category = models.CharField(max_length=30, blank=True, default="")
     employment_type = models.CharField(max_length=20, blank=True, default="")
     housing_type = models.CharField(max_length=10, blank=True, default="")
