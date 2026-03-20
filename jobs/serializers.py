@@ -7,6 +7,7 @@ from .models import (
     PushDevice,
     Vacancy,
     VacancyAlertSubscription,
+    VacancyModerationAttempt,
 )
 from .text_filters import censor_minimal, contains_link
 
@@ -101,6 +102,35 @@ def _creator_avatar_url(obj):
         profile = None
     avatar_key = (getattr(profile, "avatar_key", "") or "").strip()
     return avatar_public_url(avatar_key)
+
+
+def _user_display_name(user):
+    if not user:
+        return ""
+    full_name = (getattr(user, "get_full_name", lambda: "")() or "").strip()
+    if full_name:
+        return full_name
+    username = (getattr(user, "username", "") or "").strip()
+    if username:
+        return username
+    return f"User #{getattr(user, 'id', '?')}"
+
+
+def _moderation_attempt_counts(obj):
+    attempts = getattr(obj, "moderation_attempts", None)
+    if attempts is not None and hasattr(attempts, "all"):
+        items = list(attempts.all())
+        return {
+            "total": len(items),
+            "approved": sum(1 for item in items if item.decision == "approved"),
+            "rejected": sum(1 for item in items if item.decision == "rejected"),
+        }
+
+    return {
+        "total": int(getattr(obj, "moderation_attempts_total", 0) or 0),
+        "approved": int(getattr(obj, "moderation_approved_total", 0) or 0),
+        "rejected": int(getattr(obj, "moderation_rejected_total", 0) or 0),
+    }
 
 
 def _contact_payload(obj):
@@ -206,11 +236,19 @@ class VacancyListSerializer(serializers.ModelSerializer):
 class VacancyModerationSerializer(VacancyListSerializer):
     previous_rejection_reason = serializers.CharField(source="last_moderator_rejection_reason", read_only=True)
     resubmitted_changed_fields = serializers.SerializerMethodField()
+    moderation_attempts_total = serializers.SerializerMethodField()
+    moderation_approved_total = serializers.SerializerMethodField()
+    moderation_rejected_total = serializers.SerializerMethodField()
+    current_attempt_no = serializers.SerializerMethodField()
 
     class Meta(VacancyListSerializer.Meta):
         fields = VacancyListSerializer.Meta.fields + [
             "previous_rejection_reason",
             "resubmitted_changed_fields",
+            "moderation_attempts_total",
+            "moderation_approved_total",
+            "moderation_rejected_total",
+            "current_attempt_no",
         ]
 
     def get_resubmitted_changed_fields(self, obj):
@@ -230,10 +268,69 @@ class VacancyModerationSerializer(VacancyListSerializer):
                 changed.append(field)
         return changed
 
+    def get_moderation_attempts_total(self, obj):
+        return _moderation_attempt_counts(obj)["total"]
+
+    def get_moderation_approved_total(self, obj):
+        return _moderation_attempt_counts(obj)["approved"]
+
+    def get_moderation_rejected_total(self, obj):
+        return _moderation_attempt_counts(obj)["rejected"]
+
+    def get_current_attempt_no(self, obj):
+        latest = getattr(obj, "latest_moderation_attempt_no", None)
+        if latest is not None:
+            return int(latest or 0)
+        attempt = obj.moderation_attempts.order_by("-attempt_no").first()
+        return int(getattr(attempt, "attempt_no", 0) or 0)
+
+
+class VacancyModerationAttemptSerializer(serializers.ModelSerializer):
+    submitted_by_name = serializers.SerializerMethodField()
+    decided_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VacancyModerationAttempt
+        fields = [
+            "attempt_no",
+            "trigger_type",
+            "submitted_at",
+            "submitted_by_name",
+            "decision",
+            "decided_at",
+            "decided_by_name",
+            "rejection_reason",
+            "extra_context",
+        ]
+
+    def get_submitted_by_name(self, obj):
+        return _user_display_name(getattr(obj, "submitted_by", None))
+
+    def get_decided_by_name(self, obj):
+        return _user_display_name(getattr(obj, "decided_by", None))
+
+
+class VacancyModerationDetailSerializer(VacancyModerationSerializer):
+    moderation_history = VacancyModerationAttemptSerializer(
+        source="moderation_attempts",
+        many=True,
+        read_only=True,
+    )
+
+    class Meta(VacancyModerationSerializer.Meta):
+        fields = VacancyModerationSerializer.Meta.fields + [
+            "moderation_history",
+        ]
+
 class VacancyDetailSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
+    moderation_status = serializers.SerializerMethodField()
+    moderation_attempts_total = serializers.SerializerMethodField()
+    moderation_approved_total = serializers.SerializerMethodField()
+    moderation_rejected_total = serializers.SerializerMethodField()
+    moderation_history = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -261,6 +358,11 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "contacts",
             "published_at",
             "expires_at",
+            "moderation_status",
+            "moderation_attempts_total",
+            "moderation_approved_total",
+            "moderation_rejected_total",
+            "moderation_history",
         ]
 
     def get_contacts(self, obj):
@@ -271,6 +373,38 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
 
     def get_salary_monthly_to(self, obj):
         return _salary_monthly_to(obj)
+
+    def _is_staff_view(self):
+        request = self.context.get("request")
+        return bool(getattr(getattr(request, "user", None), "is_staff", False))
+
+    def get_moderation_status(self, obj):
+        if not self._is_staff_view():
+            return ""
+        return obj.moderation_status
+
+    def get_moderation_attempts_total(self, obj):
+        if not self._is_staff_view():
+            return 0
+        return _moderation_attempt_counts(obj)["total"]
+
+    def get_moderation_approved_total(self, obj):
+        if not self._is_staff_view():
+            return 0
+        return _moderation_attempt_counts(obj)["approved"]
+
+    def get_moderation_rejected_total(self, obj):
+        if not self._is_staff_view():
+            return 0
+        return _moderation_attempt_counts(obj)["rejected"]
+
+    def get_moderation_history(self, obj):
+        if not self._is_staff_view():
+            return []
+        return VacancyModerationAttemptSerializer(
+            obj.moderation_attempts.all(),
+            many=True,
+        ).data
 
 class VacancyCreateSerializer(serializers.ModelSerializer):
     class Meta:

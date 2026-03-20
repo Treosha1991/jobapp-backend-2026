@@ -22,6 +22,7 @@ from .models import (
     UserBlock,
     Vacancy,
     VacancyAlertSubscription,
+    VacancyModerationAttempt,
     UserProfile,
     UnlockedContact,
 )
@@ -32,15 +33,21 @@ from .serializers import (
     VacancyContactSerializer,
     VacancyListSerializer,
     VacancyModerationSerializer,
+    VacancyModerationDetailSerializer,
     VacancyDetailSerializer,
     VacancyCreateSerializer,
     VacancyMineSerializer,
 )
 from .text_filters import censor_minimal, contains_link
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 
 VACANCY_LIVE_WINDOW = timedelta(days=30)
+OWNER_RESUME_FIRST_COOLDOWN = timedelta(seconds=5)
+OWNER_RESUME_REPEAT_COOLDOWN = timedelta(minutes=5)
+OWNER_RESUME_REPEAT_THRESHOLD = 2
+OWNER_MODERATION_RESUBMIT_MIN_INTERVAL = timedelta(minutes=30)
+OWNER_MODERATION_RESUBMIT_MAX_PER_DAY = 3
 
 
 def _transliterate_ru_uk_to_latin(value):
@@ -180,10 +187,16 @@ def _public_vacancy_error_response(vacancy, *, now=None):
 class VacancyDetailAPIView(APIView):
     def get(self, request, pk):
         vacancy = Vacancy.objects.filter(pk=pk).first()
-        error_response = _public_vacancy_error_response(vacancy)
-        if error_response is not None:
-            return error_response
-        serializer = VacancyDetailSerializer(vacancy)
+        if _is_moderator(request):
+            if not vacancy:
+                return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+            if vacancy.is_deleted_by_moderator:
+                return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        else:
+            error_response = _public_vacancy_error_response(vacancy)
+            if error_response is not None:
+                return error_response
+        serializer = VacancyDetailSerializer(vacancy, context={"request": request})
         return Response(serializer.data, status=200)
 
 
@@ -329,6 +342,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
         if not profile or not profile.phone_verified:
             raise ValidationError({"error": "phone_verification_required"})
         is_moderator = _is_moderator(self.request)
+        now = timezone.now()
         token = secrets.token_hex(32)
         vacancy = serializer.save(
             created_by=self.request.user,
@@ -340,10 +354,17 @@ class VacancyCreateAPIView(generics.CreateAPIView):
             is_editing=False,
             revision=1,
             # Reuse this field as "submitted_at" for moderation visibility delay.
-            editing_started_at=timezone.now(),
+            editing_started_at=now,
             creator_token=token,
-            expires_at=timezone.now() + VACANCY_LIVE_WINDOW,
+            expires_at=now + VACANCY_LIVE_WINDOW,
         )
+        if not is_moderator:
+            _create_moderation_attempt(
+                vacancy,
+                trigger_type="create",
+                submitted_by=self.request.user,
+                submitted_at=now,
+            )
         if vacancy.is_approved and not vacancy.is_deleted_by_moderator:
             try:
                 summary = dispatch_vacancy_alerts(vacancy)
@@ -465,6 +486,144 @@ def _vacancy_moderation_state_snapshot(vacancy):
         "last_moderator_rejection_reason": vacancy.last_moderator_rejection_reason or "",
         "moderation_baseline": vacancy.moderation_baseline or {},
     }
+
+
+def _next_moderation_attempt_no(vacancy):
+    max_no = vacancy.moderation_attempts.aggregate(max_no=Max("attempt_no"))["max_no"] or 0
+    return int(max_no) + 1
+
+
+def _create_moderation_attempt(
+    vacancy,
+    *,
+    trigger_type,
+    submitted_by=None,
+    submitted_at=None,
+    extra_context=None,
+):
+    return VacancyModerationAttempt.objects.create(
+        vacancy=vacancy,
+        attempt_no=_next_moderation_attempt_no(vacancy),
+        trigger_type=trigger_type,
+        submitted_by=submitted_by,
+        submitted_at=submitted_at or timezone.now(),
+        decision="pending",
+        extra_context=extra_context or {},
+    )
+
+
+def _resolve_latest_moderation_attempt(
+    vacancy,
+    *,
+    decision,
+    moderator=None,
+    reason="",
+    decided_at=None,
+):
+    resolved_at = decided_at or timezone.now()
+    attempt = vacancy.moderation_attempts.filter(decision="pending").order_by("-attempt_no").first()
+    if attempt is None:
+        attempt = VacancyModerationAttempt.objects.create(
+            vacancy=vacancy,
+            attempt_no=_next_moderation_attempt_no(vacancy),
+            trigger_type="moderator_resubmit",
+            submitted_by=vacancy.created_by,
+            submitted_at=resolved_at,
+            decision=decision,
+            decided_at=resolved_at,
+            decided_by=moderator,
+            rejection_reason=reason or "",
+            extra_context={"auto_created": True},
+        )
+        return attempt
+
+    attempt.decision = decision
+    attempt.decided_at = resolved_at
+    attempt.decided_by = moderator
+    attempt.rejection_reason = reason or ""
+    attempt.save(
+        update_fields=[
+            "decision",
+            "decided_at",
+            "decided_by",
+            "rejection_reason",
+        ]
+    )
+    return attempt
+
+
+def _owner_moderation_attempts_qs(vacancy):
+    return vacancy.moderation_attempts.filter(
+        trigger_type__in=["edit", "restore", "resume_expired"],
+        submitted_by=vacancy.created_by,
+    )
+
+
+def _owner_moderation_limit_payload(vacancy, *, now=None):
+    current_time = now or timezone.now()
+    local_today = timezone.localtime(current_time).date()
+    attempts_qs = _owner_moderation_attempts_qs(vacancy)
+    last_attempt = attempts_qs.order_by("-submitted_at").first()
+    today_count = attempts_qs.filter(submitted_at__date=local_today).count()
+
+    if today_count >= OWNER_MODERATION_RESUBMIT_MAX_PER_DAY:
+        next_day = datetime.combine(
+            local_today + timedelta(days=1),
+            time.min,
+            tzinfo=current_time.tzinfo,
+        )
+        remaining_seconds = max(int((next_day - current_time).total_seconds()), 1)
+        return {
+            "error": "moderation_submission_daily_limit",
+            "remaining_seconds": remaining_seconds,
+            "submissions_today": today_count,
+        }
+
+    if last_attempt and current_time - last_attempt.submitted_at < OWNER_MODERATION_RESUBMIT_MIN_INTERVAL:
+        remaining_seconds = max(
+            int((OWNER_MODERATION_RESUBMIT_MIN_INTERVAL - (current_time - last_attempt.submitted_at)).total_seconds()),
+            1,
+        )
+        return {
+            "error": "moderation_submission_cooldown",
+            "remaining_seconds": remaining_seconds,
+            "submissions_today": today_count,
+        }
+
+    return None
+
+
+def _owner_resume_cooldown(vacancy, *, now=None):
+    current_time = now or timezone.now()
+    local_today = timezone.localtime(current_time).date()
+    resume_day = vacancy.owner_resume_day
+    count_today = vacancy.owner_resume_count_day or 0
+    if resume_day != local_today:
+        count_today = 0
+
+    cooldown = OWNER_RESUME_FIRST_COOLDOWN
+    if count_today >= OWNER_RESUME_REPEAT_THRESHOLD:
+        cooldown = OWNER_RESUME_REPEAT_COOLDOWN
+    elif count_today >= 1:
+        cooldown = OWNER_RESUME_FIRST_COOLDOWN
+
+    last_resume = vacancy.last_owner_resume_at
+    if last_resume and count_today >= 1:
+        delta = current_time - last_resume
+        if delta < cooldown:
+            return max(int((cooldown - delta).total_seconds()), 1)
+    return 0
+
+
+def _register_owner_resume(vacancy, *, now=None):
+    current_time = now or timezone.now()
+    local_today = timezone.localtime(current_time).date()
+    count_today = vacancy.owner_resume_count_day or 0
+    if vacancy.owner_resume_day != local_today:
+        count_today = 0
+    vacancy.owner_resume_day = local_today
+    vacancy.owner_resume_count_day = count_today + 1
+    vacancy.last_owner_resume_at = current_time
 
 
 def _vacancy_bookmark_status(vacancy, *, now=None):
@@ -890,7 +1049,19 @@ class VacancyPendingListAPIView(generics.ListAPIView):
         ).filter(
             Q(rejection_reason="") | Q(rejection_reason__isnull=True)
         ).annotate(
-            queue_anchor=Coalesce("editing_started_at", "published_at")
+            queue_anchor=Coalesce("editing_started_at", "published_at"),
+            moderation_attempts_total=Count("moderation_attempts", distinct=True),
+            moderation_approved_total=Count(
+                "moderation_attempts",
+                filter=Q(moderation_attempts__decision="approved"),
+                distinct=True,
+            ),
+            moderation_rejected_total=Count(
+                "moderation_attempts",
+                filter=Q(moderation_attempts__decision="rejected"),
+                distinct=True,
+            ),
+            latest_moderation_attempt_no=Max("moderation_attempts__attempt_no"),
         ).order_by("-queue_anchor", "-published_at")
 
 
@@ -898,10 +1069,10 @@ class ModerationVacancyDetailAPIView(APIView):
     permission_classes = [IsModerator]
 
     def get(self, request, pk):
-        vacancy = Vacancy.objects.filter(pk=pk).first()
+        vacancy = Vacancy.objects.prefetch_related("moderation_attempts__submitted_by", "moderation_attempts__decided_by").filter(pk=pk).first()
         if not vacancy:
             return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
-        serializer = VacancyModerationSerializer(vacancy)
+        serializer = VacancyModerationDetailSerializer(vacancy, context={"request": request})
         return Response(serializer.data, status=200)
 
 
@@ -914,7 +1085,8 @@ class VacancyApproveAPIView(APIView):
             return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
         if vacancy.is_editing:
             return Response({"error": "vacancy_editing"}, status=409)
-        _set_vacancy_live(vacancy)
+        decision_time = timezone.now()
+        _set_vacancy_live(vacancy, now=decision_time)
         vacancy.save(
             update_fields=[
                 "is_approved",
@@ -929,6 +1101,12 @@ class VacancyApproveAPIView(APIView):
                 "published_at",
                 "expires_at",
             ]
+        )
+        _resolve_latest_moderation_attempt(
+            vacancy,
+            decision="approved",
+            moderator=request.user,
+            decided_at=decision_time,
         )
         try:
             summary = dispatch_vacancy_alerts(vacancy)
@@ -953,6 +1131,7 @@ class VacancyRejectAPIView(APIView):
                 {"error": "links_not_allowed_in_reason"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        decision_time = timezone.now()
         vacancy.moderation_baseline = _vacancy_editable_snapshot(vacancy)
         vacancy.last_moderator_rejection_reason = reason
         vacancy.is_approved = False
@@ -974,6 +1153,13 @@ class VacancyRejectAPIView(APIView):
                 "is_editing",
                 "editing_started_at",
             ]
+        )
+        _resolve_latest_moderation_attempt(
+            vacancy,
+            decision="rejected",
+            moderator=request.user,
+            reason=reason,
+            decided_at=decision_time,
         )
         _notify_vacancy_owner_about_reject(
             vacancy=vacancy,
@@ -1007,6 +1193,11 @@ class VacancyResubmitAPIView(APIView):
                 "is_editing",
                 "editing_started_at",
             ]
+        )
+        _create_moderation_attempt(
+            vacancy,
+            trigger_type="moderator_resubmit",
+            submitted_by=request.user,
         )
         return Response({"detail": "resubmitted"}, status=200)
 
@@ -1086,43 +1277,97 @@ class VacancyOwnerPauseAPIView(APIView):
                 status=200,
             )
 
-        submitted_at = timezone.now()
-        vacancy.is_approved = False
-        vacancy.is_rejected = False
+        current_time = timezone.now()
+        if vacancy.expires_at <= current_time:
+            limit_payload = _owner_moderation_limit_payload(vacancy, now=current_time)
+            if limit_payload is not None:
+                return Response(limit_payload, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+            vacancy.is_approved = False
+            vacancy.is_rejected = False
+            vacancy.is_paused_by_owner = False
+            vacancy.paused_by_owner_at = None
+            vacancy.rejection_reason = ""
+            vacancy.last_moderator_rejection_reason = ""
+            vacancy.moderation_baseline = {}
+            vacancy.is_editing = False
+            vacancy.editing_started_at = current_time
+            vacancy.revision = (vacancy.revision or 1) + 1
+            vacancy.save(
+                update_fields=[
+                    "is_approved",
+                    "is_rejected",
+                    "is_paused_by_owner",
+                    "paused_by_owner_at",
+                    "rejection_reason",
+                    "last_moderator_rejection_reason",
+                    "moderation_baseline",
+                    "is_editing",
+                    "editing_started_at",
+                    "revision",
+                ]
+            )
+            _create_moderation_attempt(
+                vacancy,
+                trigger_type="resume_expired",
+                submitted_by=request.user,
+                submitted_at=current_time,
+            )
+            return Response(
+                {
+                    "detail": "sent_to_moderation",
+                    "is_approved": False,
+                    "is_rejected": False,
+                    "is_paused_by_owner": False,
+                    "paused_by_owner_at": "",
+                    "is_editing": False,
+                    "editing_started_at": current_time.isoformat(),
+                    "revision": vacancy.revision or 1,
+                    "status_label_key": "statusPending",
+                },
+                status=200,
+            )
+
+        remaining_seconds = _owner_resume_cooldown(vacancy, now=current_time)
+        if remaining_seconds > 0:
+            return Response(
+                {
+                    "error": "resume_cooldown",
+                    "remaining_seconds": remaining_seconds,
+                    "resume_count_today": vacancy.owner_resume_count_day or 0,
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         vacancy.is_paused_by_owner = False
         vacancy.paused_by_owner_at = None
-        vacancy.rejection_reason = ""
-        vacancy.last_moderator_rejection_reason = ""
-        vacancy.moderation_baseline = {}
-        vacancy.is_editing = False
-        vacancy.editing_started_at = submitted_at
-        vacancy.revision = (vacancy.revision or 1) + 1
+        _register_owner_resume(vacancy, now=current_time)
         vacancy.save(
             update_fields=[
-                "is_approved",
-                "is_rejected",
                 "is_paused_by_owner",
                 "paused_by_owner_at",
-                "rejection_reason",
-                "last_moderator_rejection_reason",
-                "moderation_baseline",
-                "is_editing",
-                "editing_started_at",
-                "revision",
+                "last_owner_resume_at",
+                "owner_resume_day",
+                "owner_resume_count_day",
             ]
         )
 
         return Response(
             {
-                "detail": "sent_to_moderation",
-                "is_approved": False,
-                "is_rejected": False,
+                "detail": "updated",
+                "is_approved": bool(vacancy.is_approved),
+                "is_rejected": bool(vacancy.is_rejected),
                 "is_paused_by_owner": False,
                 "paused_by_owner_at": "",
-                "is_editing": False,
-                "editing_started_at": submitted_at.isoformat(),
+                "is_editing": bool(vacancy.is_editing),
+                "editing_started_at": (
+                    vacancy.editing_started_at.isoformat()
+                    if vacancy.editing_started_at
+                    else ""
+                ),
                 "revision": vacancy.revision or 1,
-                "status_label_key": "statusPending",
+                "status_label_key": "statusApproved",
+                "resume_count_today": vacancy.owner_resume_count_day or 0,
             },
             status=200,
         )
@@ -1168,6 +1413,10 @@ class VacancyEditAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         next_revision = (vacancy.revision or 1) + 1
         if submit_for_moderation:
+            current_time = timezone.now()
+            limit_payload = _owner_moderation_limit_payload(vacancy, now=current_time)
+            if limit_payload is not None:
+                return Response(limit_payload, status=status.HTTP_429_TOO_MANY_REQUESTS)
             serializer.save(
                 is_approved=False,
                 is_rejected=False,
@@ -1177,7 +1426,13 @@ class VacancyEditAPIView(APIView):
                 paused_by_owner_at=None,
                 revision=next_revision,
                 # Marks resubmission time; pending list applies 60s delay.
-                editing_started_at=timezone.now(),
+                editing_started_at=current_time,
+            )
+            _create_moderation_attempt(
+                vacancy,
+                trigger_type="edit",
+                submitted_by=request.user,
+                submitted_at=current_time,
             )
         else:
             serializer.save(
@@ -1395,6 +1650,9 @@ class ComplaintModerationActionAPIView(APIView):
 
         vacancy = complaint.vacancy
         before_state = self._snapshot(vacancy)
+        attempt_trigger = ""
+        attempt_decision = ""
+        attempt_reason = ""
 
         if action == "delete_forever":
             action_reason = note or complaint.reason
@@ -1411,6 +1669,8 @@ class ComplaintModerationActionAPIView(APIView):
             vacancy.editing_started_at = None
             vacancy.is_deleted_by_moderator = True
             vacancy.deleted_by_moderator_at = timezone.now()
+            attempt_decision = "rejected"
+            attempt_reason = action_reason
         elif action == "reject":
             action_reason = reject_reason or note or complaint.reason
             vacancy.moderation_baseline = _vacancy_editable_snapshot(vacancy)
@@ -1425,6 +1685,8 @@ class ComplaintModerationActionAPIView(APIView):
             vacancy.is_deleted_by_moderator = False
             vacancy.moderator_deleted_state = {}
             vacancy.deleted_by_moderator_at = None
+            attempt_decision = "rejected"
+            attempt_reason = action_reason
         elif action == "restore":
             submitted_at = timezone.now()
             vacancy.is_approved = False
@@ -1440,6 +1702,7 @@ class ComplaintModerationActionAPIView(APIView):
             vacancy.is_deleted_by_moderator = False
             vacancy.moderator_deleted_state = {}
             vacancy.deleted_by_moderator_at = None
+            attempt_trigger = "restore"
 
         vacancy.save(
             update_fields=[
@@ -1458,6 +1721,21 @@ class ComplaintModerationActionAPIView(APIView):
                 "deleted_by_moderator_at",
             ]
         )
+        if attempt_trigger:
+            _create_moderation_attempt(
+                vacancy,
+                trigger_type=attempt_trigger,
+                submitted_by=request.user,
+                submitted_at=vacancy.editing_started_at or timezone.now(),
+                extra_context={"complaint_id": complaint.id},
+            )
+        elif attempt_decision:
+            _resolve_latest_moderation_attempt(
+                vacancy,
+                decision=attempt_decision,
+                moderator=request.user,
+                reason=attempt_reason,
+            )
         after_state = self._snapshot(vacancy)
 
         now = timezone.now()

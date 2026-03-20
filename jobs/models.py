@@ -167,6 +167,9 @@ class Vacancy(models.Model):
     # Owner can temporarily hide approved vacancy from public feed.
     is_paused_by_owner = models.BooleanField(default=False)
     paused_by_owner_at = models.DateTimeField(blank=True, null=True)
+    last_owner_resume_at = models.DateTimeField(blank=True, null=True)
+    owner_resume_day = models.DateField(blank=True, null=True)
+    owner_resume_count_day = models.PositiveSmallIntegerField(default=0)
     is_editing = models.BooleanField(default=False)
     editing_started_at = models.DateTimeField(blank=True, null=True)
 
@@ -187,7 +190,67 @@ class Vacancy(models.Model):
 
     def __str__(self):
         return self.title
-    
+
+
+class VacancyModerationAttempt(models.Model):
+    TRIGGER_CHOICES = [
+        ("create", "Create"),
+        ("edit", "Edit"),
+        ("restore", "Restore"),
+        ("resume_expired", "Resume expired"),
+        ("moderator_resubmit", "Moderator resubmit"),
+    ]
+
+    DECISION_CHOICES = [
+        ("pending", "Pending"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ]
+
+    vacancy = models.ForeignKey(
+        Vacancy,
+        on_delete=models.CASCADE,
+        related_name="moderation_attempts",
+    )
+    attempt_no = models.PositiveIntegerField()
+    trigger_type = models.CharField(max_length=24, choices=TRIGGER_CHOICES)
+    submitted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="submitted_vacancy_moderation_attempts",
+    )
+    submitted_at = models.DateTimeField(default=timezone.now)
+    decision = models.CharField(
+        max_length=12,
+        choices=DECISION_CHOICES,
+        default="pending",
+    )
+    decided_at = models.DateTimeField(blank=True, null=True)
+    decided_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="decided_vacancy_moderation_attempts",
+    )
+    rejection_reason = models.TextField(blank=True)
+    extra_context = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("-submitted_at", "-id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("vacancy", "attempt_no"),
+                name="uniq_vacancy_moderation_attempt_no",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Vacancy #{self.vacancy_id} moderation attempt #{self.attempt_no}"
+
+
 class UnlockedContact(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE)
