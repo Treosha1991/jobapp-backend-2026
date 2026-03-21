@@ -186,7 +186,7 @@ def _public_vacancy_error_response(vacancy, *, now=None):
 
 class VacancyDetailAPIView(APIView):
     def get(self, request, pk):
-        vacancy = Vacancy.objects.filter(pk=pk).first()
+        vacancy = Vacancy.objects.select_related("created_by", "created_by__profile").filter(pk=pk).first()
         if _is_moderator(request):
             if not vacancy:
                 return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
@@ -197,7 +197,12 @@ class VacancyDetailAPIView(APIView):
             if error_response is not None:
                 return error_response
         serializer = VacancyDetailSerializer(vacancy, context={"request": request})
-        return Response(serializer.data, status=200)
+        payload = dict(serializer.data)
+        if _is_moderator(request):
+            payload["employer_summary"] = _build_employer_moderation_summary(
+                vacancy.created_by,
+            )
+        return Response(payload, status=200)
 
 
 class VacancyBookmarkStatusAPIView(APIView):
@@ -441,6 +446,103 @@ def _owner_avatar_url(owner):
     profile = getattr(owner, "profile", None)
     avatar_key = (getattr(profile, "avatar_key", "") or "").strip() if profile else ""
     return avatar_public_url(avatar_key)
+
+
+def _count_map(rows, key_field):
+    return {
+        int(row[key_field]): int(row.get("total", 0) or 0)
+        for row in rows
+        if row.get(key_field) is not None
+    }
+
+
+def _build_employer_moderation_summary_map(owner_ids, *, now=None):
+    owner_ids = [int(owner_id) for owner_id in owner_ids if owner_id]
+    if not owner_ids:
+        return {}
+
+    now = now or timezone.now()
+    owners = {
+        owner.id: owner
+        for owner in User.objects.filter(id__in=owner_ids).select_related("profile")
+    }
+
+    active_counts = _count_map(
+        Vacancy.objects.filter(
+            created_by_id__in=owner_ids,
+            is_approved=True,
+            is_paused_by_owner=False,
+            is_deleted_by_moderator=False,
+            expires_at__gt=now,
+        )
+        .values("created_by_id")
+        .annotate(total=Count("id")),
+        "created_by_id",
+    )
+    editing_counts = _count_map(
+        Vacancy.objects.filter(
+            created_by_id__in=owner_ids,
+            is_editing=True,
+            is_deleted_by_moderator=False,
+        )
+        .values("created_by_id")
+        .annotate(total=Count("id")),
+        "created_by_id",
+    )
+    rejected_counts = _count_map(
+        Vacancy.objects.filter(
+            created_by_id__in=owner_ids,
+            is_rejected=True,
+            is_deleted_by_moderator=False,
+        )
+        .values("created_by_id")
+        .annotate(total=Count("id")),
+        "created_by_id",
+    )
+    complaints_on_vacancies_counts = _count_map(
+        Complaint.objects.filter(vacancy__created_by_id__in=owner_ids)
+        .values("vacancy__created_by_id")
+        .annotate(total=Count("id")),
+        "vacancy__created_by_id",
+    )
+    complaints_submitted_counts = _count_map(
+        Complaint.objects.filter(reporter_id__in=owner_ids)
+        .values("reporter_id")
+        .annotate(total=Count("id")),
+        "reporter_id",
+    )
+
+    summary_map = {}
+    for owner_id in owner_ids:
+        owner = owners.get(owner_id)
+        if not owner:
+            continue
+        summary_map[owner_id] = {
+            "owner_user_id": owner.id,
+            "nickname": _owner_nickname_or_fallback(owner),
+            "avatar_url": _owner_avatar_url(owner),
+            "active_vacancies_count": active_counts.get(owner_id, 0),
+            "editing_vacancies_count": editing_counts.get(owner_id, 0),
+            "rejected_vacancies_count": rejected_counts.get(owner_id, 0),
+            "complaints_on_vacancies_count": complaints_on_vacancies_counts.get(
+                owner_id,
+                0,
+            ),
+            "complaints_submitted_count": complaints_submitted_counts.get(
+                owner_id,
+                0,
+            ),
+        }
+    return summary_map
+
+
+def _build_employer_moderation_summary(owner, *, now=None):
+    if not owner:
+        return {}
+    return _build_employer_moderation_summary_map([owner.id], now=now).get(
+        owner.id,
+        {},
+    )
 
 
 def _vacancy_editable_snapshot(vacancy):
@@ -1069,11 +1171,18 @@ class ModerationVacancyDetailAPIView(APIView):
     permission_classes = [IsModerator]
 
     def get(self, request, pk):
-        vacancy = Vacancy.objects.prefetch_related("moderation_attempts__submitted_by", "moderation_attempts__decided_by").filter(pk=pk).first()
+        vacancy = Vacancy.objects.select_related("created_by", "created_by__profile").prefetch_related(
+            "moderation_attempts__submitted_by",
+            "moderation_attempts__decided_by",
+        ).filter(pk=pk).first()
         if not vacancy:
             return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
         serializer = VacancyModerationDetailSerializer(vacancy, context={"request": request})
-        return Response(serializer.data, status=200)
+        payload = dict(serializer.data)
+        payload["employer_summary"] = _build_employer_moderation_summary(
+            vacancy.created_by,
+        )
+        return Response(payload, status=200)
 
 
 class VacancyApproveAPIView(APIView):
@@ -1525,7 +1634,7 @@ class ComplaintByVacancyAPIView(APIView):
     permission_classes = [IsModerator]
 
     def get(self, request):
-        base = Complaint.objects.select_related("vacancy")
+        base = Complaint.objects.select_related("vacancy", "vacancy__created_by", "vacancy__created_by__profile")
 
         status_filter = (request.query_params.get("status") or "").strip()
         reason_filter = (request.query_params.get("reason") or "").strip()
@@ -1536,7 +1645,11 @@ class ComplaintByVacancyAPIView(APIView):
             base = base.filter(reason=reason_filter)
 
         grouped = (
-            base.values("vacancy_id", "vacancy__title")
+            base.values(
+                "vacancy_id",
+                "vacancy__title",
+                "vacancy__created_by_id",
+            )
             .annotate(
                 complaints_count=Count("id"),
                 open_count=Count("id", filter=Q(status__in=["new", "in_review"])),
@@ -1545,15 +1658,24 @@ class ComplaintByVacancyAPIView(APIView):
             .order_by("-complaints_count", "-latest_complaint_at")
         )
 
+        rows = list(grouped)
+        summary_map = _build_employer_moderation_summary_map(
+            [row.get("vacancy__created_by_id") for row in rows]
+        )
+
         results = [
             {
                 "vacancy_id": row["vacancy_id"],
                 "vacancy_title": row["vacancy__title"],
+                "employer_summary": summary_map.get(
+                    row.get("vacancy__created_by_id"),
+                    {},
+                ),
                 "complaints_count": row["complaints_count"],
                 "open_count": row["open_count"],
                 "latest_complaint_at": row["latest_complaint_at"],
             }
-            for row in grouped
+            for row in rows
         ]
         return Response({"count": len(results), "results": results}, status=200)
 
