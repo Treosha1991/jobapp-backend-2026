@@ -1073,6 +1073,101 @@ class EmployerSubscriptionListAPIView(APIView):
         return paginator.get_paginated_response(results)
 
 
+class EmployerSearchAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        search = (request.query_params.get("search") or "").strip()
+        if len(search) < 2:
+            return Response(
+                {"count": 0, "next": None, "previous": None, "results": []},
+                status=status.HTTP_200_OK,
+            )
+
+        try:
+            limit = int(request.query_params.get("limit") or 20)
+        except (TypeError, ValueError):
+            limit = 20
+        limit = max(1, min(limit, 20))
+
+        now = timezone.now()
+        search_terms = [term for term in search.split() if term]
+        live_vacancy_exists = Vacancy.objects.filter(
+            created_by_id=OuterRef("id"),
+            is_approved=True,
+            is_paused_by_owner=False,
+            is_deleted_by_moderator=False,
+            expires_at__gt=now,
+        )
+        blocked_by_me = UserBlock.objects.filter(
+            blocker=request.user,
+            blocked_user=OuterRef("id"),
+        )
+        blocked_me = UserBlock.objects.filter(
+            blocker_id=OuterRef("id"),
+            blocked_user=request.user,
+        )
+        subscribed_qs = EmployerSubscription.objects.filter(
+            subscriber=request.user,
+            employer_id=OuterRef("id"),
+        )
+
+        qs = (
+            User.objects.select_related("profile")
+            .exclude(id=request.user.id)
+            .annotate(
+                has_live_vacancies=Exists(live_vacancy_exists),
+                blocked_by_me=Exists(blocked_by_me),
+                blocked_me=Exists(blocked_me),
+                is_subscribed=Exists(subscribed_qs),
+            )
+            .filter(
+                has_live_vacancies=True,
+                blocked_by_me=False,
+                blocked_me=False,
+            )
+        )
+
+        search_q = Q()
+        for term in search_terms:
+            term_q = (
+                Q(profile__nickname__icontains=term)
+                | Q(first_name__icontains=term)
+                | Q(last_name__icontains=term)
+            )
+            search_q = term_q if not search_q else (search_q & term_q)
+        qs = qs.filter(search_q)
+
+        qs = qs.annotate(
+            search_rank=Case(
+                When(profile__nickname__iexact=search, then=Value(0)),
+                When(first_name__iexact=search, then=Value(1)),
+                When(last_name__iexact=search, then=Value(2)),
+                When(profile__nickname__istartswith=search, then=Value(3)),
+                When(first_name__istartswith=search, then=Value(4)),
+                When(last_name__istartswith=search, then=Value(5)),
+                default=Value(9),
+                output_field=IntegerField(),
+            ),
+        ).order_by("search_rank", "-is_subscribed", "profile__nickname", "id")
+
+        paginator = PageNumberPagination()
+        paginator.page_size = limit
+        page = paginator.paginate_queryset(qs, request, view=self)
+
+        results = [
+            {
+                "employer_id": owner.id,
+                "nickname": _owner_nickname_or_fallback(owner),
+                "avatar_url": _owner_avatar_url(owner),
+                "is_subscribed": bool(getattr(owner, "is_subscribed", False)),
+            }
+            for owner in (page or [])
+        ]
+
+        return paginator.get_paginated_response(results)
+
+
 from .models import UnlockRequest
 from rest_framework import status
 
