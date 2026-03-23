@@ -775,7 +775,7 @@ p.help,
     color: #ffffff;
     font-weight: 800;
     box-shadow: none;
-    order: 2;
+    margin-top: 0.25rem;
 }
 
 .object-tools.jh-object-tools-floating {
@@ -785,10 +785,9 @@ p.help,
     background: transparent;
     box-shadow: none;
     width: 100%;
-    order: 1;
     float: none !important;
     display: grid;
-    gap: 0.45rem;
+    gap: 0;
 }
 
 .object-tools.jh-object-tools-floating li {

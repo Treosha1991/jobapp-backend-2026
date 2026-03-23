@@ -12,12 +12,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const toolsHeight = floatingTools?.offsetHeight || 0;
     document.documentElement.style.setProperty("--jh-floating-tools-height", `${toolsHeight}px`);
 
-    if (filterPanel && floatingTools) {
-      const rect = floatingTools.getBoundingClientRect();
+    if (filterPanel && filterButton) {
+      const rect = filterButton.getBoundingClientRect();
       const viewportWidth = window.innerWidth;
       const width = Math.min(352, viewportWidth - 24);
       const right = Math.max(12, viewportWidth - rect.right);
-      const top = Math.round(rect.bottom + 8);
+      const top = Math.round(rect.bottom + 6);
       filterPanel.style.right = `${right}px`;
       filterPanel.style.left = "auto";
       filterPanel.style.top = `${top}px`;
@@ -37,6 +37,11 @@ document.addEventListener("DOMContentLoaded", () => {
   floatingTools = document.createElement("div");
   floatingTools.className = "jh-floating-tools";
   document.body.appendChild(floatingTools);
+
+  if (objectTools) {
+    objectTools.classList.add("jh-object-tools-floating");
+    floatingTools.appendChild(objectTools);
+  }
 
   if (filterPanel) {
     filterButton = document.createElement("button");
@@ -85,11 +90,6 @@ document.addEventListener("DOMContentLoaded", () => {
         closeFilters();
       }
     });
-  }
-
-  if (objectTools) {
-    objectTools.classList.add("jh-object-tools-floating");
-    floatingTools.appendChild(objectTools);
   }
 
   syncLayoutOffsets();
