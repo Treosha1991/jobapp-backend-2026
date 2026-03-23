@@ -6,6 +6,11 @@
 <link rel="stylesheet" href="{% static 'jobs/admin/operator.css' %}">
 {% endblock %}
 
+{% block extrahead %}
+{{ block.super }}
+<script src="{% static 'jobs/admin/operator.js' %}" defer></script>
+{% endblock %}
+
 {% block branding %}
 <div class="jh-branding-shell">
     <img class="jh-brand-mark" src="{% static 'jobs/admin/app-icon.png' %}" alt="JobHub">

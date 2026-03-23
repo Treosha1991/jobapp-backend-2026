@@ -37,6 +37,7 @@ html[data-theme="dark"],
     --close-button-hover-bg: #0f6f42;
     --message-success-bg: #ebf8f0;
     --jh-filter-width: clamp(14rem, 18vw, 18rem);
+    --jh-header-offset: 78px;
 }
 
 html {
@@ -178,6 +179,10 @@ a:visited {
 
 #content {
     margin: 0.95rem 1rem 1rem;
+}
+
+body.jh-has-floating-tools #content {
+    padding-top: 3.1rem;
 }
 
 .main > #content-start,
@@ -365,6 +370,20 @@ input[type="button"],
     color: var(--jh-green-deep) !important;
     border-color: var(--jh-border-strong) !important;
     box-shadow: none;
+}
+
+.button.default,
+input.default,
+.submit-row input.default {
+    color: #ffffff !important;
+}
+
+a.deletelink,
+.deletelink,
+.submit-row a.deletelink {
+    background: #ffffff !important;
+    color: #b42318 !important;
+    border-color: #efc7c3 !important;
 }
 
 .jh-card-actions a:hover,
@@ -584,9 +603,7 @@ td {
 }
 
 #changelist {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    display: block;
 }
 
 #changelist-form,
@@ -598,16 +615,65 @@ td {
 }
 
 #changelist-filter {
-    position: static;
+    position: fixed;
+    top: calc(var(--jh-header-offset) + 3rem);
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    z-index: 80;
     width: auto;
-    max-width: 100%;
-    margin: 0;
-    order: -1;
+    max-width: min(24rem, calc(100vw - 1.5rem));
+    margin: 0 0 0 auto;
+    padding-top: 3.1rem;
     overflow: auto;
+    transform: translateY(120%);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 180ms ease, opacity 180ms ease;
 }
 
 #changelist-filter details summary {
     font-weight: 700;
+}
+
+body.jh-filter-open #changelist-filter {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.jh-filter-close {
+    position: sticky;
+    top: 0.75rem;
+    margin-left: auto;
+    margin-bottom: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.1rem;
+    padding: 0 0.8rem;
+    border-radius: 999px;
+    border: 1px solid var(--jh-border-strong);
+    background: #ffffff;
+    color: var(--jh-green-deep);
+    font-weight: 800;
+    z-index: 2;
+}
+
+.jh-filter-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    border: 0;
+    background: rgba(15, 33, 24, 0.28);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+}
+
+body.jh-filter-open .jh-filter-backdrop {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 #toolbar {
@@ -668,12 +734,65 @@ p.help,
     padding: 0.9rem 1rem;
 }
 
-.object-tools {
-    margin: 0 0 1rem;
+.jh-floating-tools {
+    position: fixed;
+    top: calc(var(--jh-header-offset) + 0.35rem);
+    left: 0.75rem;
+    right: 0.75rem;
+    z-index: 75;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.6rem;
+    pointer-events: none;
 }
 
-.object-tools a.addlink {
+.jh-floating-tools > * {
+    pointer-events: auto;
+}
+
+.jh-filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.3rem;
+    padding: 0 0.9rem;
+    border-radius: 999px;
+    border: 1px solid rgba(28, 140, 87, 0.14);
+    background: linear-gradient(180deg, #23a160 0%, #197f4e 100%);
+    color: #ffffff;
+    font-weight: 800;
+    box-shadow: 0 12px 24px rgba(28, 140, 87, 0.16);
+}
+
+.object-tools.jh-object-tools-floating {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.object-tools.jh-object-tools-floating ul,
+.object-tools.jh-object-tools-floating li {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.object-tools.jh-object-tools-floating a,
+.object-tools.jh-object-tools-floating a.addlink {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    max-width: min(52vw, 13rem);
+    min-height: 2.3rem;
+    padding: 0.45rem 0.85rem;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.15;
     background: linear-gradient(180deg, #23a160 0%, #197f4e 100%) !important;
+    color: #ffffff !important;
 }
 
 .submit-row {
@@ -754,6 +873,25 @@ p.help,
         padding: 0.45rem 0.42rem;
         font-size: 0.76rem;
     }
+
+    .jh-floating-tools {
+        left: 0.75rem;
+        right: 0.75rem;
+        gap: 0.5rem;
+    }
+
+    .jh-filter-toggle,
+    .object-tools.jh-object-tools-floating a,
+    .object-tools.jh-object-tools-floating a.addlink {
+        min-height: 2.15rem;
+        padding: 0.4rem 0.72rem;
+        font-size: 0.78rem;
+    }
+
+    .object-tools.jh-object-tools-floating a,
+    .object-tools.jh-object-tools-floating a.addlink {
+        max-width: 56vw;
+    }
 }
 
 @media (min-width: 900px) {
@@ -782,26 +920,19 @@ p.help,
         grid-template-columns: minmax(0, 1.55fr) minmax(16rem, 0.8fr);
     }
 
-    #changelist {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) var(--jh-filter-width);
-        align-items: start;
-        gap: 1rem;
-    }
-
-    #changelist-form,
-    #toolbar {
-        grid-column: 1;
-    }
-
     #changelist-filter {
-        grid-column: 2;
-        grid-row: 1 / span 3;
-        position: sticky;
-        top: 5.75rem;
-        width: 100%;
+        left: auto;
+        right: 0.85rem;
+        top: calc(var(--jh-header-offset) + 3rem);
+        width: min(var(--jh-filter-width), calc(100vw - 2rem));
         resize: horizontal;
         min-width: 13rem;
         max-width: 24rem;
+        bottom: 0.85rem;
+    }
+
+    .jh-floating-tools {
+        left: 0.85rem;
+        right: 0.85rem;
     }
 }
