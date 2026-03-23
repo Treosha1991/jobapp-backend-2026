@@ -763,10 +763,10 @@ p.help,
 }
 
 .jh-filter-toggle {
+    position: fixed;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
     min-height: 2.15rem;
     padding: 0 0.8rem;
     border-radius: 0.9rem;
@@ -775,7 +775,7 @@ p.help,
     color: #ffffff;
     font-weight: 800;
     box-shadow: none;
-    margin-top: 0.25rem;
+    z-index: 75;
 }
 
 .object-tools.jh-object-tools-floating {

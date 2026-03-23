@@ -7,17 +7,29 @@ document.addEventListener("DOMContentLoaded", () => {
   let filterButton = null;
 
   const syncLayoutOffsets = () => {
+    const viewportWidth = window.innerWidth;
     const offset = (header?.offsetHeight || 64) + 10;
     document.documentElement.style.setProperty("--jh-header-offset", `${offset}px`);
     const toolsHeight = floatingTools?.offsetHeight || 0;
     document.documentElement.style.setProperty("--jh-floating-tools-height", `${toolsHeight}px`);
 
+    const toolsRect = objectTools ? objectTools.getBoundingClientRect() : null;
+
+    if (filterButton) {
+      const buttonWidth = Math.min(toolsRect?.width || 224, viewportWidth - 24);
+      const right = Math.max(12, toolsRect ? viewportWidth - toolsRect.right : 12);
+      const top = Math.round((toolsRect?.bottom || offset) + 4);
+      filterButton.style.right = `${right}px`;
+      filterButton.style.left = "auto";
+      filterButton.style.top = `${top}px`;
+      filterButton.style.width = `${buttonWidth}px`;
+    }
+
     if (filterPanel && filterButton) {
       const rect = filterButton.getBoundingClientRect();
-      const viewportWidth = window.innerWidth;
       const width = Math.min(352, viewportWidth - 24);
       const right = Math.max(12, viewportWidth - rect.right);
-      const top = Math.round(rect.bottom + 6);
+      const top = Math.round(rect.bottom + 4);
       filterPanel.style.right = `${right}px`;
       filterPanel.style.left = "auto";
       filterPanel.style.top = `${top}px`;
@@ -49,7 +61,7 @@ document.addEventListener("DOMContentLoaded", () => {
     filterButton.className = "jh-filter-toggle";
     filterButton.textContent = "Filters";
     filterButton.setAttribute("aria-expanded", "false");
-    floatingTools.appendChild(filterButton);
+    document.body.appendChild(filterButton);
 
     const backdrop = document.createElement("button");
     backdrop.type = "button";
