@@ -786,13 +786,17 @@ p.help,
     box-shadow: none;
     width: 100%;
     order: 1;
+    float: none !important;
+    display: grid;
+    gap: 0.45rem;
 }
 
-.object-tools.jh-object-tools-floating ul,
 .object-tools.jh-object-tools-floating li {
     margin: 0;
     padding: 0;
     list-style: none;
+    float: none !important;
+    width: 100%;
 }
 
 .object-tools.jh-object-tools-floating a,
