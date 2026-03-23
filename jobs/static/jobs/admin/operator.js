@@ -3,14 +3,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const header = document.getElementById("header");
   const objectTools = document.querySelector(".object-tools");
   const filterPanel = document.getElementById("changelist-filter");
+  let floatingTools = null;
 
-  const syncHeaderOffset = () => {
+  const syncLayoutOffsets = () => {
     const offset = (header?.offsetHeight || 64) + 10;
     document.documentElement.style.setProperty("--jh-header-offset", `${offset}px`);
+    const toolsHeight = floatingTools?.offsetHeight || 0;
+    document.documentElement.style.setProperty("--jh-floating-tools-height", `${toolsHeight}px`);
   };
 
-  syncHeaderOffset();
-  window.addEventListener("resize", syncHeaderOffset);
+  syncLayoutOffsets();
+  window.addEventListener("resize", syncLayoutOffsets);
 
   if (!objectTools && !filterPanel) {
     return;
@@ -18,7 +21,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   body.classList.add("jh-has-floating-tools");
 
-  const floatingTools = document.createElement("div");
+  floatingTools = document.createElement("div");
   floatingTools.className = "jh-floating-tools";
   document.body.appendChild(floatingTools);
 
@@ -74,4 +77,6 @@ document.addEventListener("DOMContentLoaded", () => {
     objectTools.classList.add("jh-object-tools-floating");
     floatingTools.appendChild(objectTools);
   }
+
+  syncLayoutOffsets();
 });
