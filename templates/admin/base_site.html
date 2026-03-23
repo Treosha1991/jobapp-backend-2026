@@ -8,10 +8,9 @@
 
 {% block branding %}
 <div class="jh-branding-shell">
-    <div class="jh-brand-mark">JH</div>
+    <img class="jh-brand-mark" src="{% static 'jobs/admin/app-icon.png' %}" alt="JobHub">
     <div class="jh-brand-copy">
         <div id="site-name"><a href="{% url 'admin:index' %}">JobHub Operator Console</a></div>
-        <p class="jh-brand-subtitle">Light operator workspace for moderation, support, and marketplace control.</p>
     </div>
 </div>
 {% endblock %}

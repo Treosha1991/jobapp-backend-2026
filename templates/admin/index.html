@@ -12,11 +12,7 @@
     <section class="jh-hero">
         <div class="jh-hero-copy">
             <span class="jh-eyebrow">Operator dashboard</span>
-            <h1>One clear place for moderation, support, and account operations.</h1>
-            <p>
-                Keep the workflow calm and readable: open the most important queues fast,
-                jump into user operations without hunting, and move through admin tasks in a cleaner layout.
-            </p>
+            <h1>Quick access to the main work queues.</h1>
             <div class="jh-chip-row">
                 <span class="jh-chip">{{ app_list|length }} app zones</span>
                 <span class="jh-chip">{{ app_list|count_admin_models }} admin tools</span>
@@ -81,7 +77,7 @@
             <section class="jh-side-card">
                 <div class="jh-side-head">
                     <span class="jh-side-kicker">Quick routes</span>
-                    <h2>Most frequent operator moves</h2>
+                    <h2>Fast actions</h2>
                 </div>
                 <div class="jh-quick-links">
                     <a href="/admin/jobs/vacancy/">Review vacancies</a>
@@ -94,7 +90,7 @@
             <section class="jh-side-card">
                 <div class="jh-side-head">
                     <span class="jh-side-kicker">Recent activity</span>
-                    <h2>Last admin actions</h2>
+                    <h2>Latest actions</h2>
                 </div>
                 <ul class="jh-log-list">
                     {% for entry in admin_log %}

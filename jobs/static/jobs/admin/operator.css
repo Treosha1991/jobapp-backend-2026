@@ -36,6 +36,11 @@ html[data-theme="dark"],
     --close-button-bg: #173c2b;
     --close-button-hover-bg: #0f6f42;
     --message-success-bg: #ebf8f0;
+    --jh-filter-width: clamp(14rem, 18vw, 18rem);
+}
+
+html {
+    color-scheme: light;
 }
 
 body {
@@ -43,6 +48,7 @@ body {
         radial-gradient(circle at top left, rgba(28, 140, 87, 0.08), transparent 32rem),
         linear-gradient(180deg, #f8fcf9 0%, var(--jh-bg) 100%);
     color: var(--jh-text);
+    overflow-x: hidden;
 }
 
 a:link,
@@ -58,11 +64,11 @@ a:visited {
     position: sticky;
     top: 0;
     z-index: 40;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 1rem;
-    padding: 1.1rem 1.5rem;
+    padding: 0.9rem 1rem;
     background: var(--header-bg);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow: 0 20px 40px rgba(15, 57, 38, 0.22);
@@ -79,20 +85,18 @@ a:visited {
 .jh-branding-shell {
     display: flex;
     align-items: center;
-    gap: 0.9rem;
+    gap: 0.75rem;
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
 .jh-brand-mark {
-    display: grid;
-    place-items: center;
-    width: 2.75rem;
-    height: 2.75rem;
-    border-radius: 0.95rem;
-    background: linear-gradient(135deg, #ffffff 0%, #d7f0df 100%);
-    color: #145838;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    box-shadow: inset 0 0 0 1px rgba(12, 86, 51, 0.08);
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.85rem;
+    object-fit: cover;
+    box-shadow: 0 8px 20px rgba(8, 49, 31, 0.2);
+    background: #ffffff;
 }
 
 .jh-brand-copy {
@@ -101,7 +105,7 @@ a:visited {
 
 #site-name {
     margin: 0;
-    font-size: 1.15rem;
+    font-size: 1rem;
     font-weight: 800;
     line-height: 1.1;
 }
@@ -110,29 +114,26 @@ a:visited {
     color: #ffffff;
 }
 
-.jh-brand-subtitle {
-    margin: 0.18rem 0 0;
-    color: rgba(255, 255, 255, 0.72);
-    font-size: 0.88rem;
-}
-
 .jh-global-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 0.55rem;
-    justify-content: flex-end;
+    justify-content: flex-start;
+    width: 100%;
+    order: 3;
 }
 
 .jh-global-actions a {
     display: inline-flex;
     align-items: center;
-    min-height: 2.25rem;
-    padding: 0 0.9rem;
+    min-height: 2rem;
+    padding: 0 0.75rem;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.14);
     background: rgba(255, 255, 255, 0.08);
     color: #ffffff;
     font-weight: 700;
+    font-size: 0.84rem;
     transition: 140ms ease;
 }
 
@@ -148,7 +149,8 @@ a:visited {
     flex-wrap: wrap;
     gap: 0.55rem;
     color: rgba(255, 255, 255, 0.82);
-    font-size: 0.9rem;
+    font-size: 0.84rem;
+    margin-left: auto;
 }
 
 #user-tools a,
@@ -166,8 +168,8 @@ a:visited {
 }
 
 .breadcrumbs {
-    margin: 1rem 1.5rem 0;
-    padding: 0.9rem 1.1rem;
+    margin: 0.85rem 1rem 0;
+    padding: 0.75rem 0.9rem;
     border: 1px solid var(--jh-border);
     border-radius: 1rem;
     background: rgba(255, 255, 255, 0.85);
@@ -175,7 +177,7 @@ a:visited {
 }
 
 #content {
-    margin: 1.1rem 1.5rem 1.5rem;
+    margin: 0.95rem 1rem 1rem;
 }
 
 .main > #content-start,
@@ -200,20 +202,18 @@ a:visited {
 
 .jh-hero {
     display: grid;
-    grid-template-columns: minmax(0, 1.25fr) minmax(18rem, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
-    padding: 1.35rem;
+    padding: 1rem;
     border: 1px solid var(--jh-border);
-    border-radius: 1.5rem;
+    border-radius: 1.2rem;
     background:
         linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(247, 251, 248, 0.98)),
         radial-gradient(circle at top right, rgba(28, 140, 87, 0.1), transparent 18rem);
     box-shadow: var(--jh-shadow);
 }
 
-.jh-hero-compact {
-    grid-template-columns: minmax(0, 1fr) auto;
-}
+.jh-hero-compact { grid-template-columns: minmax(0, 1fr); }
 
 .jh-eyebrow,
 .jh-side-kicker,
@@ -234,6 +234,7 @@ a:visited {
 .jh-section-card h2 {
     margin: 0;
     color: var(--jh-text);
+    font-size: 1.05rem;
 }
 
 .jh-hero p,
@@ -248,8 +249,8 @@ a:visited {
 .jh-chip-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.6rem;
-    margin-top: 1rem;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
 }
 
 .jh-chip,
@@ -269,8 +270,8 @@ a:visited {
 .jh-highlight-grid,
 .jh-model-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-    gap: 0.9rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
 }
 
 .jh-highlight-card,
@@ -297,8 +298,8 @@ div.help,
 .jh-side-card {
     display: flex;
     flex-direction: column;
-    gap: 0.7rem;
-    padding: 1rem;
+    gap: 0.55rem;
+    padding: 0.9rem;
 }
 
 .jh-highlight-card {
@@ -323,15 +324,16 @@ div.help,
 
 .jh-highlight-card strong,
 .jh-model-card h3 {
-    font-size: 1.05rem;
+    font-size: 0.98rem;
     margin: 0;
+    overflow-wrap: anywhere;
 }
 
 .jh-card-actions,
 .jh-quick-links {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.6rem;
+    gap: 0.5rem;
     margin-top: auto;
 }
 
@@ -345,8 +347,8 @@ input[type="button"],
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 2.35rem;
-    padding: 0 0.95rem;
+    min-height: 2.15rem;
+    padding: 0 0.8rem;
     border-radius: 999px !important;
     border: 1px solid rgba(28, 140, 87, 0.14);
     background: linear-gradient(180deg, #23a160 0%, #197f4e 100%);
@@ -378,7 +380,7 @@ input[type="button"]:hover,
 
 .jh-dashboard-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.75fr) minmax(18rem, 0.85fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 1.1rem;
     align-items: start;
 }
@@ -390,9 +392,9 @@ input[type="button"]:hover,
 }
 
 .jh-section-card {
-    padding: 1.15rem;
+    padding: 0.95rem;
     border: 1px solid var(--jh-border);
-    border-radius: 1.4rem;
+    border-radius: 1.15rem;
     background: rgba(255, 255, 255, 0.92);
     box-shadow: var(--jh-shadow);
 }
@@ -461,7 +463,7 @@ input[type="button"]:hover,
 }
 
 #nav-sidebar {
-    margin: 1.1rem 0 1.5rem 1.5rem;
+    margin: 0.95rem 1rem 1rem;
     border-radius: 1.3rem;
     border: 1px solid var(--jh-border);
     background: rgba(255, 255, 255, 0.92);
@@ -473,6 +475,28 @@ input[type="button"]:hover,
 #nav-sidebar a:link,
 #nav-sidebar a:visited {
     border-radius: 0.8rem;
+}
+
+#nav-sidebar td,
+#nav-sidebar th,
+#nav-sidebar a,
+#nav-sidebar label {
+    color: var(--jh-text) !important;
+}
+
+#nav-sidebar .current-model,
+#nav-sidebar .current-app,
+#nav-sidebar tr,
+#nav-sidebar tbody tr,
+#nav-sidebar .model-current {
+    background: transparent !important;
+}
+
+#nav-sidebar .current-model a,
+#nav-sidebar .current-app > a,
+#nav-sidebar .current-model .section {
+    background: #e8f5ed !important;
+    color: var(--jh-green-deep) !important;
 }
 
 .module,
@@ -518,9 +542,23 @@ input[type="button"]:hover,
     font-weight: 800;
 }
 
+.results table,
+.module table,
+#result_list {
+    width: 100%;
+    table-layout: fixed;
+}
+
 .results table tbody tr:nth-child(odd),
 .module table tbody tr:nth-child(odd) {
     background: rgba(250, 253, 251, 0.96);
+    color: var(--jh-text);
+}
+
+.results table tbody tr:nth-child(even),
+.module table tbody tr:nth-child(even) {
+    background: #ffffff;
+    color: var(--jh-text);
 }
 
 .results table tbody tr:hover,
@@ -531,18 +569,41 @@ input[type="button"]:hover,
 th,
 td {
     border-color: var(--jh-border) !important;
+    color: var(--jh-text) !important;
+    white-space: normal !important;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    vertical-align: top;
 }
 
-.change-list .filtered .results,
-.change-list .filtered #toolbar,
-.change-list .filtered div.xfull {
-    margin-right: 20rem;
+#result_list a,
+.results a,
+.module table a {
+    color: var(--jh-green-deep) !important;
+    overflow-wrap: anywhere;
+}
+
+#changelist {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+#changelist-form,
+#toolbar,
+.paginator,
+.actions,
+.results {
+    min-width: 0;
 }
 
 #changelist-filter {
-    top: 6.25rem;
-    right: 1.5rem;
-    width: 18rem;
+    position: static;
+    width: auto;
+    max-width: 100%;
+    margin: 0;
+    order: -1;
+    overflow: auto;
 }
 
 #changelist-filter details summary {
@@ -551,6 +612,7 @@ td {
 
 #toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.8rem;
     margin-bottom: 1rem;
@@ -645,31 +707,9 @@ p.help,
     padding: 0;
 }
 
-@media (max-width: 1100px) {
-    #header {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .jh-global-actions,
-    #user-tools {
-        justify-content: flex-start;
-    }
-
-    .jh-hero,
-    .jh-dashboard-grid {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .change-list .filtered .results,
-    .change-list .filtered #toolbar,
-    .change-list .filtered div.xfull {
-        margin-right: 0;
-    }
-
-    #changelist-filter {
-        position: static;
-        width: auto;
-        margin-top: 1rem;
+@media (max-width: 1024px) {
+    #nav-sidebar {
+        display: none;
     }
 }
 
@@ -677,20 +717,91 @@ p.help,
     #header,
     #content,
     .breadcrumbs {
-        margin-left: 0.8rem;
-        margin-right: 0.8rem;
+        margin-left: 0.75rem;
+        margin-right: 0.75rem;
     }
 
     #header {
-        padding: 1rem;
+        padding: 0.8rem;
     }
 
-    .jh-branding-shell {
-        align-items: flex-start;
+    #user-tools {
+        width: 100%;
+        justify-content: flex-start;
+        margin-left: 0;
+    }
+
+    #site-name {
+        font-size: 0.92rem;
     }
 
     .jh-highlight-grid,
     .jh-model-grid {
         grid-template-columns: minmax(0, 1fr);
+    }
+
+    .jh-card-actions a,
+    .jh-quick-links a {
+        width: 100%;
+    }
+
+    .results table thead {
+        font-size: 0.76rem;
+    }
+
+    .results table td,
+    .results table th {
+        padding: 0.45rem 0.42rem;
+        font-size: 0.76rem;
+    }
+}
+
+@media (min-width: 900px) {
+    #header {
+        padding: 1rem 1.25rem;
+    }
+
+    #site-name {
+        font-size: 1.08rem;
+    }
+
+    .jh-highlight-grid,
+    .jh-model-grid {
+        grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    }
+
+    .jh-hero {
+        grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 1fr);
+    }
+
+    .jh-hero-compact {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .jh-dashboard-grid {
+        grid-template-columns: minmax(0, 1.55fr) minmax(16rem, 0.8fr);
+    }
+
+    #changelist {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) var(--jh-filter-width);
+        align-items: start;
+        gap: 1rem;
+    }
+
+    #changelist-form,
+    #toolbar {
+        grid-column: 1;
+    }
+
+    #changelist-filter {
+        grid-column: 2;
+        grid-row: 1 / span 3;
+        position: sticky;
+        top: 5.75rem;
+        width: 100%;
+        resize: horizontal;
+        min-width: 13rem;
+        max-width: 24rem;
     }
 }
