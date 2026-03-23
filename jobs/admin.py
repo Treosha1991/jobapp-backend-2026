@@ -28,7 +28,7 @@ from .models import (
 admin.site.site_header = "JobHub Operator Console"
 admin.site.site_title = "JobHub Admin"
 admin.site.index_title = "Moderation and support panel"
-admin.site.empty_value_display = "—"
+admin.site.empty_value_display = "-"
 
 
 def _badge(label, *, bg, fg="#FFFFFF"):

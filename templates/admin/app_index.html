@@ -1,0 +1,49 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content_title %}{% endblock %}
+
+{% block content %}
+<div class="jh-app-page">
+    {% for app in app_list %}
+    <section class="jh-hero jh-hero-compact">
+        <div class="jh-hero-copy">
+            <span class="jh-eyebrow">Application area</span>
+            <h1>{{ app.name }}</h1>
+            <p>Open list views or add new records from a calmer card layout.</p>
+        </div>
+        <div class="jh-chip-row">
+            <span class="jh-chip">{{ app.models|length }} tools</span>
+            <span class="jh-chip">{{ app.app_label }}</span>
+        </div>
+    </section>
+
+    <div class="jh-model-grid">
+        {% for model in app.models %}
+        <article class="jh-model-card">
+            <div class="jh-model-top">
+                <span class="jh-model-app">{{ app.name }}</span>
+                {% if model.view_only %}
+                <span class="jh-mini-chip">View only</span>
+                {% else %}
+                <span class="jh-mini-chip">Editable</span>
+                {% endif %}
+            </div>
+            <h3>{{ model.name }}</h3>
+            <p class="jh-model-note">
+                Work with {{ model.object_name }} entries from this application panel.
+            </p>
+            <div class="jh-card-actions">
+                {% if model.admin_url %}
+                <a href="{{ model.admin_url }}">Open list</a>
+                {% endif %}
+                {% if model.add_url %}
+                <a class="jh-card-action-secondary" href="{{ model.add_url }}">Add new</a>
+                {% endif %}
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
