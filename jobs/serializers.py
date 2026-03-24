@@ -9,6 +9,7 @@ from .models import (
     VacancyAlertSubscription,
     VacancyModerationAttempt,
 )
+from .service_sources import service_board_meta_for_user
 from .text_filters import censor_minimal, contains_link
 
 
@@ -104,6 +105,11 @@ def _creator_avatar_url(obj):
     return avatar_public_url(avatar_key)
 
 
+def _service_board_meta(obj):
+    creator = getattr(obj, "created_by", None)
+    return service_board_meta_for_user(creator)
+
+
 def _user_display_name(user):
     if not user:
         return ""
@@ -144,7 +150,7 @@ def _contact_payload(obj):
     public_whatsapp = additional_phone if hide_primary_phone and raw_whatsapp else raw_whatsapp
     public_viber = additional_phone if hide_primary_phone and raw_viber else raw_viber
     public_telegram = additional_phone if hide_primary_phone and raw_telegram else raw_telegram
-    return {
+    payload = {
         "owner_user_id": getattr(getattr(obj, "created_by", None), "id", None),
         "owner_nickname": _creator_display_name(obj),
         "owner_avatar_url": _creator_avatar_url(obj),
@@ -162,6 +168,8 @@ def _contact_payload(obj):
         "public_whatsapp": public_whatsapp,
         "public_viber": public_viber,
     }
+    payload.update(_service_board_meta(obj))
+    return payload
 
 
 class VacancyListSerializer(serializers.ModelSerializer):
@@ -170,6 +178,8 @@ class VacancyListSerializer(serializers.ModelSerializer):
     salary_monthly_to = serializers.SerializerMethodField()
     is_resubmitted = serializers.SerializerMethodField()
     is_owner_subscribed = serializers.SerializerMethodField()
+    is_service_board = serializers.SerializerMethodField()
+    service_board_kind = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -199,6 +209,8 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "expires_at",
             "is_resubmitted",
             "is_owner_subscribed",
+            "is_service_board",
+            "service_board_kind",
         ]
 
     def get_contacts(self, obj):
@@ -231,6 +243,12 @@ class VacancyListSerializer(serializers.ModelSerializer):
             subscriber=user,
             employer_id=owner_id,
         ).exists()
+
+    def get_is_service_board(self, obj):
+        return _service_board_meta(obj)["is_service_board"]
+
+    def get_service_board_kind(self, obj):
+        return _service_board_meta(obj)["service_board_kind"]
 
 
 class VacancyModerationSerializer(VacancyListSerializer):
@@ -331,6 +349,8 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
     moderation_approved_total = serializers.SerializerMethodField()
     moderation_rejected_total = serializers.SerializerMethodField()
     moderation_history = serializers.SerializerMethodField()
+    is_service_board = serializers.SerializerMethodField()
+    service_board_kind = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -363,6 +383,8 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "moderation_approved_total",
             "moderation_rejected_total",
             "moderation_history",
+            "is_service_board",
+            "service_board_kind",
         ]
 
     def get_contacts(self, obj):
@@ -405,6 +427,12 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             obj.moderation_attempts.all(),
             many=True,
         ).data
+
+    def get_is_service_board(self, obj):
+        return _service_board_meta(obj)["is_service_board"]
+
+    def get_service_board_kind(self, obj):
+        return _service_board_meta(obj)["service_board_kind"]
 
 class VacancyCreateSerializer(serializers.ModelSerializer):
     class Meta:

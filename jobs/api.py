@@ -26,6 +26,7 @@ from .models import (
     UserProfile,
     UnlockedContact,
 )
+from .service_sources import service_board_meta_for_user, is_service_board_user
 from .serializers import (
     ComplaintListSerializer,
     PushDeviceRegisterSerializer,
@@ -517,7 +518,7 @@ def _build_employer_moderation_summary_map(owner_ids, *, now=None):
         owner = owners.get(owner_id)
         if not owner:
             continue
-        summary_map[owner_id] = {
+        payload = {
             "owner_user_id": owner.id,
             "nickname": _owner_nickname_or_fallback(owner),
             "avatar_url": _owner_avatar_url(owner),
@@ -533,6 +534,8 @@ def _build_employer_moderation_summary_map(owner_ids, *, now=None):
                 0,
             ),
         }
+        payload.update(service_board_meta_for_user(owner))
+        summary_map[owner_id] = payload
     return summary_map
 
 
@@ -972,7 +975,8 @@ class EmployerProfileAPIView(APIView):
         if blocked_by_owner:
             return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
-        can_subscribe = owner.id != request.user.id
+        is_service_board = is_service_board_user(owner)
+        can_subscribe = owner.id != request.user.id and not is_service_board
         is_subscribed = False
         if can_subscribe:
             is_subscribed = EmployerSubscription.objects.filter(
@@ -993,19 +997,22 @@ class EmployerProfileAPIView(APIView):
         serializer = VacancyListSerializer(page, many=True)
         paginated = paginator.get_paginated_response(serializer.data).data
 
+        employer_payload = {
+            "id": owner.id,
+            "nickname": _owner_nickname_or_fallback(owner),
+            "profile_description": (
+                (getattr(getattr(owner, "profile", None), "description", "") or "").strip()
+            ),
+            "email_masked": _masked_email(owner.email),
+            "avatar_url": _owner_avatar_url(owner),
+            "can_subscribe": can_subscribe,
+            "is_subscribed": is_subscribed,
+        }
+        employer_payload.update(service_board_meta_for_user(owner))
+
         return Response(
             {
-                "employer": {
-                    "id": owner.id,
-                    "nickname": _owner_nickname_or_fallback(owner),
-                    "profile_description": (
-                        (getattr(getattr(owner, "profile", None), "description", "") or "").strip()
-                    ),
-                    "email_masked": _masked_email(owner.email),
-                    "avatar_url": _owner_avatar_url(owner),
-                    "can_subscribe": can_subscribe,
-                    "is_subscribed": is_subscribed,
-                },
+                "employer": employer_payload,
                 "count": paginated.get("count", 0),
                 "next": paginated.get("next"),
                 "previous": paginated.get("previous"),
@@ -1024,6 +1031,8 @@ class EmployerSubscriptionAPIView(APIView):
             return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
         if owner.id == request.user.id:
             return Response({"error": "cannot_subscribe_self"}, status=status.HTTP_400_BAD_REQUEST)
+        if is_service_board_user(owner):
+            return Response({"error": "cannot_subscribe_service_source"}, status=status.HTTP_400_BAD_REQUEST)
 
         _, created = EmployerSubscription.objects.get_or_create(
             subscriber=request.user,
