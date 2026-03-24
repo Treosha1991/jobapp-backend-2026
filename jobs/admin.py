@@ -242,6 +242,7 @@ class VacancyAdmin(admin.ModelAdmin):
     )
     ordering = ("-published_at", "-id")
     list_select_related = ("created_by", "created_by__profile")
+    autocomplete_fields = ("created_by",)
     date_hierarchy = "published_at"
     list_per_page = 40
     readonly_fields = (
@@ -314,6 +315,34 @@ class VacancyAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj is None and "owner_display" in fields:
+            fields.remove("owner_display")
+        return fields
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = list(super().get_fieldsets(request, obj))
+        if not fieldsets:
+            return fieldsets
+
+        main_title, main_options = fieldsets[0]
+        fields = list(main_options.get("fields", ()))
+        if len(fields) > 1:
+            fields[1] = ("owner_display", "source", "revision") if obj else (
+                "created_by",
+                "source",
+                "revision",
+            )
+        fieldsets[0] = (
+            main_title,
+            {
+                **main_options,
+                "fields": tuple(fields),
+            },
+        )
+        return fieldsets
 
     def get_queryset(self, request):
         return (
