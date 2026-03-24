@@ -19,6 +19,16 @@ html[data-theme="dark"],
     --secondary: #10693f;
     --accent: #e7f6ed;
     --primary-fg: #ffffff;
+    --button-fg: #ffffff;
+    --button-bg: #1d8a56;
+    --button-hover-bg: #176e45;
+    --default-button-bg: #156f45;
+    --default-button-hover-bg: #0f5b38;
+    --close-button-bg: #eef6f0;
+    --close-button-hover-bg: #dceee3;
+    --object-tools-fg: #ffffff;
+    --object-tools-bg: #1d8a56;
+    --object-tools-hover-bg: #176e45;
     --body-bg: #f3f7f4;
     --body-quiet-color: #557164;
     --body-loud-color: #173127;
@@ -702,7 +712,7 @@ body.jh-filter-open .jh-filter-backdrop {
     background: #f9fcfa;
 }
 
-input,
+input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]),
 textarea,
 select,
 .selector select,
@@ -715,11 +725,51 @@ select,
     box-shadow: inset 0 1px 2px rgba(18, 58, 41, 0.03);
 }
 
-input:focus,
+input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):focus,
 textarea:focus,
 select:focus {
     border-color: rgba(28, 140, 87, 0.55) !important;
     box-shadow: 0 0 0 4px rgba(28, 140, 87, 0.12) !important;
+}
+
+input[type="submit"],
+input[type="button"],
+input[type="reset"],
+.submit-row input,
+.submit-row a,
+.button {
+    background: #1d8a56 !important;
+    color: #ffffff !important;
+    border-color: #176e45 !important;
+    box-shadow: none !important;
+    background-image: none !important;
+    -webkit-text-fill-color: #ffffff !important;
+    text-shadow: none !important;
+}
+
+.submit-row a.closelink,
+.object-tools a.viewsitelink,
+.object-tools a.historylink {
+    background: #ffffff !important;
+    color: var(--jh-green-deep) !important;
+    border-color: var(--jh-border-strong) !important;
+    -webkit-text-fill-color: var(--jh-green-deep) !important;
+}
+
+.submit-row a.deletelink {
+    background: #ffffff !important;
+    color: #b42318 !important;
+    border-color: #efc7c3 !important;
+    -webkit-text-fill-color: #b42318 !important;
+}
+
+.submit-row input.default,
+input[type="submit"].default,
+.button.default {
+    background: #156f45 !important;
+    color: #ffffff !important;
+    border-color: #0f5b38 !important;
+    -webkit-text-fill-color: #ffffff !important;
 }
 
 .aligned label {
