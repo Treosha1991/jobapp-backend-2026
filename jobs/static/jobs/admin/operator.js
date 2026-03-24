@@ -8,19 +8,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const syncLayoutOffsets = () => {
     const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const verticalShift = Math.round(viewportHeight * 0.05);
     const offset = (header?.offsetHeight || 64) + 10;
     document.documentElement.style.setProperty("--jh-header-offset", `${offset}px`);
     const toolsHeight = floatingTools?.offsetHeight || 0;
     document.documentElement.style.setProperty("--jh-floating-tools-height", `${toolsHeight}px`);
-
-    const toolsRect = objectTools ? objectTools.getBoundingClientRect() : null;
+    const floatingRect = floatingTools ? floatingTools.getBoundingClientRect() : null;
 
     if (filterButton) {
-      const buttonWidth = Math.min(toolsRect?.width || 224, viewportWidth - 24);
-      const right = Math.max(12, toolsRect ? viewportWidth - toolsRect.right : 12);
-      const top = Math.round((toolsRect?.bottom || offset) + 4 + verticalShift);
+      const buttonWidth = Math.min(floatingRect?.width || 224, viewportWidth - 24);
+      const right = Math.max(12, floatingRect ? viewportWidth - floatingRect.right : 12);
+      const top = Math.round((floatingRect?.bottom || offset) + 6);
       filterButton.style.right = `${right}px`;
       filterButton.style.left = "auto";
       filterButton.style.top = `${top}px`;
