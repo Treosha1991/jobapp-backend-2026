@@ -9,6 +9,7 @@ from django.utils.html import format_html
 
 from .driver_licenses import (
     DRIVER_LICENSE_CHOICES,
+    MAX_DRIVER_LICENSE_SELECTIONS,
     decode_driver_license_categories,
     encode_driver_license_categories,
 )
@@ -59,7 +60,10 @@ class VacancyAdminForm(forms.ModelForm):
     def clean_driver_license_categories(self):
         selected = self.cleaned_data.get("driver_license_categories") or []
         try:
-            return encode_driver_license_categories(selected)
+            return encode_driver_license_categories(
+                selected,
+                max_selections=MAX_DRIVER_LICENSE_SELECTIONS,
+            )
         except ValueError as exc:
             message = str(exc)
             if message == "too_many_driver_license_categories":

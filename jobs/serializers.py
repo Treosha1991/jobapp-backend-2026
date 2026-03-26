@@ -4,6 +4,7 @@ from .avatar_utils import avatar_public_url
 from .driver_licenses import (
     decode_driver_license_categories,
     encode_driver_license_categories,
+    MAX_DRIVER_LICENSE_SELECTIONS,
 )
 from .models import (
     Complaint,
@@ -84,6 +85,10 @@ class DriverLicenseCategoriesField(serializers.Field):
         "too_many": "too_many_driver_license_categories",
     }
 
+    def __init__(self, *args, max_selections=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_selections = max_selections
+
     def to_representation(self, value):
         return decode_driver_license_categories(value)
 
@@ -93,7 +98,10 @@ class DriverLicenseCategoriesField(serializers.Field):
         if not isinstance(data, list):
             self.fail("invalid")
         try:
-            return encode_driver_license_categories(data)
+            return encode_driver_license_categories(
+                data,
+                max_selections=self.max_selections,
+            )
         except ValueError as exc:
             if str(exc) == "too_many_driver_license_categories":
                 self.fail("too_many")
@@ -466,7 +474,10 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
         return _service_board_meta(obj)["service_board_kind"]
 
 class VacancyCreateSerializer(serializers.ModelSerializer):
-    driver_license_categories = DriverLicenseCategoriesField(required=False)
+    driver_license_categories = DriverLicenseCategoriesField(
+        required=False,
+        max_selections=MAX_DRIVER_LICENSE_SELECTIONS,
+    )
 
     class Meta:
         model = Vacancy

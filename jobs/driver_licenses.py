@@ -39,7 +39,7 @@ def _driver_license_tokens(value):
     return [value]
 
 
-def normalize_driver_license_categories(value):
+def normalize_driver_license_categories(value, max_selections=None):
     codes = []
     seen = set()
     for item in _driver_license_tokens(value):
@@ -54,13 +54,16 @@ def normalize_driver_license_categories(value):
         codes.append(code)
 
     codes.sort(key=lambda code: _DRIVER_LICENSE_ORDER[code])
-    if len(codes) > MAX_DRIVER_LICENSE_SELECTIONS:
+    if max_selections is not None and len(codes) > max_selections:
         raise ValueError("too_many_driver_license_categories")
     return codes
 
 
-def encode_driver_license_categories(value):
-    codes = normalize_driver_license_categories(value)
+def encode_driver_license_categories(value, max_selections=None):
+    codes = normalize_driver_license_categories(
+        value,
+        max_selections=max_selections,
+    )
     if not codes:
         return ""
     return f"|{'|'.join(codes)}|"

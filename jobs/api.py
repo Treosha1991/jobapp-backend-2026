@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 
 from .alerts import dispatch_vacancy_alerts, preview_vacancy_alerts
 from .avatar_utils import avatar_public_url
-from .driver_licenses import normalize_driver_license_categories
+from .driver_licenses import DRIVER_LICENSE_CHOICES, normalize_driver_license_categories
 from .models import (
     Complaint,
     ComplaintActionLog,
@@ -57,9 +57,12 @@ def _parse_driver_license_filter_value(raw_value):
     if not raw:
         return []
     try:
-        return normalize_driver_license_categories(
+        parsed = normalize_driver_license_categories(
             [part for part in raw.split(",") if part.strip()]
         )
+        if len(parsed) >= len(DRIVER_LICENSE_CHOICES):
+            return []
+        return parsed
     except ValueError:
         return None
 
