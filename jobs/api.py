@@ -479,6 +479,13 @@ def _owner_avatar_url(owner):
     return avatar_public_url(avatar_key)
 
 
+def _subscriber_count_for_owner(owner):
+    owner_id = getattr(owner, "id", None)
+    if not owner_id:
+        return 0
+    return EmployerSubscription.objects.filter(employer_id=owner_id).count()
+
+
 def _count_map(rows, key_field):
     return {
         int(row[key_field]): int(row.get("total", 0) or 0)
@@ -1036,6 +1043,7 @@ class EmployerProfileAPIView(APIView):
             ),
             "email_masked": _masked_email(owner.email),
             "avatar_url": _owner_avatar_url(owner),
+            "subscribers_count": _subscriber_count_for_owner(owner),
             "can_subscribe": can_subscribe,
             "is_subscribed": is_subscribed,
         }

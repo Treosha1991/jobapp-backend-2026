@@ -86,6 +86,7 @@ def _auth_payload(user, token):
         "nickname": (profile.nickname if profile else "") or "",
         "profile_description": (profile.description if profile else "") or "",
         "avatar_url": avatar_public_url(avatar_key),
+        "subscribers_count": user.employer_followers.count(),
         "phone": (profile.phone_e164 if profile else "") or "",
         "phone_verified": bool(profile and profile.phone_verified),
     }
