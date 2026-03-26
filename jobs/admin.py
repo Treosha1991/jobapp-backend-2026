@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
@@ -6,6 +7,11 @@ from django.db.models import Count
 from django.utils import timezone
 from django.utils.html import format_html
 
+from .driver_licenses import (
+    DRIVER_LICENSE_CHOICES,
+    decode_driver_license_categories,
+    encode_driver_license_categories,
+)
 from .models import (
     AccountDeletionRequest,
     Complaint,
@@ -29,6 +35,38 @@ admin.site.site_header = "JobHub Operator Console"
 admin.site.site_title = "JobHub Admin"
 admin.site.index_title = "Moderation and support panel"
 admin.site.empty_value_display = "-"
+
+
+class VacancyAdminForm(forms.ModelForm):
+    driver_license_categories = forms.MultipleChoiceField(
+        required=False,
+        choices=DRIVER_LICENSE_CHOICES,
+        widget=forms.CheckboxSelectMultiple,
+        help_text="Select up to 3 categories.",
+    )
+
+    class Meta:
+        model = Vacancy
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        initial_value = getattr(self.instance, "driver_license_categories", "")
+        self.fields["driver_license_categories"].initial = decode_driver_license_categories(
+            initial_value
+        )
+
+    def clean_driver_license_categories(self):
+        selected = self.cleaned_data.get("driver_license_categories") or []
+        try:
+            return encode_driver_license_categories(selected)
+        except ValueError as exc:
+            message = str(exc)
+            if message == "too_many_driver_license_categories":
+                message = "You can select up to 3 categories."
+            else:
+                message = "Invalid driver license categories."
+            raise forms.ValidationError(message) from exc
 
 
 def _badge(label, *, bg, fg="#FFFFFF"):
@@ -205,6 +243,7 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(Vacancy)
 class VacancyAdmin(admin.ModelAdmin):
+    form = VacancyAdminForm
     list_display = (
         "id",
         "title",
@@ -265,6 +304,7 @@ class VacancyAdmin(admin.ModelAdmin):
                     ("owner_display", "source", "revision"),
                     ("country", "city", "city_code"),
                     ("category", "employment_type", "experience_required"),
+                    "driver_license_categories",
                     "description",
                 )
             },

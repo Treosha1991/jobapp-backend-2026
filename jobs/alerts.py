@@ -1,5 +1,9 @@
 from django.db.models import Q
 
+from .driver_licenses import (
+    decode_driver_license_categories,
+    driver_license_categories_overlap,
+)
 from .models import PushDevice, VacancyAlertDelivery, VacancyAlertSubscription
 from .push_gateway import send_push_message
 
@@ -21,7 +25,21 @@ def _build_subscription_queryset(vacancy):
         qs = qs.filter(Q(employment_type="") | Q(employment_type=vacancy.employment_type))
     if _normalized(vacancy.housing_type):
         qs = qs.filter(Q(housing_type="") | Q(housing_type=vacancy.housing_type))
+    vacancy_driver_license_categories = decode_driver_license_categories(
+        getattr(vacancy, "driver_license_categories", "")
+    )
+    if vacancy_driver_license_categories:
+        license_query = Q(driver_license_categories="")
+        for code in vacancy_driver_license_categories:
+            license_query |= Q(driver_license_categories__contains=f"|{code}|")
+        qs = qs.filter(license_query)
     return qs.distinct()
+
+
+def _driver_license_matches(subscription_categories, vacancy_categories):
+    if not decode_driver_license_categories(subscription_categories):
+        return True
+    return driver_license_categories_overlap(subscription_categories, vacancy_categories)
 
 
 def _city_matches(subscription_city_code, subscription_city, vacancy_city_code, vacancy_city):
@@ -69,6 +87,10 @@ def preview_vacancy_alerts(vacancy):
         sub
         for sub in base_qs
         if _city_matches(sub.city_code, sub.city, vacancy.city_code, vacancy.city)
+        and _driver_license_matches(
+            sub.driver_license_categories,
+            vacancy.driver_license_categories,
+        )
     ]
     matched_user_ids = [sub.user_id for sub in matched_subscriptions]
     already_delivered_user_ids = set(
@@ -111,6 +133,10 @@ def dispatch_vacancy_alerts(vacancy):
         sub
         for sub in _build_subscription_queryset(vacancy)
         if _city_matches(sub.city_code, sub.city, vacancy.city_code, vacancy.city)
+        and _driver_license_matches(
+            sub.driver_license_categories,
+            vacancy.driver_license_categories,
+        )
     ]
     summary["matched_subscriptions"] = len(subscriptions)
 

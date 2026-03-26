@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from .alerts import dispatch_vacancy_alerts, preview_vacancy_alerts
 from .avatar_utils import avatar_public_url
+from .driver_licenses import normalize_driver_license_categories
 from .models import (
     Complaint,
     ComplaintActionLog,
@@ -49,6 +50,27 @@ OWNER_RESUME_REPEAT_COOLDOWN = timedelta(minutes=5)
 OWNER_RESUME_REPEAT_THRESHOLD = 2
 OWNER_MODERATION_RESUBMIT_MIN_INTERVAL = timedelta(minutes=30)
 OWNER_MODERATION_RESUBMIT_MAX_PER_DAY = 3
+
+
+def _parse_driver_license_filter_value(raw_value):
+    raw = (raw_value or "").strip()
+    if not raw:
+        return []
+    try:
+        return normalize_driver_license_categories(
+            [part for part in raw.split(",") if part.strip()]
+        )
+    except ValueError:
+        return None
+
+
+def _filter_by_driver_license_categories(queryset, categories):
+    if not categories:
+        return queryset
+    license_query = Q()
+    for code in categories:
+        license_query |= Q(driver_license_categories__contains=f"|{code}|")
+    return queryset.filter(license_query)
 
 
 def _transliterate_ru_uk_to_latin(value):
@@ -97,6 +119,9 @@ class VacancyListAPIView(generics.ListAPIView):
         employment_type = self.request.query_params.get("employment_type")
         source = self.request.query_params.get("source")
         housing_type = self.request.query_params.get("housing_type")
+        driver_license_categories = _parse_driver_license_filter_value(
+            self.request.query_params.get("driver_license_categories")
+        )
         search = self.request.query_params.get("search")
         search_alt = self.request.query_params.get("search_alt")
         subscribed = (self.request.query_params.get("subscribed") or "").strip().lower()
@@ -117,6 +142,10 @@ class VacancyListAPIView(generics.ListAPIView):
             qs = qs.filter(source=source)
         if housing_type:
             qs = qs.filter(housing_type=housing_type)
+        if driver_license_categories is None:
+            return qs.none()
+        if driver_license_categories:
+            qs = _filter_by_driver_license_categories(qs, driver_license_categories)
         if subscribed in {"1", "true", "yes", "on"}:
             if not self.request.user.is_authenticated:
                 return qs.none()
@@ -557,6 +586,7 @@ def _vacancy_editable_snapshot(vacancy):
         "category": vacancy.category or "",
         "employment_type": vacancy.employment_type or "",
         "experience_required": vacancy.experience_required or "",
+        "driver_license_categories": vacancy.driver_license_categories or "",
         "salary_from": vacancy.salary_from,
         "salary_to": vacancy.salary_to,
         "salary_currency": vacancy.salary_currency or "",

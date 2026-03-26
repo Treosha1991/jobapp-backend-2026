@@ -1,6 +1,10 @@
 ﻿from rest_framework import serializers
 import re
 from .avatar_utils import avatar_public_url
+from .driver_licenses import (
+    decode_driver_license_categories,
+    encode_driver_license_categories,
+)
 from .models import (
     Complaint,
     EmployerSubscription,
@@ -46,6 +50,7 @@ _MODERATION_COMPARISON_FIELDS = [
     "category",
     "employment_type",
     "experience_required",
+    "driver_license_categories",
     "salary_from",
     "salary_to",
     "salary_currency",
@@ -71,6 +76,28 @@ def _normalize_compare_value(value):
     if isinstance(value, bool):
         return value
     return str(value).strip()
+
+
+class DriverLicenseCategoriesField(serializers.Field):
+    default_error_messages = {
+        "invalid": "invalid_driver_license_categories",
+        "too_many": "too_many_driver_license_categories",
+    }
+
+    def to_representation(self, value):
+        return decode_driver_license_categories(value)
+
+    def to_internal_value(self, data):
+        if data in (None, "", []):
+            return ""
+        if not isinstance(data, list):
+            self.fail("invalid")
+        try:
+            return encode_driver_license_categories(data)
+        except ValueError as exc:
+            if str(exc) == "too_many_driver_license_categories":
+                self.fail("too_many")
+            self.fail("invalid")
 
 
 def _creator_nickname(obj):
@@ -176,6 +203,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
+    driver_license_categories = DriverLicenseCategoriesField(read_only=True)
     is_resubmitted = serializers.SerializerMethodField()
     is_owner_subscribed = serializers.SerializerMethodField()
     is_service_board = serializers.SerializerMethodField()
@@ -192,6 +220,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "category",
             "employment_type",
             "experience_required",
+            "driver_license_categories",
             "salary",
             "salary_from",
             "salary_to",
@@ -344,6 +373,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
+    driver_license_categories = DriverLicenseCategoriesField(read_only=True)
     moderation_status = serializers.SerializerMethodField()
     moderation_attempts_total = serializers.SerializerMethodField()
     moderation_approved_total = serializers.SerializerMethodField()
@@ -363,6 +393,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "category",
             "employment_type",
             "experience_required",
+            "driver_license_categories",
             "salary",
             "salary_from",
             "salary_to",
@@ -435,6 +466,8 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
         return _service_board_meta(obj)["service_board_kind"]
 
 class VacancyCreateSerializer(serializers.ModelSerializer):
+    driver_license_categories = DriverLicenseCategoriesField(required=False)
+
     class Meta:
         model = Vacancy
         fields = [
@@ -445,6 +478,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "category",
             "employment_type",
             "experience_required",
+            "driver_license_categories",
             "salary",
             "salary_from",
             "salary_to",
@@ -622,6 +656,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
     rejection_reason_comment = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
+    driver_license_categories = DriverLicenseCategoriesField(read_only=True)
 
     class Meta:
         model = Vacancy
@@ -634,6 +669,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "category",
             "employment_type",
             "experience_required",
+            "driver_license_categories",
             "salary",
             "salary_from",
             "salary_to",
@@ -802,6 +838,8 @@ class PushDeviceRegisterSerializer(serializers.Serializer):
 
 
 class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):
+    driver_license_categories = DriverLicenseCategoriesField(required=False)
+
     class Meta:
         model = VacancyAlertSubscription
         fields = [
@@ -812,6 +850,7 @@ class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):
             "category",
             "employment_type",
             "housing_type",
+            "driver_license_categories",
             "updated_at",
         ]
         read_only_fields = ["updated_at"]

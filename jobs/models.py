@@ -2,6 +2,8 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 
+from .driver_licenses import DRIVER_LICENSE_CHOICES as DRIVER_LICENSE_CATEGORY_CHOICES
+
 
 class Vacancy(models.Model):
     COUNTRY_CHOICES = [
@@ -70,6 +72,7 @@ class Vacancy(models.Model):
         ("with", "With experience"),
         ("without", "Without experience"),
     ]
+    DRIVER_LICENSE_CHOICES = DRIVER_LICENSE_CATEGORY_CHOICES
 
     SOURCE_CHOICES = [
         ("direct", "Direct employer"),
@@ -114,6 +117,7 @@ class Vacancy(models.Model):
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES)
     employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES)
     experience_required = models.CharField(max_length=10, choices=EXPERIENCE_CHOICES, default="without")
+    driver_license_categories = models.CharField(max_length=48, blank=True, default="")
     salary = models.CharField(max_length=80)
     salary_from = models.PositiveSmallIntegerField(blank=True, null=True)
     salary_to = models.PositiveSmallIntegerField(blank=True, null=True)
@@ -554,6 +558,7 @@ class VacancyAlertSubscription(models.Model):
     category = models.CharField(max_length=30, blank=True, default="")
     employment_type = models.CharField(max_length=20, blank=True, default="")
     housing_type = models.CharField(max_length=10, blank=True, default="")
+    driver_license_categories = models.CharField(max_length=48, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
