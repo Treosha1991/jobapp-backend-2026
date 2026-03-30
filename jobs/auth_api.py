@@ -89,7 +89,13 @@ def _auth_payload(user, token):
         "subscribers_count": user.employer_followers.count(),
         "phone": (profile.phone_e164 if profile else "") or "",
         "phone_verified": bool(profile and profile.phone_verified),
+        "has_password": user.has_usable_password(),
     }
+
+
+def _rotate_auth_token(user):
+    Token.objects.filter(user=user).delete()
+    return Token.objects.create(user=user)
 
 
 def _login_candidates(identifier):
@@ -152,6 +158,9 @@ def _send_email_code(email, code, purpose="register"):
     if purpose == "reset":
         subject = "JobHub password reset code"
         message = f"Your password reset code: {code}\nIt is valid for 10 minutes."
+    elif purpose == "change_password":
+        subject = "JobHub password change code"
+        message = f"Your password change code: {code}\nIt is valid for 10 minutes."
     elif purpose == "link_email":
         subject = "JobHub email linking code"
         message = f"Your email linking code: {code}\nIt is valid for 10 minutes."
@@ -777,6 +786,154 @@ class ResetPasswordConfirmAPIView(APIView):
         user.set_password(new_password)
         user.save(update_fields=["password"])
         return Response({"detail": "password_reset"})
+
+
+class ChangePasswordRequestAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.has_usable_password():
+            return Response(
+                {"error": "current_password_required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        channel = (request.data.get("channel") or "").strip().lower()
+        if channel not in {"email", "sms"}:
+            return Response({"error": "invalid_channel"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if channel == "email":
+            if not (user.email or "").strip():
+                return Response({"error": "email_not_linked"}, status=status.HTTP_400_BAD_REQUEST)
+            if _email_code_too_frequent(user, "change_password"):
+                return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            rec = _create_email_code(user, "change_password", target_email=user.email)
+            _send_email_code(user.email, rec.code, "change_password")
+            return Response({"detail": "code_sent", "channel": "email"})
+
+        profile = UserProfile.objects.filter(user=user).first()
+        if not profile or not profile.phone_verified or not profile.phone_e164:
+            return Response({"error": "phone_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
+        if _phone_code_too_frequent(profile.phone_e164, "change_password"):
+            return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        _create_phone_code(profile.phone_e164, "change_password", user=user)
+        ok, msg, http_code = _twilio_verify_start(profile.phone_e164, channel="sms")
+        if not ok:
+            payload = {"error": "sms_delivery_failed"}
+            if settings.DEBUG and msg:
+                payload["detail"] = _debug_error_details(msg)
+            return Response(payload, status=http_code)
+        return Response({"detail": "code_sent", "channel": "sms"})
+
+
+class ChangePasswordAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        current_password = request.data.get("current_password") or ""
+        new_password = request.data.get("new_password") or ""
+        code = (request.data.get("code") or "").strip()
+        channel = (request.data.get("channel") or "").strip().lower()
+
+        if not new_password:
+            return Response(
+                {"error": "new_password_required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not _is_password_policy_valid(new_password):
+            return Response(
+                {"error": "password_policy_violation"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if user.has_usable_password():
+            if not current_password:
+                return Response(
+                    {"error": "current_password_required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not user.check_password(current_password):
+                return Response(
+                    {"error": "invalid_current_password"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            if channel not in {"email", "sms"}:
+                return Response({"error": "invalid_channel"}, status=status.HTTP_400_BAD_REQUEST)
+            if not code:
+                return Response({"error": "code_required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if channel == "email":
+                if not (user.email or "").strip():
+                    return Response(
+                        {"error": "email_not_linked"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                rec = EmailVerification.objects.filter(
+                    user=user,
+                    purpose="change_password",
+                    code=code,
+                    is_used=False,
+                ).order_by("-created_at").first()
+                if not rec or not rec.is_valid():
+                    return Response(
+                        {"error": "invalid_or_expired_code"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                rec.is_used = True
+                rec.save(update_fields=["is_used"])
+            else:
+                profile = UserProfile.objects.filter(user=user).first()
+                if not profile or not profile.phone_verified or not profile.phone_e164:
+                    return Response(
+                        {"error": "phone_not_verified"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if _twilio_verify_service_sid():
+                    approved, msg, http_code = _twilio_verify_check(profile.phone_e164, code)
+                    if not approved:
+                        if msg == "denied":
+                            return Response(
+                                {"error": "invalid_or_expired_code"},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                        payload = {"error": "verification_check_failed"}
+                        if settings.DEBUG and msg:
+                            payload["detail"] = _debug_error_details(msg)
+                        return Response(payload, status=http_code)
+
+                    local_rec = PhoneVerification.objects.filter(
+                        phone_e164=profile.phone_e164,
+                        purpose="change_password",
+                        is_used=False,
+                    ).order_by("-created_at").first()
+                    if local_rec:
+                        local_rec.is_used = True
+                        local_rec.save(update_fields=["is_used"])
+                else:
+                    local_rec = PhoneVerification.objects.filter(
+                        phone_e164=profile.phone_e164,
+                        purpose="change_password",
+                        code=code,
+                        is_used=False,
+                    ).order_by("-created_at").first()
+                    if not local_rec or not local_rec.is_valid():
+                        return Response(
+                            {"error": "invalid_or_expired_code"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    local_rec.is_used = True
+                    local_rec.save(update_fields=["is_used"])
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+        token = _rotate_auth_token(user)
+        payload = _auth_payload(user, token)
+        payload["detail"] = "password_changed"
+        return Response(payload)
 
 
 class LoginAPIView(APIView):
