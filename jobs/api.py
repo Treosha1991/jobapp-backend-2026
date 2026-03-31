@@ -592,6 +592,7 @@ def _vacancy_editable_snapshot(vacancy):
         "city": vacancy.city or "",
         "city_code": vacancy.city_code or "",
         "category": vacancy.category or "",
+        "audience_country_codes": vacancy.audience_country_codes or "",
         "employment_type": vacancy.employment_type or "",
         "experience_required": vacancy.experience_required or "",
         "driver_license_categories": vacancy.driver_license_categories or "",

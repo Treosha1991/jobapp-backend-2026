@@ -1,6 +1,12 @@
 ﻿from rest_framework import serializers
 import re
 from .avatar_utils import avatar_public_url
+from .country_choices import (
+    MAX_AUDIENCE_COUNTRY_SELECTIONS,
+    MIN_AUDIENCE_COUNTRY_SELECTIONS,
+    decode_audience_country_codes,
+    encode_audience_country_codes,
+)
 from .driver_licenses import (
     decode_driver_license_categories,
     encode_driver_license_categories,
@@ -49,6 +55,7 @@ _MODERATION_COMPARISON_FIELDS = [
     "city",
     "city_code",
     "category",
+    "audience_country_codes",
     "employment_type",
     "experience_required",
     "driver_license_categories",
@@ -105,6 +112,49 @@ class DriverLicenseCategoriesField(serializers.Field):
         except ValueError as exc:
             if str(exc) == "too_many_driver_license_categories":
                 self.fail("too_many")
+            self.fail("invalid")
+
+
+class AudienceCountriesField(serializers.Field):
+    default_error_messages = {
+        "invalid": "invalid_audience_countries",
+        "too_many": "too_many_audience_countries",
+        "too_few": "audience_countries_required",
+    }
+
+    def __init__(
+        self,
+        *args,
+        min_selections=MIN_AUDIENCE_COUNTRY_SELECTIONS,
+        max_selections=MAX_AUDIENCE_COUNTRY_SELECTIONS,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.min_selections = min_selections
+        self.max_selections = max_selections
+
+    def to_representation(self, value):
+        return decode_audience_country_codes(value)
+
+    def to_internal_value(self, data):
+        if data in (None, "", []):
+            if self.required:
+                self.fail("too_few")
+            return ""
+        if not isinstance(data, list):
+            self.fail("invalid")
+        try:
+            return encode_audience_country_codes(
+                data,
+                min_selections=self.min_selections,
+                max_selections=self.max_selections,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            if message == "too_many_audience_countries":
+                self.fail("too_many")
+            if message == "too_few_audience_countries":
+                self.fail("too_few")
             self.fail("invalid")
 
 
@@ -211,6 +261,12 @@ class VacancyListSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
+    audience_countries = AudienceCountriesField(
+        source="audience_country_codes",
+        read_only=True,
+        required=False,
+        min_selections=0,
+    )
     driver_license_categories = DriverLicenseCategoriesField(read_only=True)
     is_resubmitted = serializers.SerializerMethodField()
     is_owner_subscribed = serializers.SerializerMethodField()
@@ -226,6 +282,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "city",
             "city_code",
             "category",
+            "audience_countries",
             "employment_type",
             "experience_required",
             "driver_license_categories",
@@ -381,6 +438,12 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
+    audience_countries = AudienceCountriesField(
+        source="audience_country_codes",
+        read_only=True,
+        required=False,
+        min_selections=0,
+    )
     driver_license_categories = DriverLicenseCategoriesField(read_only=True)
     moderation_status = serializers.SerializerMethodField()
     moderation_attempts_total = serializers.SerializerMethodField()
@@ -399,6 +462,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "city",
             "city_code",
             "category",
+            "audience_countries",
             "employment_type",
             "experience_required",
             "driver_license_categories",
@@ -474,6 +538,9 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
         return _service_board_meta(obj)["service_board_kind"]
 
 class VacancyCreateSerializer(serializers.ModelSerializer):
+    audience_countries = AudienceCountriesField(
+        source="audience_country_codes",
+    )
     driver_license_categories = DriverLicenseCategoriesField(
         required=False,
         max_selections=MAX_DRIVER_LICENSE_SELECTIONS,
@@ -487,6 +554,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "city",
             "city_code",
             "category",
+            "audience_countries",
             "employment_type",
             "experience_required",
             "driver_license_categories",
@@ -518,6 +586,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "salary_tax_type": {"required": False, "allow_blank": True},
             "salary_hours_month": {"required": False, "allow_null": True},
             "additional_phone": {"required": False, "allow_blank": True},
+            "experience_required": {"required": False, "allow_blank": True},
             "hide_primary_phone": {"required": False},
         }
 
@@ -667,6 +736,12 @@ class VacancyMineSerializer(serializers.ModelSerializer):
     rejection_reason_comment = serializers.SerializerMethodField()
     salary_monthly_from = serializers.SerializerMethodField()
     salary_monthly_to = serializers.SerializerMethodField()
+    audience_countries = AudienceCountriesField(
+        source="audience_country_codes",
+        read_only=True,
+        required=False,
+        min_selections=0,
+    )
     driver_license_categories = DriverLicenseCategoriesField(read_only=True)
 
     class Meta:
@@ -678,6 +753,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "city",
             "city_code",
             "category",
+            "audience_countries",
             "employment_type",
             "experience_required",
             "driver_license_categories",

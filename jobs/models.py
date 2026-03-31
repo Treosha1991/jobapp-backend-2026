@@ -2,46 +2,12 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 
+from .country_choices import VACANCY_COUNTRY_CHOICES
 from .driver_licenses import DRIVER_LICENSE_CHOICES as DRIVER_LICENSE_CATEGORY_CHOICES
 
 
 class Vacancy(models.Model):
-    COUNTRY_CHOICES = [
-        ("PL", "Poland"),
-        ("DE", "Germany"),
-        ("FR", "France"),
-        ("ES", "Spain"),
-        ("IT", "Italy"),
-        ("NL", "Netherlands"),
-        ("BE", "Belgium"),
-        ("AT", "Austria"),
-        ("SE", "Sweden"),
-        ("FI", "Finland"),
-        ("DK", "Denmark"),
-        ("IE", "Ireland"),
-        ("PT", "Portugal"),
-        ("GR", "Greece"),
-        ("CZ", "Czechia"),
-        ("SK", "Slovakia"),
-        ("HU", "Hungary"),
-        ("RO", "Romania"),
-        ("BG", "Bulgaria"),
-        ("HR", "Croatia"),
-        ("SI", "Slovenia"),
-        ("LT", "Lithuania"),
-        ("LV", "Latvia"),
-        ("EE", "Estonia"),
-        ("LU", "Luxembourg"),
-        ("MT", "Malta"),
-        ("CY", "Cyprus"),
-        ("UK", "United Kingdom"),
-        ("CH", "Switzerland"),
-        ("US", "USA"),
-        ("CA", "Canada"),
-        ("UA", "Ukraine"),
-        ("BY", "Belarus"),
-        ("OTHER", "Other"),
-    ]
+    COUNTRY_CHOICES = VACANCY_COUNTRY_CHOICES
     CATEGORY_CHOICES = [
         ("construction", "Construction"),
         ("agriculture", "Agriculture"),
@@ -115,8 +81,14 @@ class Vacancy(models.Model):
     city = models.CharField(max_length=80)
     city_code = models.CharField(max_length=64, blank=True, default="")
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES)
+    audience_country_codes = models.CharField(max_length=160, blank=True, default="")
     employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES)
-    experience_required = models.CharField(max_length=10, choices=EXPERIENCE_CHOICES, default="without")
+    experience_required = models.CharField(
+        max_length=10,
+        choices=EXPERIENCE_CHOICES,
+        blank=True,
+        default="",
+    )
     driver_license_categories = models.CharField(max_length=48, blank=True, default="")
     salary = models.CharField(max_length=80)
     salary_from = models.PositiveSmallIntegerField(blank=True, null=True)

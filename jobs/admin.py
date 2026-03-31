@@ -7,6 +7,13 @@ from django.db.models import Count
 from django.utils import timezone
 from django.utils.html import format_html
 
+from .country_choices import (
+    MAX_AUDIENCE_COUNTRY_SELECTIONS,
+    MIN_AUDIENCE_COUNTRY_SELECTIONS,
+    VACANCY_COUNTRY_CHOICES,
+    decode_audience_country_codes,
+    encode_audience_country_codes,
+)
 from .driver_licenses import (
     DRIVER_LICENSE_CHOICES,
     MAX_DRIVER_LICENSE_SELECTIONS,
@@ -39,6 +46,12 @@ admin.site.empty_value_display = "-"
 
 
 class VacancyAdminForm(forms.ModelForm):
+    audience_country_codes = forms.MultipleChoiceField(
+        required=True,
+        choices=VACANCY_COUNTRY_CHOICES,
+        widget=forms.CheckboxSelectMultiple,
+        help_text="Select from 1 to 20 countries.",
+    )
     driver_license_categories = forms.MultipleChoiceField(
         required=False,
         choices=DRIVER_LICENSE_CHOICES,
@@ -52,10 +65,32 @@ class VacancyAdminForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        audience_value = getattr(self.instance, "audience_country_codes", "")
+        self.fields["audience_country_codes"].initial = decode_audience_country_codes(
+            audience_value
+        )
         initial_value = getattr(self.instance, "driver_license_categories", "")
         self.fields["driver_license_categories"].initial = decode_driver_license_categories(
             initial_value
         )
+
+    def clean_audience_country_codes(self):
+        selected = self.cleaned_data.get("audience_country_codes") or []
+        try:
+            return encode_audience_country_codes(
+                selected,
+                min_selections=MIN_AUDIENCE_COUNTRY_SELECTIONS,
+                max_selections=MAX_AUDIENCE_COUNTRY_SELECTIONS,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            if message == "too_few_audience_countries":
+                message = "Select at least 1 country."
+            elif message == "too_many_audience_countries":
+                message = "You can select up to 20 countries."
+            else:
+                message = "Invalid audience countries."
+            raise forms.ValidationError(message) from exc
 
     def clean_driver_license_categories(self):
         selected = self.cleaned_data.get("driver_license_categories") or []
@@ -307,6 +342,7 @@ class VacancyAdmin(admin.ModelAdmin):
                     ("title", "status_badge"),
                     ("owner_display", "source", "revision"),
                     ("country", "city", "city_code"),
+                    "audience_country_codes",
                     ("category", "employment_type", "experience_required"),
                     "driver_license_categories",
                     "description",
