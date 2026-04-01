@@ -528,6 +528,7 @@ class VacancyAlertSubscription(models.Model):
     city = models.CharField(max_length=80, blank=True, default="")
     city_code = models.CharField(max_length=64, blank=True, default="")
     category = models.CharField(max_length=30, blank=True, default="")
+    audience_country_codes = models.CharField(max_length=255, blank=True, default="")
     employment_type = models.CharField(max_length=20, blank=True, default="")
     housing_type = models.CharField(max_length=10, blank=True, default="")
     driver_license_categories = models.CharField(max_length=48, blank=True, default="")

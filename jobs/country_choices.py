@@ -108,3 +108,13 @@ def decode_audience_country_codes(value):
         return normalize_audience_country_codes(value)
     except ValueError:
         return []
+
+
+def audience_country_codes_overlap(left, right):
+    left_codes = set(decode_audience_country_codes(left))
+    if not left_codes:
+        return False
+    right_codes = set(decode_audience_country_codes(right))
+    if not right_codes:
+        return False
+    return bool(left_codes & right_codes)

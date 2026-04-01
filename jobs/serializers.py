@@ -925,6 +925,12 @@ class PushDeviceRegisterSerializer(serializers.Serializer):
 
 
 class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):
+    audience_countries = AudienceCountriesField(
+        source="audience_country_codes",
+        required=False,
+        min_selections=None,
+        max_selections=None,
+    )
     driver_license_categories = DriverLicenseCategoriesField(required=False)
 
     class Meta:
@@ -935,6 +941,7 @@ class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):
             "city",
             "city_code",
             "category",
+            "audience_countries",
             "employment_type",
             "housing_type",
             "driver_license_categories",

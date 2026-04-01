@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from .alerts import dispatch_vacancy_alerts, preview_vacancy_alerts
 from .avatar_utils import avatar_public_url
+from .country_choices import normalize_audience_country_codes
 from .driver_licenses import normalize_driver_license_categories
 from .models import (
     Complaint,
@@ -65,6 +66,19 @@ def _parse_driver_license_filter_value(raw_value):
         return None
 
 
+def _parse_audience_country_filter_value(raw_value):
+    raw = (raw_value or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = normalize_audience_country_codes(
+            [part for part in raw.split(",") if part.strip()]
+        )
+        return parsed
+    except ValueError:
+        return None
+
+
 def _filter_by_driver_license_categories(queryset, categories):
     if not categories:
         return queryset
@@ -72,6 +86,15 @@ def _filter_by_driver_license_categories(queryset, categories):
     for code in categories:
         license_query |= Q(driver_license_categories__contains=f"|{code}|")
     return queryset.filter(license_query)
+
+
+def _filter_by_audience_country_codes(queryset, codes):
+    if not codes:
+        return queryset
+    audience_query = Q()
+    for code in codes:
+        audience_query |= Q(audience_country_codes__contains=f"|{code}|")
+    return queryset.filter(audience_query)
 
 
 def _transliterate_ru_uk_to_latin(value):
@@ -120,6 +143,9 @@ class VacancyListAPIView(generics.ListAPIView):
         employment_type = self.request.query_params.get("employment_type")
         source = self.request.query_params.get("source")
         housing_type = self.request.query_params.get("housing_type")
+        audience_countries = _parse_audience_country_filter_value(
+            self.request.query_params.get("audience_countries")
+        )
         driver_license_categories = _parse_driver_license_filter_value(
             self.request.query_params.get("driver_license_categories")
         )
@@ -143,6 +169,10 @@ class VacancyListAPIView(generics.ListAPIView):
             qs = qs.filter(source=source)
         if housing_type:
             qs = qs.filter(housing_type=housing_type)
+        if audience_countries is None:
+            return qs.none()
+        if audience_countries:
+            qs = _filter_by_audience_country_codes(qs, audience_countries)
         if driver_license_categories is None:
             return qs.none()
         if driver_license_categories:

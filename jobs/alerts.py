@@ -1,5 +1,9 @@
 from django.db.models import Q
 
+from .country_choices import (
+    audience_country_codes_overlap,
+    decode_audience_country_codes,
+)
 from .driver_licenses import (
     decode_driver_license_categories,
     driver_license_categories_overlap,
@@ -21,6 +25,14 @@ def _build_subscription_queryset(vacancy):
         qs = qs.filter(Q(country="") | Q(country=vacancy.country))
     if _normalized(vacancy.category):
         qs = qs.filter(Q(category="") | Q(category=vacancy.category))
+    vacancy_audience_country_codes = decode_audience_country_codes(
+        getattr(vacancy, "audience_country_codes", "")
+    )
+    if vacancy_audience_country_codes:
+        audience_query = Q(audience_country_codes="")
+        for code in vacancy_audience_country_codes:
+            audience_query |= Q(audience_country_codes__contains=f"|{code}|")
+        qs = qs.filter(audience_query)
     if _normalized(vacancy.employment_type):
         qs = qs.filter(Q(employment_type="") | Q(employment_type=vacancy.employment_type))
     if _normalized(vacancy.housing_type):
@@ -40,6 +52,12 @@ def _driver_license_matches(subscription_categories, vacancy_categories):
     if not decode_driver_license_categories(subscription_categories):
         return True
     return driver_license_categories_overlap(subscription_categories, vacancy_categories)
+
+
+def _audience_country_matches(subscription_codes, vacancy_codes):
+    if not decode_audience_country_codes(subscription_codes):
+        return True
+    return audience_country_codes_overlap(subscription_codes, vacancy_codes)
 
 
 def _city_matches(subscription_city_code, subscription_city, vacancy_city_code, vacancy_city):
@@ -87,6 +105,10 @@ def preview_vacancy_alerts(vacancy):
         sub
         for sub in base_qs
         if _city_matches(sub.city_code, sub.city, vacancy.city_code, vacancy.city)
+        and _audience_country_matches(
+            sub.audience_country_codes,
+            vacancy.audience_country_codes,
+        )
         and _driver_license_matches(
             sub.driver_license_categories,
             vacancy.driver_license_categories,
@@ -133,6 +155,10 @@ def dispatch_vacancy_alerts(vacancy):
         sub
         for sub in _build_subscription_queryset(vacancy)
         if _city_matches(sub.city_code, sub.city, vacancy.city_code, vacancy.city)
+        and _audience_country_matches(
+            sub.audience_country_codes,
+            vacancy.audience_country_codes,
+        )
         and _driver_license_matches(
             sub.driver_license_categories,
             vacancy.driver_license_categories,
