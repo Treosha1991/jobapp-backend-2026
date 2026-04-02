@@ -1,11 +1,15 @@
+from math import ceil
+import secrets
+from datetime import datetime, time, timedelta
+
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
+from django.db import transaction
 from django.db.models import Case, Count, Exists, IntegerField, Max, OuterRef, Q, Value, When
 from django.db.models.functions import Coalesce
 from django.utils.dateparse import parse_date
-import secrets
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
@@ -16,24 +20,48 @@ from .alerts import dispatch_vacancy_alerts, preview_vacancy_alerts
 from .avatar_utils import avatar_public_url
 from .country_choices import normalize_audience_country_codes
 from .driver_licenses import normalize_driver_license_categories
+from .economy import (
+    InsufficientCreditsError,
+    build_contact_access_state,
+    get_economy_config,
+    get_or_create_contact_policy,
+    get_or_create_monetization_profile,
+    get_or_create_wallet,
+    grant_credits,
+    set_wallet_balances,
+    spend_credits,
+)
 from .models import (
     Complaint,
     ComplaintActionLog,
+    EconomyConfig,
     EmployerSubscription,
+    PurchaseRecord,
     PushDevice,
+    StoreProduct,
     UserBlock,
+    UserMonetizationProfile,
+    UserWallet,
     Vacancy,
     VacancyAlertSubscription,
+    VacancyContactAccessPolicy,
     VacancyModerationAttempt,
     UserProfile,
     UnlockedContact,
+    WalletTransaction,
 )
+from .monetization import CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
 from .service_sources import service_board_meta_for_user, is_service_board_user
 from .serializers import (
     ComplaintListSerializer,
+    EconomyConfigSerializer,
     PushDeviceRegisterSerializer,
+    StoreProductSerializer,
+    UserMonetizationProfileSerializer,
+    UserWalletSerializer,
     VacancyAlertSubscriptionSerializer,
     VacancyContactSerializer,
+    WalletTransactionSerializer,
     VacancyListSerializer,
     VacancyModerationSerializer,
     VacancyModerationDetailSerializer,
@@ -42,7 +70,6 @@ from .serializers import (
     VacancyMineSerializer,
 )
 from .text_filters import censor_minimal, contains_link
-from datetime import datetime, time, timedelta
 
 
 VACANCY_LIVE_WINDOW = timedelta(days=30)
@@ -95,6 +122,68 @@ def _filter_by_audience_country_codes(queryset, codes):
     for code in codes:
         audience_query |= Q(audience_country_codes__contains=f"|{code}|")
     return queryset.filter(audience_query)
+
+
+def _economy_overview_payload(user):
+    config = get_economy_config()
+    wallet = get_or_create_wallet(user)
+    profile = get_or_create_monetization_profile(user)
+    now = timezone.now()
+    wallet_data = UserWalletSerializer(wallet).data
+    profile_data = UserMonetizationProfileSerializer(profile).data
+    config_data = EconomyConfigSerializer(config).data
+    products = (
+        StoreProduct.objects.filter(is_active=True)
+        .order_by("sort_order", "id")
+    )
+    products_data = StoreProductSerializer(products, many=True).data
+
+    employer_daily_remaining = int(config.employer_daily_free_submissions_limit or 0)
+    if profile.has_employer_subscription(now):
+        if profile.employer_daily_submission_date == now.date():
+            employer_daily_remaining = max(
+                0,
+                employer_daily_remaining - int(profile.employer_daily_submissions_used or 0),
+            )
+    else:
+        employer_daily_remaining = 0
+
+    free_create_remaining = max(
+        0,
+        int(config.free_create_ad_submissions_limit or 0)
+        - int(profile.free_create_ad_submissions_used or 0),
+    )
+    free_edit_remaining = max(
+        0,
+        int(config.free_edit_ad_submissions_limit or 0)
+        - int(profile.free_edit_ad_resubmissions_used or 0),
+    )
+
+    return {
+        "wallet": wallet_data,
+        "profile": profile_data,
+        "config": config_data,
+        "quotas": {
+            "free_create_ad_submissions_remaining": free_create_remaining,
+            "free_edit_ad_resubmissions_remaining": free_edit_remaining,
+            "employer_daily_free_submissions_remaining": employer_daily_remaining,
+        },
+        "products": {
+            "credit_packs": [
+                item for item in products_data if item["product_type"] == "credits"
+            ],
+            "employer_subscriptions": [
+                item
+                for item in products_data
+                if item["product_type"] == "employer_subscription"
+            ],
+            "seeker_subscriptions": [
+                item
+                for item in products_data
+                if item["product_type"] == "seeker_subscription"
+            ],
+        },
+    }
 
 
 def _transliterate_ru_uk_to_latin(value):
@@ -413,6 +502,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
         vacancy = serializer.save(
             created_by=self.request.user,
             is_approved=is_moderator,
+            approved_at=now if is_moderator else None,
             is_rejected=False,
             is_paused_by_owner=False,
             paused_by_owner_at=None,
@@ -471,6 +561,7 @@ def _auto_pause_due_owner_vacancies(owner):
 def _set_vacancy_live(vacancy, *, now=None):
     current_time = now or timezone.now()
     vacancy.is_approved = True
+    vacancy.approved_at = current_time
     vacancy.is_rejected = False
     vacancy.is_paused_by_owner = False
     vacancy.paused_by_owner_at = None
@@ -987,6 +1078,41 @@ class VacancyAlertPreviewAPIView(APIView):
         return Response(preview, status=status.HTTP_200_OK)
 
 
+class EconomyOverviewAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(_economy_overview_payload(request.user), status=status.HTTP_200_OK)
+
+
+class WalletTransactionListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        transactions = (
+            WalletTransaction.objects.filter(user=request.user)
+            .select_related("related_vacancy")
+            .order_by("-created_at", "-id")
+        )
+        paginator = PageNumberPagination()
+        paginator.page_size = 30
+        page = paginator.paginate_queryset(transactions, request, view=self)
+        serializer = WalletTransactionSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class VacancyContactAccessStateAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        vacancy = Vacancy.objects.filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
+        state = build_contact_access_state(request.user, vacancy)
+        return Response(state, status=status.HTTP_200_OK)
+
+
 class VacancyContactAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -996,14 +1122,10 @@ class VacancyContactAPIView(APIView):
         if error_response is not None:
             return error_response
 
-        unlocked = UnlockedContact.objects.filter(
-            user=request.user,
-            vacancy=vacancy
-        ).exists()
-
-        if not unlocked:
+        state = build_contact_access_state(request.user, vacancy)
+        if not state["is_unlocked"]:
             return Response(
-                {"detail": "contacts_locked"},
+                {"detail": "contacts_locked", "access_state": state},
                 status=403
             )
 
@@ -1373,6 +1495,7 @@ class VacancyApproveAPIView(APIView):
         vacancy.save(
             update_fields=[
                 "is_approved",
+                "approved_at",
                 "is_rejected",
                 "is_paused_by_owner",
                 "paused_by_owner_at",

@@ -29,6 +29,9 @@ from .api import (
     PushDeviceAPIView,
     VacancyAlertPreviewAPIView,
     VacancyAlertSubscriptionAPIView,
+    EconomyOverviewAPIView,
+    WalletTransactionListAPIView,
+    VacancyContactAccessStateAPIView,
 )
 from .auth_api import (
     RegisterAPIView,
@@ -70,6 +73,8 @@ urlpatterns = [
     path("notifications/devices/", PushDeviceAPIView.as_view(), name="notifications-devices"),
     path("notifications/alerts/subscription/", VacancyAlertSubscriptionAPIView.as_view(), name="notifications-alert-subscription"),
     path("notifications/alerts/preview/<int:vacancy_id>/", VacancyAlertPreviewAPIView.as_view(), name="notifications-alert-preview"),
+    path("economy/overview/", EconomyOverviewAPIView.as_view(), name="economy-overview"),
+    path("economy/history/", WalletTransactionListAPIView.as_view(), name="economy-history"),
 
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),
     path("vacancies/bookmark-status/", VacancyBookmarkStatusAPIView.as_view(), name="vacancy-bookmark-status"),
@@ -85,6 +90,7 @@ urlpatterns = [
     path("vacancies/<int:pk>/pause/", VacancyOwnerPauseAPIView.as_view(), name="vacancy-owner-pause"),
 
     path("vacancies/<int:pk>/contacts/", VacancyContactAPIView.as_view()),
+    path("vacancies/<int:pk>/contact-access-state/", VacancyContactAccessStateAPIView.as_view(), name="vacancy-contact-access-state"),
     path("employers/<int:owner_user_id>/profile/", EmployerProfileAPIView.as_view(), name="employer-profile"),
     path("employers/<int:owner_user_id>/subscription/", EmployerSubscriptionAPIView.as_view(), name="employer-subscription"),
     path("employers/subscriptions/", EmployerSubscriptionListAPIView.as_view(), name="employer-subscription-list"),

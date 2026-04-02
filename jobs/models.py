@@ -1,9 +1,29 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 from django.utils import timezone
 
 from .country_choices import VACANCY_COUNTRY_CHOICES
 from .driver_licenses import DRIVER_LICENSE_CHOICES as DRIVER_LICENSE_CATEGORY_CHOICES
+from .monetization import (
+    CONTACT_ACCESS_DURATION_MINUTES_DEFAULT,
+    CONTACT_ACCESS_MODE_CHOICES,
+    CONTACT_PRICE_PRESET_CHOICES,
+    CONTACT_TIMER_PRESET_CHOICES,
+    CONTACT_UNLOCK_SOURCE_CHOICES,
+    EMPLOYER_DAILY_FREE_SUBMISSIONS_DEFAULT,
+    INITIAL_FREE_CREATE_SUBMISSIONS_DEFAULT,
+    INITIAL_FREE_EDIT_RESUBMISSIONS_DEFAULT,
+    PURCHASE_STATUS_CHOICES,
+    SEEKER_CONTACT_DISCOUNT_PERCENT_DEFAULT,
+    STORE_PLATFORM_CHOICES,
+    STORE_PRODUCT_TYPE_CHOICES,
+    TRANSACTION_KIND_CHOICES,
+    VACANCY_EDIT_RESUBMIT_PRICE_CREDITS_DEFAULT,
+    VACANCY_SUBMIT_PRICE_CREDITS_DEFAULT,
+    contact_paid_window_deadline,
+)
 
 
 class Vacancy(models.Model):
@@ -125,6 +145,7 @@ class Vacancy(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.CASCADE)
     creator_token = models.CharField(max_length=64, unique=True, blank=True, null=True)
     published_at = models.DateTimeField(auto_now_add=True)
+    approved_at = models.DateTimeField(blank=True, null=True)
     expires_at = models.DateTimeField()
     revision = models.PositiveIntegerField(default=1)
 
@@ -227,10 +248,262 @@ class VacancyModerationAttempt(models.Model):
         return f"Vacancy #{self.vacancy_id} moderation attempt #{self.attempt_no}"
 
 
+class EconomyConfig(models.Model):
+    singleton_key = models.PositiveSmallIntegerField(default=1, unique=True, editable=False)
+    vacancy_submit_price_credits = models.PositiveSmallIntegerField(
+        default=VACANCY_SUBMIT_PRICE_CREDITS_DEFAULT
+    )
+    vacancy_edit_resubmit_price_credits = models.PositiveSmallIntegerField(
+        default=VACANCY_EDIT_RESUBMIT_PRICE_CREDITS_DEFAULT
+    )
+    free_create_ad_submissions_limit = models.PositiveSmallIntegerField(
+        default=INITIAL_FREE_CREATE_SUBMISSIONS_DEFAULT
+    )
+    free_edit_ad_resubmissions_limit = models.PositiveSmallIntegerField(
+        default=INITIAL_FREE_EDIT_RESUBMISSIONS_DEFAULT
+    )
+    employer_daily_free_submissions_limit = models.PositiveSmallIntegerField(
+        default=EMPLOYER_DAILY_FREE_SUBMISSIONS_DEFAULT
+    )
+    seeker_contact_discount_percent = models.PositiveSmallIntegerField(
+        default=SEEKER_CONTACT_DISCOUNT_PERCENT_DEFAULT
+    )
+    contact_access_duration_minutes = models.PositiveSmallIntegerField(
+        default=CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Economy config"
+        verbose_name_plural = "Economy config"
+
+    def save(self, *args, **kwargs):
+        self.singleton_key = 1
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return "Economy config"
+
+
+class UserWallet(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="wallet")
+    paid_credits = models.PositiveIntegerField(default=0)
+    bonus_credits = models.PositiveIntegerField(default=0)
+    lifetime_paid_credits = models.PositiveIntegerField(default=0)
+    lifetime_bonus_credits = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["user_id"]
+
+    @property
+    def total_credits(self):
+        return self.paid_credits + self.bonus_credits
+
+    def __str__(self):
+        return f"Wallet user={self.user_id} balance={self.total_credits}"
+
+
+class WalletTransaction(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="wallet_transactions",
+    )
+    wallet = models.ForeignKey(
+        UserWallet,
+        on_delete=models.CASCADE,
+        related_name="transactions",
+    )
+    kind = models.CharField(max_length=40, choices=TRANSACTION_KIND_CHOICES)
+    delta_paid_credits = models.IntegerField(default=0)
+    delta_bonus_credits = models.IntegerField(default=0)
+    balance_paid_after = models.PositiveIntegerField(default=0)
+    balance_bonus_after = models.PositiveIntegerField(default=0)
+    note = models.CharField(max_length=255, blank=True, default="")
+    related_vacancy = models.ForeignKey(
+        Vacancy,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="wallet_transactions",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["kind", "created_at"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"WalletTransaction user={self.user_id} kind={self.kind} "
+            f"paid={self.delta_paid_credits} bonus={self.delta_bonus_credits}"
+        )
+
+
+class StoreProduct(models.Model):
+    code = models.CharField(max_length=80, unique=True)
+    title = models.CharField(max_length=120)
+    product_type = models.CharField(max_length=32, choices=STORE_PRODUCT_TYPE_CHOICES)
+    platform = models.CharField(
+        max_length=16,
+        choices=STORE_PLATFORM_CHOICES,
+        default="shared",
+    )
+    store_product_id = models.CharField(max_length=160, blank=True, default="")
+    credit_amount = models.PositiveIntegerField(default=0)
+    duration_days = models.PositiveSmallIntegerField(default=0)
+    price_label = models.CharField(max_length=80, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        indexes = [
+            models.Index(fields=["product_type", "is_active"]),
+            models.Index(fields=["platform", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.code} ({self.platform})"
+
+
+class PurchaseRecord(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="purchase_records",
+    )
+    product = models.ForeignKey(
+        StoreProduct,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="purchases",
+    )
+    platform = models.CharField(max_length=16, choices=STORE_PLATFORM_CHOICES)
+    product_type = models.CharField(max_length=32, choices=STORE_PRODUCT_TYPE_CHOICES)
+    store_product_id = models.CharField(max_length=160, blank=True, default="")
+    external_transaction_id = models.CharField(max_length=255, unique=True)
+    purchase_token = models.CharField(max_length=512, blank=True, default="")
+    status = models.CharField(max_length=20, choices=PURCHASE_STATUS_CHOICES, default="pending")
+    credits_granted = models.PositiveIntegerField(default=0)
+    entitlement_started_at = models.DateTimeField(blank=True, null=True)
+    entitlement_expires_at = models.DateTimeField(blank=True, null=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    validated_at = models.DateTimeField(blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["status", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"PurchaseRecord user={self.user_id} tx={self.external_transaction_id}"
+
+
+class UserMonetizationProfile(models.Model):
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="monetization_profile",
+    )
+    employer_subscription_until = models.DateTimeField(blank=True, null=True)
+    seeker_subscription_until = models.DateTimeField(blank=True, null=True)
+    free_create_ad_submissions_used = models.PositiveSmallIntegerField(default=0)
+    free_edit_ad_resubmissions_used = models.PositiveSmallIntegerField(default=0)
+    employer_daily_submission_date = models.DateField(blank=True, null=True)
+    employer_daily_submissions_used = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["user_id"]
+
+    def has_employer_subscription(self):
+        return bool(
+            self.employer_subscription_until
+            and self.employer_subscription_until > timezone.now()
+        )
+
+    def has_seeker_subscription(self):
+        return bool(
+            self.seeker_subscription_until
+            and self.seeker_subscription_until > timezone.now()
+        )
+
+    def __str__(self):
+        return f"MonetizationProfile user={self.user_id}"
+
+
+class VacancyContactAccessPolicy(models.Model):
+    vacancy = models.OneToOneField(
+        Vacancy,
+        on_delete=models.CASCADE,
+        related_name="contact_access_policy",
+    )
+    contact_unlock_mode = models.CharField(
+        max_length=20,
+        choices=CONTACT_ACCESS_MODE_CHOICES,
+        default="ad_forever",
+    )
+    contact_unlock_timer_hours = models.PositiveSmallIntegerField(
+        choices=CONTACT_TIMER_PRESET_CHOICES,
+        blank=True,
+        null=True,
+    )
+    contact_unlock_price_credits = models.PositiveSmallIntegerField(
+        default=CONTACT_PRICE_PRESET_CHOICES[1][0],
+    )
+    set_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="set_vacancy_contact_policies",
+    )
+    set_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["vacancy_id"]
+
+    def paid_window_deadline(self):
+        if self.contact_unlock_mode != "paid_then_ad":
+            return None
+        return contact_paid_window_deadline(
+            self.vacancy.approved_at,
+            self.contact_unlock_timer_hours,
+        )
+
+    def __str__(self):
+        return f"VacancyContactAccessPolicy vacancy={self.vacancy_id}"
+
+
 class UnlockedContact(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     vacancy = models.ForeignKey(Vacancy, on_delete=models.CASCADE)
     opened_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(blank=True, null=True)
+    unlock_source = models.CharField(
+        max_length=20,
+        choices=CONTACT_UNLOCK_SOURCE_CHOICES,
+        default="paid",
+    )
+    charged_credits = models.PositiveIntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:
         unique_together = ("user", "vacancy")
@@ -589,3 +862,11 @@ class VacancyAlertDelivery(models.Model):
 
     def __str__(self):
         return f"VacancyAlertDelivery user={self.user_id} vacancy={self.vacancy_id} status={self.status}"
+
+
+@receiver(post_save, sender=User)
+def ensure_user_economy_objects(sender, instance, created, **kwargs):
+    if not created:
+        return
+    UserWallet.objects.get_or_create(user=instance)
+    UserMonetizationProfile.objects.get_or_create(user=instance)

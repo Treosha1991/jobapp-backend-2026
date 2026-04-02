@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django import forms
 from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
@@ -20,22 +22,31 @@ from .driver_licenses import (
     decode_driver_license_categories,
     encode_driver_license_categories,
 )
+from .economy import set_wallet_balances
+from .monetization import CONTACT_PRICE_PRESET_CHOICES, CONTACT_TIMER_PRESET_CHOICES
 from .models import (
     AccountDeletionRequest,
     Complaint,
     ComplaintActionLog,
+    EconomyConfig,
     EmailVerification,
     EmployerSubscription,
     PhoneVerification,
+    PurchaseRecord,
     PushDevice,
+    StoreProduct,
     UnlockedContact,
     UnlockRequest,
     UserBlock,
+    UserMonetizationProfile,
+    UserWallet,
+    VacancyContactAccessPolicy,
     UserProfile,
     Vacancy,
     VacancyAlertDelivery,
     VacancyAlertSubscription,
     VacancyModerationAttempt,
+    WalletTransaction,
 )
 
 
@@ -198,6 +209,53 @@ class UserProfileInline(admin.StackedInline):
     readonly_fields = ("phone_verified_at", "avatar_updated_at")
 
 
+class UserWalletInline(admin.StackedInline):
+    model = UserWallet
+    can_delete = False
+    extra = 0
+    fk_name = "user"
+    fields = (
+        ("paid_credits", "bonus_credits"),
+        ("lifetime_paid_credits", "lifetime_bonus_credits"),
+        ("created_at", "updated_at"),
+    )
+    readonly_fields = (
+        "paid_credits",
+        "bonus_credits",
+        "lifetime_paid_credits",
+        "lifetime_bonus_credits",
+        "created_at",
+        "updated_at",
+    )
+
+
+class UserMonetizationProfileInline(admin.StackedInline):
+    model = UserMonetizationProfile
+    can_delete = False
+    extra = 0
+    fk_name = "user"
+    fields = (
+        ("employer_subscription_until", "seeker_subscription_until"),
+        ("free_create_ad_submissions_used", "free_edit_ad_resubmissions_used"),
+        ("employer_daily_submission_date", "employer_daily_submissions_used"),
+        ("created_at", "updated_at"),
+    )
+    readonly_fields = ("created_at", "updated_at")
+
+
+class VacancyContactAccessPolicyInline(admin.StackedInline):
+    model = VacancyContactAccessPolicy
+    can_delete = False
+    extra = 0
+    fk_name = "vacancy"
+    fields = (
+        ("contact_unlock_mode", "contact_unlock_timer_hours"),
+        "contact_unlock_price_credits",
+        ("set_by", "set_at"),
+    )
+    readonly_fields = ("set_at",)
+
+
 try:
     admin.site.unregister(User)
 except NotRegistered:
@@ -206,12 +264,14 @@ except NotRegistered:
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    inlines = (UserProfileInline,)
+    inlines = (UserProfileInline, UserWalletInline, UserMonetizationProfileInline)
     list_display = (
         "username",
         "display_name",
         "email_with_phone",
         "role_badges",
+        "wallet_balance",
+        "subscription_badges",
         "vacancies_total",
         "complaints_filed",
         "last_login",
@@ -229,7 +289,11 @@ class UserAdmin(BaseUserAdmin):
     list_per_page = 40
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("profile")
+        return super().get_queryset(request).select_related(
+            "profile",
+            "wallet",
+            "monetization_profile",
+        )
 
     @admin.display(description="Display name")
     def display_name(self, obj):
@@ -279,10 +343,39 @@ class UserAdmin(BaseUserAdmin):
     def complaints_filed(self, obj):
         return obj.complaints.count()
 
+    @admin.display(description="Wallet")
+    def wallet_balance(self, obj):
+        try:
+            wallet = obj.wallet
+        except UserWallet.DoesNotExist:
+            return _muted("No wallet")
+        return format_html(
+            "<strong>{}</strong><br><span style='color:#6B7280'>paid: {} • bonus: {}</span>",
+            wallet.total_credits,
+            wallet.paid_credits,
+            wallet.bonus_credits,
+        )
+
+    @admin.display(description="Subscriptions")
+    def subscription_badges(self, obj):
+        try:
+            profile = obj.monetization_profile
+        except UserMonetizationProfile.DoesNotExist:
+            return _muted("No profile")
+        badges = []
+        if profile.has_employer_subscription():
+            badges.append(_badge("Employer sub", bg="#175CD3"))
+        if profile.has_seeker_subscription():
+            badges.append(_badge("Seeker sub", bg="#7A5AF8"))
+        if not badges:
+            return _muted("Inactive")
+        return format_html(" ".join(str(item) for item in badges))
+
 
 @admin.register(Vacancy)
 class VacancyAdmin(admin.ModelAdmin):
     form = VacancyAdminForm
+    inlines = (VacancyContactAccessPolicyInline,)
     list_display = (
         "id",
         "title",
@@ -293,6 +386,7 @@ class VacancyAdmin(admin.ModelAdmin):
         "salary_preview",
         "complaints_total",
         "published_at",
+        "approved_at",
         "expires_at",
     )
     list_filter = (
@@ -328,6 +422,7 @@ class VacancyAdmin(admin.ModelAdmin):
         "owner_display",
         "complaints_total",
         "published_at",
+        "approved_at",
         "revision",
         "paused_by_owner_at",
         "editing_started_at",
@@ -386,7 +481,7 @@ class VacancyAdmin(admin.ModelAdmin):
                     "rejection_reason",
                     "last_moderator_rejection_reason",
                     ("is_deleted_by_moderator", "deleted_by_moderator_at"),
-                    ("published_at", "expires_at"),
+                    ("published_at", "approved_at", "expires_at"),
                     ("paused_by_owner_at", "editing_started_at"),
                     ("last_owner_resume_at", "owner_resume_day", "owner_resume_count_day"),
                     "moderation_baseline",
@@ -431,6 +526,16 @@ class VacancyAdmin(admin.ModelAdmin):
             .select_related("created_by", "created_by__profile")
             .annotate(_complaints_total=Count("complaints"))
         )
+
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
+        for obj in formset.deleted_objects:
+            obj.delete()
+        for instance in instances:
+            if isinstance(instance, VacancyContactAccessPolicy):
+                instance.set_by = request.user
+            instance.save()
+        formset.save_m2m()
 
     @admin.display(description="Status")
     def status_badge(self, obj):
@@ -742,7 +847,15 @@ class EmployerSubscriptionAdmin(admin.ModelAdmin):
 
 @admin.register(UnlockedContact)
 class UnlockedContactAdmin(admin.ModelAdmin):
-    list_display = ("id", "user", "vacancy", "opened_at")
+    list_display = (
+        "id",
+        "user",
+        "vacancy",
+        "unlock_source",
+        "charged_credits",
+        "opened_at",
+        "expires_at",
+    )
     search_fields = ("user__username", "user__email", "vacancy__title")
     ordering = ("-opened_at",)
     raw_id_fields = ("user", "vacancy")
@@ -758,6 +871,233 @@ class UnlockRequestAdmin(admin.ModelAdmin):
     @admin.display(description="State")
     def state_badge(self, obj):
         return _badge("Active", bg="#198754") if obj.is_valid() else _badge("Expired", bg="#667085")
+
+
+@admin.register(EconomyConfig)
+class EconomyConfigAdmin(admin.ModelAdmin):
+    list_display = (
+        "singleton_key",
+        "vacancy_submit_price_credits",
+        "vacancy_edit_resubmit_price_credits",
+        "free_create_ad_submissions_limit",
+        "free_edit_ad_resubmissions_limit",
+        "employer_daily_free_submissions_limit",
+        "seeker_contact_discount_percent",
+        "contact_access_duration_minutes",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        if EconomyConfig.objects.exists():
+            return False
+        return super().has_add_permission(request)
+
+
+@admin.register(UserWallet)
+class UserWalletAdmin(admin.ModelAdmin):
+    list_display = (
+        "user",
+        "paid_credits",
+        "bonus_credits",
+        "total_credits_display",
+        "updated_at",
+    )
+    search_fields = ("user__username", "user__email")
+    ordering = ("-updated_at",)
+    list_select_related = ("user",)
+    fields = (
+        "user",
+        ("paid_credits", "bonus_credits"),
+        ("lifetime_paid_credits", "lifetime_bonus_credits"),
+        ("created_at", "updated_at"),
+    )
+    readonly_fields = ("lifetime_paid_credits", "lifetime_bonus_credits", "created_at", "updated_at")
+
+    @admin.display(description="Total")
+    def total_credits_display(self, obj):
+        return obj.total_credits
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            super().save_model(request, obj, form, change)
+            return
+
+        wallet, _ = set_wallet_balances(
+            obj.user,
+            paid_credits=obj.paid_credits,
+            bonus_credits=obj.bonus_credits,
+            note=f"Admin manual adjustment by {request.user.username}",
+            metadata={
+                "actor_user_id": request.user.id,
+                "actor_username": request.user.username,
+            },
+        )
+        obj.paid_credits = wallet.paid_credits
+        obj.bonus_credits = wallet.bonus_credits
+        obj.lifetime_paid_credits = wallet.lifetime_paid_credits
+        obj.lifetime_bonus_credits = wallet.lifetime_bonus_credits
+        obj.updated_at = wallet.updated_at
+
+
+@admin.register(WalletTransaction)
+class WalletTransactionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "user",
+        "kind",
+        "delta_paid_credits",
+        "delta_bonus_credits",
+        "balance_after_display",
+        "related_vacancy",
+        "created_at",
+    )
+    search_fields = (
+        "user__username",
+        "user__email",
+        "note",
+        "related_vacancy__title",
+    )
+    list_filter = ("kind", "created_at")
+    ordering = ("-created_at", "-id")
+    list_select_related = ("user", "wallet", "related_vacancy")
+    raw_id_fields = ("user", "wallet", "related_vacancy")
+    readonly_fields = ("created_at",)
+
+    @admin.display(description="Balance after")
+    def balance_after_display(self, obj):
+        return format_html(
+            "paid: {}<br><span style='color:#6B7280'>bonus: {}</span>",
+            obj.balance_paid_after,
+            obj.balance_bonus_after,
+        )
+
+
+@admin.register(StoreProduct)
+class StoreProductAdmin(admin.ModelAdmin):
+    list_display = (
+        "code",
+        "title",
+        "product_type",
+        "platform",
+        "credit_amount",
+        "duration_days",
+        "price_label",
+        "active_badge",
+        "sort_order",
+    )
+    list_filter = ("product_type", "platform", "is_active")
+    search_fields = ("code", "title", "store_product_id", "price_label")
+    ordering = ("sort_order", "id")
+
+    @admin.display(description="Active", ordering="is_active")
+    def active_badge(self, obj):
+        return _bool_badge(obj.is_active, "Active", "Inactive")
+
+
+@admin.register(PurchaseRecord)
+class PurchaseRecordAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "user",
+        "product",
+        "platform",
+        "status_badge",
+        "credits_granted",
+        "created_at",
+        "validated_at",
+    )
+    list_filter = ("status", "platform", "product_type", "created_at")
+    search_fields = (
+        "user__username",
+        "user__email",
+        "external_transaction_id",
+        "store_product_id",
+        "purchase_token",
+    )
+    ordering = ("-created_at", "-id")
+    list_select_related = ("user", "product")
+    readonly_fields = ("created_at", "updated_at", "validated_at", "payload")
+    raw_id_fields = ("user", "product")
+
+    @admin.display(description="Status", ordering="status")
+    def status_badge(self, obj):
+        meta = {
+            "pending": ("Pending", "#B54708"),
+            "validated": ("Validated", "#198754"),
+            "rejected": ("Rejected", "#B42318"),
+            "refunded": ("Refunded", "#7A2433"),
+            "cancelled": ("Cancelled", "#667085"),
+        }.get(obj.status, ("Unknown", "#667085"))
+        return _badge(meta[0], bg=meta[1])
+
+
+@admin.register(UserMonetizationProfile)
+class UserMonetizationProfileAdmin(admin.ModelAdmin):
+    list_display = (
+        "user",
+        "employer_subscription_until",
+        "seeker_subscription_until",
+        "free_create_ad_submissions_used",
+        "free_edit_ad_resubmissions_used",
+        "employer_daily_submission_date",
+        "employer_daily_submissions_used",
+    )
+    search_fields = ("user__username", "user__email")
+    ordering = ("user__username",)
+    list_select_related = ("user",)
+    actions = (
+        "activate_employer_subscription_30_days",
+        "activate_seeker_subscription_30_days",
+        "clear_all_subscriptions",
+    )
+
+    @admin.action(description="Activate employer subscription for 30 days")
+    def activate_employer_subscription_30_days(self, request, queryset):
+        now = timezone.now()
+        updated = 0
+        for profile in queryset:
+            current_until = profile.employer_subscription_until
+            baseline = current_until if current_until and current_until > now else now
+            profile.employer_subscription_until = baseline + timedelta(days=30)
+            profile.save(update_fields=["employer_subscription_until", "updated_at"])
+            updated += 1
+        self.message_user(request, f"Employer subscription extended for {updated} user(s).")
+
+    @admin.action(description="Activate seeker subscription for 30 days")
+    def activate_seeker_subscription_30_days(self, request, queryset):
+        now = timezone.now()
+        updated = 0
+        for profile in queryset:
+            current_until = profile.seeker_subscription_until
+            baseline = current_until if current_until and current_until > now else now
+            profile.seeker_subscription_until = baseline + timedelta(days=30)
+            profile.save(update_fields=["seeker_subscription_until", "updated_at"])
+            updated += 1
+        self.message_user(request, f"Seeker subscription extended for {updated} user(s).")
+
+    @admin.action(description="Clear employer and seeker subscriptions")
+    def clear_all_subscriptions(self, request, queryset):
+        updated = queryset.update(
+            employer_subscription_until=None,
+            seeker_subscription_until=None,
+        )
+        self.message_user(request, f"Cleared subscriptions for {updated} user(s).")
+
+
+@admin.register(VacancyContactAccessPolicy)
+class VacancyContactAccessPolicyAdmin(admin.ModelAdmin):
+    list_display = (
+        "vacancy",
+        "contact_unlock_mode",
+        "contact_unlock_timer_hours",
+        "contact_unlock_price_credits",
+        "set_by",
+        "set_at",
+    )
+    list_filter = ("contact_unlock_mode", "contact_unlock_timer_hours", "contact_unlock_price_credits")
+    search_fields = ("vacancy__title", "vacancy__id", "set_by__username", "set_by__email")
+    ordering = ("-set_at",)
+    list_select_related = ("vacancy", "set_by")
 
 
 @admin.register(PushDevice)

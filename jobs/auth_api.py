@@ -31,6 +31,7 @@ from .avatar_utils import (
     build_avatar_object_key,
     process_avatar_image,
 )
+from .economy import get_or_create_monetization_profile, get_or_create_wallet
 from .models import AccountDeletionRequest, EmailVerification, PhoneVerification, UserProfile, Vacancy
 from .text_filters import (
     censor_minimal,
@@ -78,6 +79,8 @@ def _normalize_phone(raw_phone):
 
 def _auth_payload(user, token):
     profile = UserProfile.objects.filter(user=user).first()
+    wallet = get_or_create_wallet(user)
+    monetization_profile = get_or_create_monetization_profile(user)
     avatar_key = (profile.avatar_key if profile else "") or ""
     return {
         "token": token.key,
@@ -90,6 +93,11 @@ def _auth_payload(user, token):
         "phone": (profile.phone_e164 if profile else "") or "",
         "phone_verified": bool(profile and profile.phone_verified),
         "has_password": user.has_usable_password(),
+        "wallet_total_credits": wallet.total_credits,
+        "wallet_paid_credits": wallet.paid_credits,
+        "wallet_bonus_credits": wallet.bonus_credits,
+        "employer_subscription_until": monetization_profile.employer_subscription_until,
+        "seeker_subscription_until": monetization_profile.seeker_subscription_until,
     }
 
 

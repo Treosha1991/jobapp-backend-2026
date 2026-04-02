@@ -14,10 +14,15 @@ from .driver_licenses import (
 )
 from .models import (
     Complaint,
+    EconomyConfig,
     EmployerSubscription,
     PushDevice,
+    StoreProduct,
+    UserMonetizationProfile,
+    UserWallet,
     Vacancy,
     VacancyAlertSubscription,
+    WalletTransaction,
     VacancyModerationAttempt,
 )
 from .service_sources import service_board_meta_for_user
@@ -1031,4 +1036,101 @@ class ComplaintListSerializer(serializers.ModelSerializer):
         if not obj.handled_by:
             return ""
         return obj.handled_by.email or obj.handled_by.username
+
+
+class UserWalletSerializer(serializers.ModelSerializer):
+    total_credits = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = UserWallet
+        fields = [
+            "paid_credits",
+            "bonus_credits",
+            "total_credits",
+            "lifetime_paid_credits",
+            "lifetime_bonus_credits",
+            "updated_at",
+        ]
+
+
+class UserMonetizationProfileSerializer(serializers.ModelSerializer):
+    has_employer_subscription = serializers.SerializerMethodField()
+    has_seeker_subscription = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserMonetizationProfile
+        fields = [
+            "has_employer_subscription",
+            "employer_subscription_until",
+            "has_seeker_subscription",
+            "seeker_subscription_until",
+            "free_create_ad_submissions_used",
+            "free_edit_ad_resubmissions_used",
+            "employer_daily_submission_date",
+            "employer_daily_submissions_used",
+            "updated_at",
+        ]
+
+    def get_has_employer_subscription(self, obj):
+        return obj.has_employer_subscription()
+
+    def get_has_seeker_subscription(self, obj):
+        return obj.has_seeker_subscription()
+
+
+class EconomyConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EconomyConfig
+        fields = [
+            "vacancy_submit_price_credits",
+            "vacancy_edit_resubmit_price_credits",
+            "free_create_ad_submissions_limit",
+            "free_edit_ad_resubmissions_limit",
+            "employer_daily_free_submissions_limit",
+            "seeker_contact_discount_percent",
+            "contact_access_duration_minutes",
+            "updated_at",
+        ]
+
+
+class StoreProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StoreProduct
+        fields = [
+            "id",
+            "code",
+            "title",
+            "product_type",
+            "platform",
+            "store_product_id",
+            "credit_amount",
+            "duration_days",
+            "price_label",
+            "sort_order",
+        ]
+
+
+class WalletTransactionSerializer(serializers.ModelSerializer):
+    total_delta = serializers.SerializerMethodField()
+    related_vacancy_title = serializers.CharField(source="related_vacancy.title", read_only=True)
+
+    class Meta:
+        model = WalletTransaction
+        fields = [
+            "id",
+            "kind",
+            "delta_paid_credits",
+            "delta_bonus_credits",
+            "total_delta",
+            "balance_paid_after",
+            "balance_bonus_after",
+            "note",
+            "related_vacancy",
+            "related_vacancy_title",
+            "metadata",
+            "created_at",
+        ]
+
+    def get_total_delta(self, obj):
+        return int(obj.delta_paid_credits or 0) + int(obj.delta_bonus_credits or 0)
 
