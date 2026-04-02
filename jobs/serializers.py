@@ -229,7 +229,7 @@ def _moderation_attempt_counts(obj):
     }
 
 
-def _contact_payload(obj):
+def _contact_payload(obj, *, public_only=False):
     primary_phone = (obj.phone or "").strip()
     additional_phone = (getattr(obj, "additional_phone", "") or "").strip()
     hide_primary_phone = bool(getattr(obj, "hide_primary_phone", False))
@@ -246,14 +246,14 @@ def _contact_payload(obj):
         "owner_avatar_url": _creator_avatar_url(obj),
         # compatibility with existing mobile fields
         "nickname": _creator_nickname(obj),
-        "phone": primary_phone,
-        "additional_phone": additional_phone,
+        "phone": public_phone if public_only else primary_phone,
+        "additional_phone": additional_phone if not public_only else "",
         "hide_primary_phone": hide_primary_phone,
         "public_phone": public_phone,
-        "telegram": raw_telegram,
-        "whatsapp": raw_whatsapp,
-        "email": obj.email or "",
-        "viber": raw_viber,
+        "telegram": public_telegram if public_only else raw_telegram,
+        "whatsapp": public_whatsapp if public_only else raw_whatsapp,
+        "email": "" if public_only else (obj.email or ""),
+        "viber": public_viber if public_only else raw_viber,
         "public_telegram": public_telegram,
         "public_whatsapp": public_whatsapp,
         "public_viber": public_viber,
@@ -313,7 +313,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
         ]
 
     def get_contacts(self, obj):
-        return _contact_payload(obj)
+        return _contact_payload(obj, public_only=True)
 
     def get_salary_monthly_from(self, obj):
         return _salary_monthly_from(obj)
@@ -496,7 +496,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_contacts(self, obj):
-        return _contact_payload(obj)
+        return _contact_payload(obj, public_only=True)
 
     def get_salary_monthly_from(self, obj):
         return _salary_monthly_from(obj)

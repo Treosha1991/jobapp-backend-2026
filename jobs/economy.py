@@ -1,3 +1,4 @@
+from datetime import timedelta
 from math import ceil
 
 from django.db import transaction
@@ -21,6 +22,13 @@ TRANSACTION_KINDS = {code for code, _ in TRANSACTION_KIND_CHOICES}
 
 class InsufficientCreditsError(Exception):
     pass
+
+
+class EconomyActionRequiredError(Exception):
+    def __init__(self, code, state):
+        super().__init__(code)
+        self.code = code
+        self.state = state
 
 
 def get_economy_config():
@@ -193,6 +201,34 @@ def spend_credits(
     return wallet, tx
 
 
+@transaction.atomic
+def record_wallet_event(
+    user,
+    *,
+    kind,
+    note="",
+    related_vacancy=None,
+    metadata=None,
+):
+    wallet = UserWallet.objects.select_for_update().filter(user=user).first()
+    if wallet is None:
+        wallet = UserWallet.objects.create(user=user)
+
+    tx = WalletTransaction.objects.create(
+        user=user,
+        wallet=wallet,
+        kind=_normalize_tx_kind(kind),
+        delta_paid_credits=0,
+        delta_bonus_credits=0,
+        balance_paid_after=wallet.paid_credits,
+        balance_bonus_after=wallet.bonus_credits,
+        note=(note or "").strip(),
+        related_vacancy=related_vacancy,
+        metadata=metadata or {},
+    )
+    return wallet, tx
+
+
 def _valid_unlocked_contact(unlocked, *, now=None):
     if unlocked is None:
         return None
@@ -212,10 +248,188 @@ def get_active_unlocked_contact(user, vacancy, *, now=None):
     return _valid_unlocked_contact(unlocked, now=now)
 
 
+def _current_employer_daily_submission_usage(profile, *, now):
+    if profile.employer_daily_submission_date == now.date():
+        return int(profile.employer_daily_submissions_used or 0)
+    return 0
+
+
+def build_vacancy_submission_state(user, *, flow, now=None):
+    if flow not in {"create", "edit_resubmit"}:
+        raise ValueError("invalid_submission_flow")
+    if not getattr(user, "is_authenticated", False):
+        raise ValueError("auth_required")
+
+    current_time = now or timezone.now()
+    config = get_economy_config()
+    profile = get_or_create_monetization_profile(user)
+    wallet = get_or_create_wallet(user)
+
+    if flow == "create":
+        free_limit = int(config.free_create_ad_submissions_limit or 0)
+        free_used = int(profile.free_create_ad_submissions_used or 0)
+        base_price = int(config.vacancy_submit_price_credits or 0)
+        tx_kind = "vacancy_submit"
+    else:
+        free_limit = int(config.free_edit_ad_resubmissions_limit or 0)
+        free_used = int(profile.free_edit_ad_resubmissions_used or 0)
+        base_price = int(config.vacancy_edit_resubmit_price_credits or 0)
+        tx_kind = "vacancy_edit_resubmit"
+
+    free_remaining = max(0, free_limit - free_used)
+    employer_subscription_active = profile.has_employer_subscription(current_time)
+    employer_daily_limit = int(config.employer_daily_free_submissions_limit or 0)
+    employer_daily_used = _current_employer_daily_submission_usage(
+        profile,
+        now=current_time,
+    )
+    employer_daily_remaining = max(0, employer_daily_limit - employer_daily_used)
+    if not employer_subscription_active:
+        employer_daily_remaining = 0
+
+    if employer_subscription_active and employer_daily_remaining > 0:
+        current_action = "subscription_free"
+        effective_price = 0
+    elif free_remaining > 0:
+        current_action = "ad"
+        effective_price = 0
+    else:
+        current_action = "paid"
+        effective_price = base_price
+
+    return {
+        "flow": flow,
+        "current_action": current_action,
+        "expected_method": {
+            "subscription_free": "subscription",
+            "ad": "ad",
+            "paid": "credits",
+        }[current_action],
+        "base_price_credits": base_price,
+        "effective_price_credits": effective_price,
+        "free_ad_limit": free_limit,
+        "free_ad_used": free_used,
+        "free_ad_remaining": free_remaining,
+        "employer_subscription_active": employer_subscription_active,
+        "employer_daily_free_limit": employer_daily_limit,
+        "employer_daily_free_used": employer_daily_used,
+        "employer_daily_free_remaining": employer_daily_remaining,
+        "wallet_total_credits": wallet.total_credits,
+        "can_afford": wallet.total_credits >= effective_price,
+        "transaction_kind": tx_kind,
+    }
+
+
+@transaction.atomic
+def apply_vacancy_submission_action(
+    user,
+    *,
+    flow,
+    method,
+    related_vacancy=None,
+    now=None,
+):
+    current_time = now or timezone.now()
+    normalized_method = (method or "").strip().lower()
+    state = build_vacancy_submission_state(user, flow=flow, now=current_time)
+
+    if normalized_method != state["expected_method"]:
+        raise EconomyActionRequiredError("submission_action_required", state)
+
+    profile = UserMonetizationProfile.objects.select_for_update().filter(user=user).first()
+    if profile is None:
+        profile = UserMonetizationProfile.objects.create(user=user)
+
+    if state["current_action"] == "subscription_free":
+        if profile.employer_daily_submission_date != current_time.date():
+            profile.employer_daily_submission_date = current_time.date()
+            profile.employer_daily_submissions_used = 0
+        profile.employer_daily_submissions_used = int(profile.employer_daily_submissions_used or 0) + 1
+        profile.save(
+            update_fields=[
+                "employer_daily_submission_date",
+                "employer_daily_submissions_used",
+                "updated_at",
+            ]
+        )
+        _, tx = record_wallet_event(
+            user,
+            kind=state["transaction_kind"],
+            note="Employer subscription submission",
+            related_vacancy=related_vacancy,
+            metadata={"method": "subscription", "flow": flow},
+        )
+    elif state["current_action"] == "ad":
+        if flow == "create":
+            profile.free_create_ad_submissions_used = int(
+                profile.free_create_ad_submissions_used or 0
+            ) + 1
+            profile.save(
+                update_fields=[
+                    "free_create_ad_submissions_used",
+                    "updated_at",
+                ]
+            )
+        else:
+            profile.free_edit_ad_resubmissions_used = int(
+                profile.free_edit_ad_resubmissions_used or 0
+            ) + 1
+            profile.save(
+                update_fields=[
+                    "free_edit_ad_resubmissions_used",
+                    "updated_at",
+                ]
+            )
+        _, tx = record_wallet_event(
+            user,
+            kind=state["transaction_kind"],
+            note="Rewarded ad submission",
+            related_vacancy=related_vacancy,
+            metadata={"method": "ad", "flow": flow},
+        )
+    else:
+        _, tx = spend_credits(
+            user,
+            amount=state["effective_price_credits"],
+            kind=state["transaction_kind"],
+            note="Paid vacancy submission",
+            related_vacancy=related_vacancy,
+            metadata={"method": "credits", "flow": flow},
+        )
+
+    refreshed_state = build_vacancy_submission_state(user, flow=flow, now=current_time)
+    return refreshed_state, tx
+
+
 def build_contact_access_state(user, vacancy, *, now=None):
     current_time = now or timezone.now()
     policy = get_or_create_contact_policy(vacancy)
     config = get_economy_config()
+    if getattr(user, "is_authenticated", False):
+        if getattr(user, "is_staff", False) or vacancy.created_by_id == getattr(user, "id", None):
+            return {
+                "vacancy_id": vacancy.id,
+                "is_unlocked": True,
+                "unlocked_until": None,
+                "unlock_source": "owner_free",
+                "contact_access_duration_minutes": int(
+                    getattr(config, "contact_access_duration_minutes", CONTACT_ACCESS_DURATION_MINUTES_DEFAULT)
+                    or CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
+                ),
+                "mode": policy.contact_unlock_mode,
+                "current_action": "already_unlocked",
+                "base_price_credits": int(policy.contact_unlock_price_credits or 0),
+                "effective_price_credits": 0,
+                "contact_unlock_timer_hours": policy.contact_unlock_timer_hours,
+                "paid_window_deadline": policy.paid_window_deadline(),
+                "paid_window_is_active": False,
+                "can_use_ad": False,
+                "ad_required": False,
+                "has_seeker_subscription": False,
+                "wallet_total_credits": 0,
+                "can_afford": True,
+            }
+
     profile = get_or_create_monetization_profile(user) if getattr(user, "is_authenticated", False) else None
     wallet = get_or_create_wallet(user) if getattr(user, "is_authenticated", False) else None
 
@@ -270,3 +484,90 @@ def build_contact_access_state(user, vacancy, *, now=None):
         "wallet_total_credits": wallet.total_credits if wallet else 0,
         "can_afford": bool(wallet and wallet.total_credits >= effective_price),
     }
+
+
+@transaction.atomic
+def unlock_vacancy_contacts(
+    user,
+    vacancy,
+    *,
+    method,
+    now=None,
+):
+    current_time = now or timezone.now()
+    normalized_method = (method or "").strip().lower()
+    state = build_contact_access_state(user, vacancy, now=current_time)
+
+    if state["is_unlocked"]:
+        return (
+            get_active_unlocked_contact(user, vacancy, now=current_time),
+            state,
+            None,
+        )
+
+    expected_method = {
+        "paid": "credits",
+        "ad": "ad",
+        "subscription_free": "subscription",
+    }.get(state["current_action"], "")
+    if normalized_method != expected_method:
+        raise EconomyActionRequiredError("contact_unlock_action_required", state)
+
+    config = get_economy_config()
+    duration_minutes = int(
+        getattr(config, "contact_access_duration_minutes", CONTACT_ACCESS_DURATION_MINUTES_DEFAULT)
+        or CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
+    )
+    expires_at = current_time + timedelta(minutes=duration_minutes)
+
+    tx = None
+    charged_credits = 0
+    unlock_source = "paid"
+    metadata = {"method": normalized_method, "state_action": state["current_action"]}
+
+    if state["current_action"] == "paid":
+        charged_credits = int(state["effective_price_credits"] or 0)
+        unlock_source = "paid"
+        _, tx = spend_credits(
+            user,
+            amount=charged_credits,
+            kind="contact_unlock",
+            note="Paid contact unlock",
+            related_vacancy=vacancy,
+            metadata=metadata,
+        )
+    elif state["current_action"] == "ad":
+        unlock_source = "ad"
+        _, tx = record_wallet_event(
+            user,
+            kind="contact_unlock",
+            note="Rewarded ad contact unlock",
+            related_vacancy=vacancy,
+            metadata=metadata,
+        )
+    else:
+        unlock_source = "subscription"
+        _, tx = record_wallet_event(
+            user,
+            kind="contact_unlock",
+            note="Subscription contact unlock",
+            related_vacancy=vacancy,
+            metadata=metadata,
+        )
+
+    unlocked, created = UnlockedContact.objects.update_or_create(
+        user=user,
+        vacancy=vacancy,
+        defaults={
+            "expires_at": expires_at,
+            "unlock_source": unlock_source,
+            "charged_credits": charged_credits,
+            "metadata": metadata,
+        },
+    )
+    if not created:
+        unlocked.opened_at = current_time
+        unlocked.save(update_fields=["opened_at"])
+
+    refreshed_state = build_contact_access_state(user, vacancy, now=current_time)
+    return unlocked, refreshed_state, tx

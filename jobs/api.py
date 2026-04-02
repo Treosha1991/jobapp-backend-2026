@@ -21,8 +21,11 @@ from .avatar_utils import avatar_public_url
 from .country_choices import normalize_audience_country_codes
 from .driver_licenses import normalize_driver_license_categories
 from .economy import (
+    EconomyActionRequiredError,
     InsufficientCreditsError,
+    apply_vacancy_submission_action,
     build_contact_access_state,
+    build_vacancy_submission_state,
     get_economy_config,
     get_or_create_contact_policy,
     get_or_create_monetization_profile,
@@ -30,6 +33,7 @@ from .economy import (
     grant_credits,
     set_wallet_balances,
     spend_credits,
+    unlock_vacancy_contacts,
 )
 from .models import (
     Complaint,
@@ -499,27 +503,55 @@ class VacancyCreateAPIView(generics.CreateAPIView):
         is_moderator = _is_moderator(self.request)
         now = timezone.now()
         token = secrets.token_hex(32)
-        vacancy = serializer.save(
-            created_by=self.request.user,
-            is_approved=is_moderator,
-            approved_at=now if is_moderator else None,
-            is_rejected=False,
-            is_paused_by_owner=False,
-            paused_by_owner_at=None,
-            rejection_reason="",
-            is_editing=False,
-            revision=1,
-            # Reuse this field as "submitted_at" for moderation visibility delay.
-            editing_started_at=now,
-            creator_token=token,
-            expires_at=now + VACANCY_LIVE_WINDOW,
-        )
-        if not is_moderator:
-            _create_moderation_attempt(
-                vacancy,
-                trigger_type="create",
-                submitted_by=self.request.user,
-                submitted_at=now,
+        submission_method = (self.request.data.get("submission_method") or "").strip().lower()
+        try:
+            with transaction.atomic():
+                vacancy = serializer.save(
+                    created_by=self.request.user,
+                    is_approved=is_moderator,
+                    approved_at=now if is_moderator else None,
+                    is_rejected=False,
+                    is_paused_by_owner=False,
+                    paused_by_owner_at=None,
+                    rejection_reason="",
+                    is_editing=False,
+                    revision=1,
+                    # Reuse this field as "submitted_at" for moderation visibility delay.
+                    editing_started_at=now,
+                    creator_token=token,
+                    expires_at=now + VACANCY_LIVE_WINDOW,
+                )
+                if not is_moderator:
+                    _create_moderation_attempt(
+                        vacancy,
+                        trigger_type="create",
+                        submitted_by=self.request.user,
+                        submitted_at=now,
+                    )
+                    apply_vacancy_submission_action(
+                        self.request.user,
+                        flow="create",
+                        method=submission_method,
+                        related_vacancy=vacancy,
+                        now=now,
+                    )
+        except EconomyActionRequiredError as exc:
+            raise ValidationError(
+                {
+                    "error": exc.code,
+                    "submission_state": exc.state,
+                }
+            )
+        except InsufficientCreditsError:
+            raise ValidationError(
+                {
+                    "error": "insufficient_credits",
+                    "submission_state": build_vacancy_submission_state(
+                        self.request.user,
+                        flow="create",
+                        now=now,
+                    ),
+                }
             )
         if vacancy.is_approved and not vacancy.is_deleted_by_moderator:
             try:
@@ -1113,6 +1145,27 @@ class VacancyContactAccessStateAPIView(APIView):
         return Response(state, status=status.HTTP_200_OK)
 
 
+class VacancySubmissionStateAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        flow = (request.query_params.get("flow") or "create").strip().lower()
+        vacancy_id = request.query_params.get("vacancy_id")
+        if flow not in {"create", "edit_resubmit"}:
+            return Response({"error": "invalid_submission_flow"}, status=status.HTTP_400_BAD_REQUEST)
+        if flow == "edit_resubmit":
+            if not vacancy_id:
+                return Response({"error": "vacancy_id_required"}, status=status.HTTP_400_BAD_REQUEST)
+            vacancy = Vacancy.objects.filter(pk=vacancy_id, created_by=request.user).first()
+            if not vacancy:
+                return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+            if vacancy.is_deleted_by_moderator:
+                return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+
+        payload = build_vacancy_submission_state(request.user, flow=flow)
+        return Response(payload, status=status.HTTP_200_OK)
+
+
 class VacancyContactAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1138,13 +1191,30 @@ class VacancyContactAPIView(APIView):
         if error_response is not None:
             return error_response
 
-        UnlockedContact.objects.get_or_create(
-            user=request.user,
-            vacancy=vacancy
-        )
+        try:
+            _, access_state, _ = unlock_vacancy_contacts(
+                request.user,
+                vacancy,
+                method=request.data.get("method"),
+            )
+        except EconomyActionRequiredError as exc:
+            return Response(
+                {"error": exc.code, "access_state": exc.state},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except InsufficientCreditsError:
+            return Response(
+                {
+                    "error": "insufficient_credits",
+                    "access_state": build_contact_access_state(request.user, vacancy),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
         serializer = VacancyContactSerializer(vacancy)
-        return Response(serializer.data)
+        payload = dict(serializer.data)
+        payload["access_state"] = access_state
+        return Response(payload)
 
 
 class EmployerProfileAPIView(APIView):
@@ -1823,23 +1893,53 @@ class VacancyEditAPIView(APIView):
             limit_payload = _owner_moderation_limit_payload(vacancy, now=current_time)
             if limit_payload is not None:
                 return Response(limit_payload, status=status.HTTP_429_TOO_MANY_REQUESTS)
-            serializer.save(
-                is_approved=False,
-                is_rejected=False,
-                rejection_reason="",
-                is_editing=False,
-                is_paused_by_owner=False,
-                paused_by_owner_at=None,
-                revision=next_revision,
-                # Marks resubmission time; pending list applies 60s delay.
-                editing_started_at=current_time,
-            )
-            _create_moderation_attempt(
-                vacancy,
-                trigger_type="edit",
-                submitted_by=request.user,
-                submitted_at=current_time,
-            )
+            submission_method = (request.data.get("submission_method") or "").strip().lower()
+            try:
+                with transaction.atomic():
+                    serializer.save(
+                        is_approved=False,
+                        is_rejected=False,
+                        rejection_reason="",
+                        is_editing=False,
+                        is_paused_by_owner=False,
+                        paused_by_owner_at=None,
+                        revision=next_revision,
+                        # Marks resubmission time; pending list applies 60s delay.
+                        editing_started_at=current_time,
+                    )
+                    _create_moderation_attempt(
+                        vacancy,
+                        trigger_type="edit",
+                        submitted_by=request.user,
+                        submitted_at=current_time,
+                    )
+                    apply_vacancy_submission_action(
+                        request.user,
+                        flow="edit_resubmit",
+                        method=submission_method,
+                        related_vacancy=vacancy,
+                        now=current_time,
+                    )
+            except EconomyActionRequiredError as exc:
+                return Response(
+                    {
+                        "error": exc.code,
+                        "submission_state": exc.state,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            except InsufficientCreditsError:
+                return Response(
+                    {
+                        "error": "insufficient_credits",
+                        "submission_state": build_vacancy_submission_state(
+                            request.user,
+                            flow="edit_resubmit",
+                            now=current_time,
+                        ),
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
         else:
             serializer.save(
                 is_approved=False,

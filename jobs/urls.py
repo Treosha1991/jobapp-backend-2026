@@ -31,6 +31,7 @@ from .api import (
     VacancyAlertSubscriptionAPIView,
     EconomyOverviewAPIView,
     WalletTransactionListAPIView,
+    VacancySubmissionStateAPIView,
     VacancyContactAccessStateAPIView,
 )
 from .auth_api import (
@@ -75,6 +76,7 @@ urlpatterns = [
     path("notifications/alerts/preview/<int:vacancy_id>/", VacancyAlertPreviewAPIView.as_view(), name="notifications-alert-preview"),
     path("economy/overview/", EconomyOverviewAPIView.as_view(), name="economy-overview"),
     path("economy/history/", WalletTransactionListAPIView.as_view(), name="economy-history"),
+    path("economy/vacancy-submission-state/", VacancySubmissionStateAPIView.as_view(), name="economy-vacancy-submission-state"),
 
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),
     path("vacancies/bookmark-status/", VacancyBookmarkStatusAPIView.as_view(), name="vacancy-bookmark-status"),
