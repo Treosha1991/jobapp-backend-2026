@@ -433,16 +433,18 @@ class UserMonetizationProfile(models.Model):
     class Meta:
         ordering = ["user_id"]
 
-    def has_employer_subscription(self):
+    def has_employer_subscription(self, at_time=None):
+        current_time = at_time or timezone.now()
         return bool(
             self.employer_subscription_until
-            and self.employer_subscription_until > timezone.now()
+            and self.employer_subscription_until > current_time
         )
 
-    def has_seeker_subscription(self):
+    def has_seeker_subscription(self, at_time=None):
+        current_time = at_time or timezone.now()
         return bool(
             self.seeker_subscription_until
-            and self.seeker_subscription_until > timezone.now()
+            and self.seeker_subscription_until > current_time
         )
 
     def __str__(self):

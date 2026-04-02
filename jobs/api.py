@@ -155,7 +155,7 @@ def _economy_overview_payload(user):
     )
     free_edit_remaining = max(
         0,
-        int(config.free_edit_ad_submissions_limit or 0)
+        int(config.free_edit_ad_resubmissions_limit or 0)
         - int(profile.free_edit_ad_resubmissions_used or 0),
     )
 
