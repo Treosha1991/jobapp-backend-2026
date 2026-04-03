@@ -657,7 +657,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             if isinstance(val, str) and len(val) > max_len:
                 errors[field] = f"max {max_len} chars"
 
-        _check_len("title", 30)
+        _check_len("title", 50)
         _check_len("city", 20)
         _check_len("city_code", 64)
         _check_len("salary", 80)
