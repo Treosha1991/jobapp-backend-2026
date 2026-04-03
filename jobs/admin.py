@@ -247,6 +247,7 @@ class VacancyContactAccessPolicyInline(admin.StackedInline):
     model = VacancyContactAccessPolicy
     can_delete = False
     extra = 0
+    max_num = 1
     fk_name = "vacancy"
     fields = (
         ("contact_unlock_mode", "contact_unlock_timer_hours"),
@@ -254,6 +255,11 @@ class VacancyContactAccessPolicyInline(admin.StackedInline):
         ("set_by", "set_at"),
     )
     readonly_fields = ("set_at",)
+
+    def get_extra(self, request, obj=None, **kwargs):
+        if obj is None:
+            return 1
+        return 0 if hasattr(obj, "contact_access_policy") else 1
 
 
 try:
@@ -526,6 +532,37 @@ class VacancyAdmin(admin.ModelAdmin):
             .select_related("created_by", "created_by__profile")
             .annotate(_complaints_total=Count("complaints"))
         )
+
+    def save_model(self, request, obj, form, change):
+        now = timezone.now()
+        was_approved = False
+        previous_approved_at = None
+
+        if change and obj.pk:
+            previous = (
+                Vacancy.objects.filter(pk=obj.pk)
+                .values("is_approved", "approved_at", "published_at")
+                .first()
+                or {}
+            )
+            was_approved = bool(previous.get("is_approved"))
+            previous_approved_at = previous.get("approved_at") or previous.get("published_at")
+
+        if obj.is_approved:
+            if not was_approved:
+                obj.approved_at = now
+                obj.published_at = now
+                obj.expires_at = now + timedelta(days=30)
+            elif obj.approved_at is None:
+                obj.approved_at = previous_approved_at or now
+            obj.is_rejected = False
+            obj.is_paused_by_owner = False
+            obj.paused_by_owner_at = None
+            obj.rejection_reason = ""
+            obj.last_moderator_rejection_reason = ""
+            obj.is_editing = False
+
+        super().save_model(request, obj, form, change)
 
     def save_formset(self, request, form, formset, change):
         instances = formset.save(commit=False)

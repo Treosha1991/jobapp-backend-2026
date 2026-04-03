@@ -485,8 +485,11 @@ class VacancyContactAccessPolicy(models.Model):
     def paid_window_deadline(self):
         if self.contact_unlock_mode != "paid_then_ad":
             return None
+        approval_anchor = self.vacancy.approved_at
+        if approval_anchor is None and self.vacancy.is_approved:
+            approval_anchor = self.vacancy.published_at
         return contact_paid_window_deadline(
-            self.vacancy.approved_at,
+            approval_anchor,
             self.contact_unlock_timer_hours,
         )
 
