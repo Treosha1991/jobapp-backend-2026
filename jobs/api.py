@@ -24,6 +24,7 @@ from .economy import (
     EconomyActionRequiredError,
     InsufficientCreditsError,
     apply_vacancy_submission_action,
+    apply_store_product_purchase,
     build_contact_access_state,
     build_vacancy_submission_state,
     get_economy_config,
@@ -34,6 +35,12 @@ from .economy import (
     set_wallet_balances,
     spend_credits,
     unlock_vacancy_contacts,
+)
+from .google_play import (
+    GooglePlayNotConfiguredError,
+    GooglePlayVerificationError,
+    verify_google_play_product_purchase,
+    verify_google_play_subscription_purchase,
 )
 from .models import (
     Complaint,
@@ -60,6 +67,7 @@ from .serializers import (
     ComplaintListSerializer,
     EconomyConfigSerializer,
     PushDeviceRegisterSerializer,
+    GooglePlayPurchaseCompleteSerializer,
     StoreProductSerializer,
     UserMonetizationProfileSerializer,
     UserWalletSerializer,
@@ -188,6 +196,21 @@ def _economy_overview_payload(user):
             ],
         },
     }
+
+
+def _purchase_transaction_id_from_payload(verified_payload, *, fallback_transaction_id, purchase_token):
+    verified_payload = verified_payload or {}
+    for candidate in [
+        verified_payload.get("latestSuccessfulOrderId"),
+        verified_payload.get("latestOrderId"),
+        verified_payload.get("orderId"),
+        fallback_transaction_id,
+        purchase_token,
+    ]:
+        normalized = (candidate or "").strip()
+        if normalized:
+            return normalized
+    raise ValidationError("purchase_transaction_id_required")
 
 
 def _transliterate_ru_uk_to_latin(value):
@@ -1131,6 +1154,97 @@ class WalletTransactionListAPIView(APIView):
         page = paginator.paginate_queryset(transactions, request, view=self)
         serializer = WalletTransactionSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+class GooglePlayPurchaseCompleteAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = GooglePlayPurchaseCompleteSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+        product = serializer.context["store_product"]
+        purchase_token = payload["purchase_token"]
+        raw_purchase_id = (payload.get("purchase_id") or "").strip()
+
+        try:
+            if product.product_type == "credits":
+                verified_payload = verify_google_play_product_purchase(
+                    product_id=(product.store_product_id or "").strip(),
+                    purchase_token=purchase_token,
+                )
+            else:
+                verified_payload = verify_google_play_subscription_purchase(
+                    subscription_id=(product.store_product_id or "").strip(),
+                    purchase_token=purchase_token,
+                )
+        except GooglePlayNotConfiguredError as exc:
+            return Response(
+                {
+                    "error": exc.code,
+                    "message": "Google Play verification is not configured on the backend.",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except GooglePlayVerificationError as exc:
+            return Response(
+                {
+                    "error": exc.code,
+                    "message": exc.detail or exc.code,
+                    "payload": exc.payload,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        transaction_id = _purchase_transaction_id_from_payload(
+            verified_payload,
+            fallback_transaction_id=raw_purchase_id,
+            purchase_token=purchase_token,
+        )
+
+        merged_payload = {
+            "verified_payload": verified_payload,
+            "client_payload": payload.get("purchase_payload") or {},
+            "verification_data": (payload.get("verification_data") or "").strip(),
+            "local_verification_data": (payload.get("local_verification_data") or "").strip(),
+        }
+
+        try:
+            purchase_record, created = apply_store_product_purchase(
+                request.user,
+                product=product,
+                platform="android",
+                external_transaction_id=transaction_id,
+                purchase_token=purchase_token,
+                payload=merged_payload,
+            )
+        except ValueError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "detail": "purchase_validated",
+                "purchase": {
+                    "id": purchase_record.id,
+                    "status": purchase_record.status,
+                    "created": created,
+                    "product_code": product.code,
+                    "product_type": product.product_type,
+                    "credits_granted": purchase_record.credits_granted,
+                    "entitlement_started_at": purchase_record.entitlement_started_at,
+                    "entitlement_expires_at": purchase_record.entitlement_expires_at,
+                    "external_transaction_id": purchase_record.external_transaction_id,
+                },
+                "economy": _economy_overview_payload(request.user),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class VacancyContactAccessStateAPIView(APIView):

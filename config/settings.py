@@ -189,4 +189,9 @@ FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "").strip()
 FIREBASE_CLIENT_EMAIL = os.environ.get("FIREBASE_CLIENT_EMAIL", "").strip()
 FIREBASE_PRIVATE_KEY = os.environ.get("FIREBASE_PRIVATE_KEY", "")
 
+# Google Play Billing / Android Publisher API
+GOOGLE_PLAY_PACKAGE_NAME = os.environ.get("GOOGLE_PLAY_PACKAGE_NAME", "").strip()
+GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = os.environ.get(
+    "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON", ""
+).strip()
 

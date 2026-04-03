@@ -30,6 +30,7 @@ from .api import (
     VacancyAlertPreviewAPIView,
     VacancyAlertSubscriptionAPIView,
     EconomyOverviewAPIView,
+    GooglePlayPurchaseCompleteAPIView,
     WalletTransactionListAPIView,
     VacancySubmissionStateAPIView,
     VacancyContactAccessStateAPIView,
@@ -76,6 +77,11 @@ urlpatterns = [
     path("notifications/alerts/preview/<int:vacancy_id>/", VacancyAlertPreviewAPIView.as_view(), name="notifications-alert-preview"),
     path("economy/overview/", EconomyOverviewAPIView.as_view(), name="economy-overview"),
     path("economy/history/", WalletTransactionListAPIView.as_view(), name="economy-history"),
+    path(
+        "economy/google-play/complete/",
+        GooglePlayPurchaseCompleteAPIView.as_view(),
+        name="economy-google-play-complete",
+    ),
     path("economy/vacancy-submission-state/", VacancySubmissionStateAPIView.as_view(), name="economy-vacancy-submission-state"),
 
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),

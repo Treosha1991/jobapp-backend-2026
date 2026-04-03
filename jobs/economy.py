@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from .models import (
     EconomyConfig,
+    PurchaseRecord,
     UnlockedContact,
     UserMonetizationProfile,
     UserWallet,
@@ -227,6 +228,163 @@ def record_wallet_event(
         metadata=metadata or {},
     )
     return wallet, tx
+
+
+def _subscription_extension_window(current_until, *, now, duration_days):
+    baseline = current_until if current_until and current_until > now else now
+    return baseline, baseline + timedelta(days=duration_days)
+
+
+@transaction.atomic
+def apply_store_product_purchase(
+    user,
+    *,
+    product,
+    platform,
+    external_transaction_id,
+    purchase_token="",
+    payload=None,
+):
+    external_transaction_id = (external_transaction_id or "").strip()
+    if not external_transaction_id:
+        raise ValueError("purchase_transaction_id_required")
+
+    purchase_payload = payload or {}
+    purchase_record = (
+        PurchaseRecord.objects.select_for_update()
+        .filter(external_transaction_id=external_transaction_id)
+        .first()
+    )
+    if purchase_record and purchase_record.user_id != user.id:
+        raise ValueError("purchase_transaction_user_mismatch")
+
+    created = False
+    if purchase_record is None:
+        purchase_record = PurchaseRecord.objects.create(
+            user=user,
+            product=product,
+            platform=platform,
+            product_type=product.product_type,
+            store_product_id=(product.store_product_id or "").strip(),
+            external_transaction_id=external_transaction_id,
+            purchase_token=(purchase_token or "").strip(),
+            payload=purchase_payload,
+        )
+        created = True
+    else:
+        purchase_record.product = product
+        purchase_record.platform = platform
+        purchase_record.product_type = product.product_type
+        purchase_record.store_product_id = (product.store_product_id or "").strip()
+        if purchase_token:
+            purchase_record.purchase_token = purchase_token.strip()
+        if purchase_payload:
+            purchase_record.payload = purchase_payload
+        purchase_record.save(
+            update_fields=[
+                "product",
+                "platform",
+                "product_type",
+                "store_product_id",
+                "purchase_token",
+                "payload",
+                "updated_at",
+            ]
+        )
+
+    if purchase_record.status == "validated":
+        return purchase_record, False
+
+    now = timezone.now()
+    credits_granted = 0
+    entitlement_started_at = None
+    entitlement_expires_at = None
+
+    if product.product_type == "credits":
+        credits_granted = int(product.credit_amount or 0)
+        if credits_granted <= 0:
+            raise ValueError("store_credit_amount_invalid")
+        grant_credits(
+            user,
+            paid_credits=credits_granted,
+            kind="purchase_credit_pack",
+            note=(product.title or "").strip(),
+            metadata={
+                "store_product_code": product.code,
+                "store_product_id": product.store_product_id,
+                "platform": platform,
+                "purchase_record_id": purchase_record.id,
+            },
+        )
+    elif product.product_type == "employer_subscription":
+        duration_days = int(product.duration_days or 0)
+        if duration_days <= 0:
+            raise ValueError("store_subscription_duration_invalid")
+        profile = get_or_create_monetization_profile(user)
+        entitlement_started_at, entitlement_expires_at = _subscription_extension_window(
+            profile.employer_subscription_until,
+            now=now,
+            duration_days=duration_days,
+        )
+        profile.employer_subscription_until = entitlement_expires_at
+        profile.save(update_fields=["employer_subscription_until", "updated_at"])
+        record_wallet_event(
+            user,
+            kind="subscription_activation",
+            note=(product.title or "").strip(),
+            metadata={
+                "store_product_code": product.code,
+                "store_product_id": product.store_product_id,
+                "platform": platform,
+                "purchase_record_id": purchase_record.id,
+                "subscription_kind": "employer",
+                "duration_days": duration_days,
+            },
+        )
+    elif product.product_type == "seeker_subscription":
+        duration_days = int(product.duration_days or 0)
+        if duration_days <= 0:
+            raise ValueError("store_subscription_duration_invalid")
+        profile = get_or_create_monetization_profile(user)
+        entitlement_started_at, entitlement_expires_at = _subscription_extension_window(
+            profile.seeker_subscription_until,
+            now=now,
+            duration_days=duration_days,
+        )
+        profile.seeker_subscription_until = entitlement_expires_at
+        profile.save(update_fields=["seeker_subscription_until", "updated_at"])
+        record_wallet_event(
+            user,
+            kind="subscription_activation",
+            note=(product.title or "").strip(),
+            metadata={
+                "store_product_code": product.code,
+                "store_product_id": product.store_product_id,
+                "platform": platform,
+                "purchase_record_id": purchase_record.id,
+                "subscription_kind": "seeker",
+                "duration_days": duration_days,
+            },
+        )
+    else:
+        raise ValueError("store_product_type_invalid")
+
+    purchase_record.status = "validated"
+    purchase_record.credits_granted = credits_granted
+    purchase_record.entitlement_started_at = entitlement_started_at
+    purchase_record.entitlement_expires_at = entitlement_expires_at
+    purchase_record.validated_at = now
+    purchase_record.save(
+        update_fields=[
+            "status",
+            "credits_granted",
+            "entitlement_started_at",
+            "entitlement_expires_at",
+            "validated_at",
+            "updated_at",
+        ]
+    )
+    return purchase_record, created
 
 
 def _valid_unlocked_contact(unlocked, *, now=None):

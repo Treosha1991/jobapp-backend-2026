@@ -1134,3 +1134,33 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
     def get_total_delta(self, obj):
         return int(obj.delta_paid_credits or 0) + int(obj.delta_bonus_credits or 0)
 
+
+class GooglePlayPurchaseCompleteSerializer(serializers.Serializer):
+    product_code = serializers.CharField(max_length=80)
+    purchase_token = serializers.CharField(max_length=512)
+    purchase_id = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    verification_data = serializers.CharField(required=False, allow_blank=True)
+    local_verification_data = serializers.CharField(required=False, allow_blank=True)
+    purchase_payload = serializers.JSONField(required=False)
+
+    def validate_product_code(self, value):
+        code = (value or "").strip()
+        if not code:
+            raise serializers.ValidationError("product_code_required")
+        try:
+            product = StoreProduct.objects.get(code=code, is_active=True)
+        except StoreProduct.DoesNotExist as exc:
+            raise serializers.ValidationError("store_product_not_found") from exc
+        if product.platform not in {"android", "shared"}:
+            raise serializers.ValidationError("store_product_platform_mismatch")
+        if not (product.store_product_id or "").strip():
+            raise serializers.ValidationError("store_product_id_missing")
+        self.context["store_product"] = product
+        return code
+
+    def validate_purchase_token(self, value):
+        token = (value or "").strip()
+        if not token:
+            raise serializers.ValidationError("purchase_token_required")
+        return token
+

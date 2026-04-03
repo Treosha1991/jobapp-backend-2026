@@ -13,4 +13,6 @@ psycopg[binary]==3.2.13
 boto3==1.37.38
 Pillow==11.2.1
 firebase-admin==6.9.0
+google-auth==2.40.3
+requests==2.32.5
 
