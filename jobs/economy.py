@@ -52,6 +52,24 @@ def get_or_create_contact_policy(vacancy):
     return policy
 
 
+def is_employer_profile_visible_for_vacancy(vacancy, *, now=None):
+    current_time = now or timezone.now()
+    policy = getattr(vacancy, "contact_access_policy", None)
+    if policy is None:
+        return True
+
+    mode = (getattr(policy, "contact_unlock_mode", "") or "ad_forever").strip()
+    if mode == "paid_forever":
+        return False
+    if mode != "paid_then_ad":
+        return True
+
+    deadline = policy.paid_window_deadline()
+    if deadline is None:
+        return True
+    return current_time >= deadline
+
+
 def _normalize_tx_kind(kind):
     if kind not in TRANSACTION_KINDS:
         return "system_adjustment"

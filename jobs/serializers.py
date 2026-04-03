@@ -26,6 +26,7 @@ from .models import (
     VacancyModerationAttempt,
 )
 from .service_sources import service_board_meta_for_user
+from .economy import is_employer_profile_visible_for_vacancy
 from .text_filters import censor_minimal, contains_link
 
 
@@ -275,6 +276,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
     driver_license_categories = DriverLicenseCategoriesField(read_only=True)
     is_resubmitted = serializers.SerializerMethodField()
     is_owner_subscribed = serializers.SerializerMethodField()
+    show_employer_profile = serializers.SerializerMethodField()
     is_service_board = serializers.SerializerMethodField()
     service_board_kind = serializers.SerializerMethodField()
 
@@ -308,6 +310,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "expires_at",
             "is_resubmitted",
             "is_owner_subscribed",
+            "show_employer_profile",
             "is_service_board",
             "service_board_kind",
         ]
@@ -342,6 +345,9 @@ class VacancyListSerializer(serializers.ModelSerializer):
             subscriber=user,
             employer_id=owner_id,
         ).exists()
+
+    def get_show_employer_profile(self, obj):
+        return is_employer_profile_visible_for_vacancy(obj)
 
     def get_is_service_board(self, obj):
         return _service_board_meta(obj)["is_service_board"]

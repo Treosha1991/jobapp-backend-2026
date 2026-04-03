@@ -32,6 +32,7 @@ from .economy import (
     get_or_create_monetization_profile,
     get_or_create_wallet,
     grant_credits,
+    is_employer_profile_visible_for_vacancy,
     set_wallet_balances,
     spend_credits,
     unlock_vacancy_contacts,
@@ -250,6 +251,10 @@ class VacancyListAPIView(generics.ListAPIView):
             is_paused_by_owner=False,
             is_deleted_by_moderator=False,
             expires_at__gt=timezone.now()
+        ).select_related(
+            "contact_access_policy",
+            "created_by",
+            "created_by__profile",
         ).order_by("-published_at")
 
         country = self.request.query_params.get("country")
@@ -1384,10 +1389,20 @@ class EmployerProfileAPIView(APIView):
             is_paused_by_owner=False,
             is_deleted_by_moderator=False,
             expires_at__gt=timezone.now(),
+        ).select_related(
+            "contact_access_policy",
+            "created_by",
+            "created_by__profile",
         ).order_by("-published_at")
 
+        visible_vacancies = [
+            vacancy
+            for vacancy in qs
+            if is_employer_profile_visible_for_vacancy(vacancy)
+        ]
+
         paginator = PageNumberPagination()
-        page = paginator.paginate_queryset(qs, request, view=self)
+        page = paginator.paginate_queryset(visible_vacancies, request, view=self)
         serializer = VacancyListSerializer(page, many=True)
         paginated = paginator.get_paginated_response(serializer.data).data
 
