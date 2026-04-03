@@ -1982,6 +1982,26 @@ class VacancyOwnerPauseAPIView(APIView):
         )
 
 
+class VacancyOwnerDeleteAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        vacancy = Vacancy.objects.filter(pk=pk, created_by=request.user).first()
+        if not vacancy:
+            return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if vacancy.is_deleted_by_moderator:
+            return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+        if vacancy.is_approved and not vacancy.is_paused_by_owner:
+            return Response(
+                {"error": "vacancy_delete_not_allowed"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        vacancy_id = vacancy.id
+        vacancy.delete()
+        return Response({"detail": "deleted", "vacancy_id": vacancy_id}, status=status.HTTP_200_OK)
+
+
 class VacancyMineAPIView(generics.ListAPIView):
     serializer_class = VacancyMineSerializer
     permission_classes = [permissions.IsAuthenticated]
