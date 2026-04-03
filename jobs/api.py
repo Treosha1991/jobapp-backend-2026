@@ -519,6 +519,12 @@ class VacancyCreateAPIView(generics.CreateAPIView):
         # include creator_token in response for client storage
         return response
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        save_as_draft_raw = str(self.request.data.get("save_as_draft", "")).strip().lower()
+        context["draft_mode"] = save_as_draft_raw in ("1", "true", "yes", "on")
+        return context
+
     def perform_create(self, serializer):
         profile = UserProfile.objects.filter(user=self.request.user).first()
         if not profile or not profile.phone_verified:
@@ -526,25 +532,29 @@ class VacancyCreateAPIView(generics.CreateAPIView):
         is_moderator = _is_moderator(self.request)
         now = timezone.now()
         token = secrets.token_hex(32)
+        save_as_draft_raw = str(self.request.data.get("save_as_draft", "")).strip().lower()
+        save_as_draft = save_as_draft_raw in ("1", "true", "yes", "on")
         submission_method = (self.request.data.get("submission_method") or "").strip().lower()
         try:
             with transaction.atomic():
                 vacancy = serializer.save(
                     created_by=self.request.user,
-                    is_approved=is_moderator,
-                    approved_at=now if is_moderator else None,
+                    is_approved=is_moderator and not save_as_draft,
+                    approved_at=now if (is_moderator and not save_as_draft) else None,
                     is_rejected=False,
                     is_paused_by_owner=False,
                     paused_by_owner_at=None,
                     rejection_reason="",
-                    is_editing=False,
+                    last_moderator_rejection_reason="",
+                    moderation_baseline={},
+                    is_editing=save_as_draft,
                     revision=1,
                     # Reuse this field as "submitted_at" for moderation visibility delay.
                     editing_started_at=now,
                     creator_token=token,
                     expires_at=now + VACANCY_LIVE_WINDOW,
                 )
-                if not is_moderator:
+                if not is_moderator and not save_as_draft:
                     _create_moderation_attempt(
                         vacancy,
                         trigger_type="create",
@@ -830,6 +840,12 @@ def _create_moderation_attempt(
         decision="pending",
         extra_context=extra_context or {},
     )
+
+
+def _submission_flow_for_vacancy(vacancy):
+    if vacancy.is_editing and not vacancy.moderation_attempts.exists():
+        return "create"
+    return "edit_resubmit"
 
 
 def _resolve_latest_moderation_attempt(
@@ -1265,6 +1281,7 @@ class VacancySubmissionStateAPIView(APIView):
     def get(self, request):
         flow = (request.query_params.get("flow") or "create").strip().lower()
         vacancy_id = request.query_params.get("vacancy_id")
+        effective_flow = flow
         if flow not in {"create", "edit_resubmit"}:
             return Response({"error": "invalid_submission_flow"}, status=status.HTTP_400_BAD_REQUEST)
         if flow == "edit_resubmit":
@@ -1275,8 +1292,10 @@ class VacancySubmissionStateAPIView(APIView):
                 return Response({"error": "vacancy_not_found"}, status=status.HTTP_404_NOT_FOUND)
             if vacancy.is_deleted_by_moderator:
                 return Response({"error": "vacancy_deleted"}, status=status.HTTP_410_GONE)
+            effective_flow = _submission_flow_for_vacancy(vacancy)
 
-        payload = build_vacancy_submission_state(request.user, flow=flow)
+        payload = build_vacancy_submission_state(request.user, flow=effective_flow)
+        payload["effective_flow"] = effective_flow
         return Response(payload, status=status.HTTP_200_OK)
 
 
@@ -1999,15 +2018,29 @@ class VacancyEditAPIView(APIView):
         data = request.data.copy()
         submit_raw = str(data.pop("submit", "")).lower()
         submit_for_moderation = submit_raw in ("1", "true", "yes", "on")
-        serializer = VacancyCreateSerializer(vacancy, data=data, partial=True)
+        save_as_draft_raw = str(data.pop("save_as_draft", "")).lower()
+        save_as_draft = save_as_draft_raw in ("1", "true", "yes", "on")
+        draft_mode = save_as_draft or not submit_for_moderation
+        serializer = VacancyCreateSerializer(
+            vacancy,
+            data=data,
+            partial=True,
+            context={"draft_mode": draft_mode},
+        )
         serializer.is_valid(raise_exception=True)
-        next_revision = (vacancy.revision or 1) + 1
-        if submit_for_moderation:
+        if submit_for_moderation and not save_as_draft:
             current_time = timezone.now()
-            limit_payload = _owner_moderation_limit_payload(vacancy, now=current_time)
-            if limit_payload is not None:
-                return Response(limit_payload, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            submission_flow = _submission_flow_for_vacancy(vacancy)
+            if submission_flow == "edit_resubmit":
+                limit_payload = _owner_moderation_limit_payload(vacancy, now=current_time)
+                if limit_payload is not None:
+                    return Response(limit_payload, status=status.HTTP_429_TOO_MANY_REQUESTS)
             submission_method = (request.data.get("submission_method") or "").strip().lower()
+            next_revision = (
+                vacancy.revision or 1
+                if submission_flow == "create"
+                else (vacancy.revision or 1) + 1
+            )
             try:
                 with transaction.atomic():
                     serializer.save(
@@ -2023,13 +2056,13 @@ class VacancyEditAPIView(APIView):
                     )
                     _create_moderation_attempt(
                         vacancy,
-                        trigger_type="edit",
+                        trigger_type="create" if submission_flow == "create" else "edit",
                         submitted_by=request.user,
                         submitted_at=current_time,
                     )
                     apply_vacancy_submission_action(
                         request.user,
-                        flow="edit_resubmit",
+                        flow=submission_flow,
                         method=submission_method,
                         related_vacancy=vacancy,
                         now=current_time,
@@ -2048,13 +2081,14 @@ class VacancyEditAPIView(APIView):
                         "error": "insufficient_credits",
                         "submission_state": build_vacancy_submission_state(
                             request.user,
-                            flow="edit_resubmit",
+                            flow=submission_flow,
                             now=current_time,
                         ),
                     },
                     status=status.HTTP_409_CONFLICT,
                 )
         else:
+            next_revision = (vacancy.revision or 1) + 1
             serializer.save(
                 is_approved=False,
                 is_rejected=False,

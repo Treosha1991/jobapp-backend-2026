@@ -595,6 +595,29 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "hide_primary_phone": {"required": False},
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.draft_mode = bool(self.context.get("draft_mode"))
+        if not self.draft_mode:
+            return
+
+        for name, field in self.fields.items():
+            if name == "creator_token":
+                continue
+            field.required = False
+            if hasattr(field, "allow_blank"):
+                field.allow_blank = True
+            if hasattr(field, "allow_null"):
+                field.allow_null = True
+
+        audience_field = self.fields.get("audience_countries")
+        if isinstance(audience_field, AudienceCountriesField):
+            audience_field.min_selections = 0
+
+        driver_field = self.fields.get("driver_license_categories")
+        if isinstance(driver_field, DriverLicenseCategoriesField):
+            driver_field.required = False
+
     def validate(self, attrs):
         errors = {}
         raw_values = {
@@ -671,7 +694,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
         hide_primary_phone = bool(attrs.get("hide_primary_phone"))
         public_phone = additional_phone if hide_primary_phone else primary_phone
 
-        if hide_primary_phone and not additional_phone:
+        if hide_primary_phone and not additional_phone and not self.draft_mode:
             errors["additional_phone"] = "required when primary phone is hidden"
 
         email = (attrs.get("email") or "").strip()
@@ -679,7 +702,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
                 errors["email"] = "invalid email"
 
-        if not public_phone and not email:
+        if not self.draft_mode and not public_phone and not email:
             errors["contacts"] = "provide at least one contact"
 
         salary_from = attrs.get("salary_from")
@@ -695,9 +718,6 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
         )
 
         if structured_used:
-            if salary_from is None and salary_to is None:
-                errors["salary_from"] = "required salary from/to"
-
             if salary_from is not None and (salary_from < 1 or salary_from > 99):
                 errors["salary_from"] = "must be in range 1..99"
             if salary_to is not None and (salary_to < 1 or salary_to > 99):
@@ -705,17 +725,26 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             if salary_from is not None and salary_to is not None and salary_from > salary_to:
                 errors["salary_to"] = "must be greater or equal salary_from"
 
-            if not salary_currency:
-                errors["salary_currency"] = "required"
-            if not salary_tax_type:
-                errors["salary_tax_type"] = "required"
-
-            if salary_hours_month is None:
-                errors["salary_hours_month"] = "required"
-            elif salary_hours_month < 1 or salary_hours_month > 300:
+            if salary_hours_month is not None and (salary_hours_month < 1 or salary_hours_month > 300):
                 errors["salary_hours_month"] = "must be in range 1..300"
 
-            if not errors:
+            if not self.draft_mode:
+                if salary_from is None and salary_to is None:
+                    errors["salary_from"] = "required salary from/to"
+                if not salary_currency:
+                    errors["salary_currency"] = "required"
+                if not salary_tax_type:
+                    errors["salary_tax_type"] = "required"
+                if salary_hours_month is None:
+                    errors["salary_hours_month"] = "required"
+
+            if (
+                not errors
+                and (salary_from is not None or salary_to is not None)
+                and salary_currency
+                and salary_tax_type
+                and salary_hours_month is not None
+            ):
                 if salary_from is not None and salary_to is not None:
                     range_text = f"from {salary_from} to {salary_to}"
                 elif salary_from is not None:
@@ -724,7 +753,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
                     range_text = f"to {salary_to}"
                 attrs["salary"] = f"{range_text} {salary_currency} {salary_tax_type}"
         else:
-            if not salary_text:
+            if not self.draft_mode and not salary_text:
                 errors["salary"] = "required"
 
         if errors:
@@ -804,6 +833,8 @@ class VacancyMineSerializer(serializers.ModelSerializer):
         return obj.moderation_status
 
     def get_bucket(self, obj):
+        if obj.is_editing:
+            return "rejected"
         if obj.is_approved:
             return "approved"
         if obj.is_rejected:
@@ -812,7 +843,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
 
     def get_status_label_key(self, obj):
         if obj.is_editing:
-            return "statusEditing"
+            return "statusDraft"
         if obj.is_approved and obj.is_paused_by_owner:
             return "statusPaused"
         if obj.is_approved:
