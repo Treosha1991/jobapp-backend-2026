@@ -418,6 +418,7 @@ def build_contact_access_state(user, vacancy, *, now=None):
                 ),
                 "mode": policy.contact_unlock_mode,
                 "current_action": "already_unlocked",
+                "expected_method": "",
                 "base_price_credits": int(policy.contact_unlock_price_credits or 0),
                 "effective_price_credits": 0,
                 "contact_unlock_timer_hours": policy.contact_unlock_timer_hours,
@@ -473,6 +474,15 @@ def build_contact_access_state(user, vacancy, *, now=None):
         ),
         "mode": policy.contact_unlock_mode,
         "current_action": "already_unlocked" if unlocked else action,
+        "expected_method": (
+            ""
+            if unlocked
+            else {
+                "paid": "credits",
+                "ad": "ad",
+                "subscription_free": "subscription",
+            }.get(action, "")
+        ),
         "base_price_credits": base_price,
         "effective_price_credits": 0 if unlocked else effective_price,
         "contact_unlock_timer_hours": policy.contact_unlock_timer_hours,
