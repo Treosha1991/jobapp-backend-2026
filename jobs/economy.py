@@ -699,19 +699,20 @@ def unlock_vacancy_contacts(
     if normalized_method != expected_method:
         raise EconomyActionRequiredError("contact_unlock_action_required", state)
 
-    config = get_economy_config()
-    duration_minutes = int(
-        getattr(config, "contact_access_duration_minutes", CONTACT_ACCESS_DURATION_MINUTES_DEFAULT)
-        or CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
-    )
-    expires_at = current_time + timedelta(minutes=duration_minutes)
-
     tx = None
     charged_credits = 0
     unlock_source = "paid"
     metadata = {"method": normalized_method, "state_action": state["current_action"]}
+    should_persist_unlock = True
+    expires_at = None
 
     if state["current_action"] == "paid":
+        config = get_economy_config()
+        duration_minutes = int(
+            getattr(config, "contact_access_duration_minutes", CONTACT_ACCESS_DURATION_MINUTES_DEFAULT)
+            or CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
+        )
+        expires_at = current_time + timedelta(minutes=duration_minutes)
         charged_credits = int(state["effective_price_credits"] or 0)
         unlock_source = "paid"
         _, tx = spend_credits(
@@ -723,6 +724,7 @@ def unlock_vacancy_contacts(
             metadata=metadata,
         )
     elif state["current_action"] == "ad":
+        should_persist_unlock = False
         unlock_source = "ad"
         _, tx = record_wallet_event(
             user,
@@ -732,6 +734,12 @@ def unlock_vacancy_contacts(
             metadata=metadata,
         )
     else:
+        config = get_economy_config()
+        duration_minutes = int(
+            getattr(config, "contact_access_duration_minutes", CONTACT_ACCESS_DURATION_MINUTES_DEFAULT)
+            or CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
+        )
+        expires_at = current_time + timedelta(minutes=duration_minutes)
         unlock_source = "subscription"
         _, tx = record_wallet_event(
             user,
@@ -741,19 +749,21 @@ def unlock_vacancy_contacts(
             metadata=metadata,
         )
 
-    unlocked, created = UnlockedContact.objects.update_or_create(
-        user=user,
-        vacancy=vacancy,
-        defaults={
-            "expires_at": expires_at,
-            "unlock_source": unlock_source,
-            "charged_credits": charged_credits,
-            "metadata": metadata,
-        },
-    )
-    if not created:
-        unlocked.opened_at = current_time
-        unlocked.save(update_fields=["opened_at"])
+    unlocked = None
+    if should_persist_unlock:
+        unlocked, created = UnlockedContact.objects.update_or_create(
+            user=user,
+            vacancy=vacancy,
+            defaults={
+                "expires_at": expires_at,
+                "unlock_source": unlock_source,
+                "charged_credits": charged_credits,
+                "metadata": metadata,
+            },
+        )
+        if not created:
+            unlocked.opened_at = current_time
+            unlocked.save(update_fields=["opened_at"])
 
     refreshed_state = build_contact_access_state(user, vacancy, now=current_time)
     return unlocked, refreshed_state, tx
