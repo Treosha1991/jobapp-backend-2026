@@ -252,9 +252,10 @@ class VacancyContactAccessPolicyInline(admin.StackedInline):
     fields = (
         ("contact_unlock_mode", "contact_unlock_timer_hours"),
         "contact_unlock_price_credits",
+        "paid_window_started_at",
         ("set_by", "set_at"),
     )
-    readonly_fields = ("set_at",)
+    readonly_fields = ("paid_window_started_at", "set_at")
 
     def get_extra(self, request, obj=None, **kwargs):
         if obj is None:
@@ -1128,6 +1129,7 @@ class VacancyContactAccessPolicyAdmin(admin.ModelAdmin):
         "contact_unlock_mode",
         "contact_unlock_timer_hours",
         "contact_unlock_price_credits",
+        "paid_window_started_at",
         "set_by",
         "set_at",
     )

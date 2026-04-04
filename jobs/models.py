@@ -470,6 +470,10 @@ class VacancyContactAccessPolicy(models.Model):
     contact_unlock_price_credits = models.PositiveSmallIntegerField(
         default=CONTACT_PRICE_PRESET_CHOICES[1][0],
     )
+    paid_window_started_at = models.DateTimeField(
+        blank=True,
+        null=True,
+    )
     set_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -485,13 +489,55 @@ class VacancyContactAccessPolicy(models.Model):
     def paid_window_deadline(self):
         if self.contact_unlock_mode != "paid_then_ad":
             return None
-        approval_anchor = self.vacancy.approved_at
+        approval_anchor = self.paid_window_started_at
+        if approval_anchor is None:
+            approval_anchor = self.vacancy.approved_at
         if approval_anchor is None and self.vacancy.is_approved:
             approval_anchor = self.vacancy.published_at
         return contact_paid_window_deadline(
             approval_anchor,
             self.contact_unlock_timer_hours,
         )
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        normalized_update_fields = None
+        if update_fields is not None:
+            normalized_update_fields = set(update_fields)
+
+        if self.contact_unlock_mode == "paid_then_ad":
+            should_restart_window = self._state.adding
+            if not should_restart_window and self.pk:
+                previous = (
+                    type(self)
+                    .objects.filter(pk=self.pk)
+                    .values(
+                        "contact_unlock_mode",
+                        "contact_unlock_timer_hours",
+                        "contact_unlock_price_credits",
+                        "paid_window_started_at",
+                    )
+                    .first()
+                )
+                should_restart_window = (
+                    previous is None
+                    or previous["contact_unlock_mode"] != self.contact_unlock_mode
+                    or previous["contact_unlock_timer_hours"] != self.contact_unlock_timer_hours
+                    or previous["contact_unlock_price_credits"] != self.contact_unlock_price_credits
+                    or previous["paid_window_started_at"] is None
+                )
+            if should_restart_window:
+                self.paid_window_started_at = timezone.now()
+                if normalized_update_fields is not None:
+                    normalized_update_fields.add("paid_window_started_at")
+        elif self.paid_window_started_at is not None:
+            self.paid_window_started_at = None
+            if normalized_update_fields is not None:
+                normalized_update_fields.add("paid_window_started_at")
+
+        if normalized_update_fields is not None:
+            kwargs["update_fields"] = list(normalized_update_fields)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"VacancyContactAccessPolicy vacancy={self.vacancy_id}"
