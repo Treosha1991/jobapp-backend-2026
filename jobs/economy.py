@@ -2,6 +2,7 @@ from datetime import timedelta
 from math import ceil
 
 from django.db import transaction
+from django.db.models import Count, Max, Q, Sum
 from django.utils import timezone
 
 from .models import (
@@ -58,16 +59,11 @@ def is_employer_profile_visible_for_vacancy(vacancy, *, now=None):
     if policy is None:
         return True
 
-    mode = (getattr(policy, "contact_unlock_mode", "") or "ad_forever").strip()
-    if mode == "paid_forever":
-        return False
-    if mode != "paid_then_ad":
+    mode_state = _contact_unlock_mode_state(vacancy, policy=policy, now=current_time)
+    mode = mode_state["current_mode"]
+    if mode != "paid":
         return True
-
-    deadline = policy.paid_window_deadline()
-    if deadline is None:
-        return True
-    return current_time >= deadline
+    return False
 
 
 def _normalize_tx_kind(kind):
@@ -415,6 +411,95 @@ def _valid_unlocked_contact(unlocked, *, now=None):
     return unlocked
 
 
+def _contact_unlock_campaign_started_at(policy):
+    if policy is None:
+        return None
+    return (
+        getattr(policy, "paid_window_started_at", None)
+        or getattr(policy, "set_at", None)
+        or getattr(getattr(policy, "vacancy", None), "approved_at", None)
+        or getattr(getattr(policy, "vacancy", None), "published_at", None)
+    )
+
+
+def get_vacancy_contact_unlock_stats(vacancy, *, policy=None):
+    policy = policy or getattr(vacancy, "contact_access_policy", None)
+    campaign_started_at = _contact_unlock_campaign_started_at(policy)
+    tx_qs = WalletTransaction.objects.filter(
+        kind="contact_unlock",
+        related_vacancy=vacancy,
+    )
+    if campaign_started_at is not None:
+        tx_qs = tx_qs.filter(created_at__gte=campaign_started_at)
+
+    aggregate = tx_qs.aggregate(
+        total_unlocks=Count("id"),
+        paid_unlocks=Count("id", filter=Q(metadata__method="credits")),
+        ad_unlocks=Count("id", filter=Q(metadata__method="ad")),
+        subscription_unlocks=Count("id", filter=Q(metadata__method="subscription")),
+        unique_users=Count("user", distinct=True),
+        paid_spent=Sum("delta_paid_credits", filter=Q(metadata__method="credits")),
+        bonus_spent=Sum("delta_bonus_credits", filter=Q(metadata__method="credits")),
+        last_opened_at=Max("created_at"),
+    )
+    paid_spent = int(aggregate.get("paid_spent") or 0)
+    bonus_spent = int(aggregate.get("bonus_spent") or 0)
+    return {
+        "campaign_started_at": campaign_started_at,
+        "total_unlocks": int(aggregate.get("total_unlocks") or 0),
+        "paid_unlocks": int(aggregate.get("paid_unlocks") or 0),
+        "ad_unlocks": int(aggregate.get("ad_unlocks") or 0),
+        "subscription_unlocks": int(aggregate.get("subscription_unlocks") or 0),
+        "unique_users": int(aggregate.get("unique_users") or 0),
+        "earned_credits": max(0, -(paid_spent + bonus_spent)),
+        "last_opened_at": aggregate.get("last_opened_at"),
+    }
+
+
+def _contact_unlock_mode_state(vacancy, *, policy=None, now=None):
+    current_time = now or timezone.now()
+    policy = policy or get_or_create_contact_policy(vacancy)
+    stats = get_vacancy_contact_unlock_stats(vacancy, policy=policy)
+    deadline = policy.paid_window_deadline()
+    paid_window_active = bool(deadline and current_time < deadline)
+    paid_click_limit = getattr(policy, "contact_unlock_paid_click_limit", None)
+    paid_click_limit = int(paid_click_limit) if paid_click_limit else None
+    paid_unlocks_count = int(stats["paid_unlocks"] or 0)
+    paid_click_limit_reached = bool(
+        paid_click_limit is not None and paid_unlocks_count >= paid_click_limit
+    )
+
+    raw_mode = (getattr(policy, "contact_unlock_mode", "") or "ad_forever").strip()
+    if raw_mode == "paid_then_ad":
+        if paid_click_limit_reached:
+            current_mode = "ad"
+        elif deadline is not None:
+            current_mode = "paid" if paid_window_active else "ad"
+        elif paid_click_limit is not None:
+            current_mode = "paid"
+        else:
+            current_mode = "paid"
+    elif raw_mode == "paid_forever":
+        current_mode = "ad" if paid_click_limit_reached else "paid"
+    else:
+        current_mode = "ad"
+
+    paid_unlocks_remaining = None
+    if paid_click_limit is not None:
+        paid_unlocks_remaining = max(0, paid_click_limit - paid_unlocks_count)
+
+    return {
+        "current_mode": current_mode,
+        "deadline": deadline,
+        "paid_window_active": bool(current_mode == "paid" and raw_mode == "paid_then_ad" and deadline and current_time < deadline),
+        "paid_click_limit": paid_click_limit,
+        "paid_unlocks_count": paid_unlocks_count,
+        "paid_unlocks_remaining": paid_unlocks_remaining,
+        "paid_click_limit_reached": paid_click_limit_reached,
+        "stats": stats,
+    }
+
+
 def get_active_unlocked_contact(user, vacancy, *, now=None):
     unlocked = (
         UnlockedContact.objects.filter(user=user, vacancy=vacancy)
@@ -581,6 +666,13 @@ def build_contact_access_state(user, vacancy, *, now=None):
     current_time = now or timezone.now()
     policy = get_or_create_contact_policy(vacancy)
     config = get_economy_config()
+    mode_state = _contact_unlock_mode_state(vacancy, policy=policy, now=current_time)
+    deadline = mode_state["deadline"]
+    paid_window_active = bool(mode_state["paid_window_active"])
+    paid_click_limit = mode_state["paid_click_limit"]
+    paid_unlocks_count = mode_state["paid_unlocks_count"]
+    paid_unlocks_remaining = mode_state["paid_unlocks_remaining"]
+    paid_click_limit_reached = bool(mode_state["paid_click_limit_reached"])
     if getattr(user, "is_authenticated", False):
         if getattr(user, "is_staff", False) or vacancy.created_by_id == getattr(user, "id", None):
             return {
@@ -598,8 +690,12 @@ def build_contact_access_state(user, vacancy, *, now=None):
                 "base_price_credits": int(policy.contact_unlock_price_credits or 0),
                 "effective_price_credits": 0,
                 "contact_unlock_timer_hours": policy.contact_unlock_timer_hours,
-                "paid_window_deadline": policy.paid_window_deadline(),
-                "paid_window_is_active": False,
+                "paid_window_deadline": deadline,
+                "paid_window_is_active": paid_window_active,
+                "paid_unlock_click_limit": paid_click_limit,
+                "paid_unlocks_count": paid_unlocks_count,
+                "paid_unlocks_remaining": paid_unlocks_remaining,
+                "paid_click_limit_reached": paid_click_limit_reached,
                 "can_use_ad": False,
                 "ad_required": False,
                 "has_seeker_subscription": False,
@@ -613,16 +709,7 @@ def build_contact_access_state(user, vacancy, *, now=None):
     unlocked = None
     if getattr(user, "is_authenticated", False):
         unlocked = get_active_unlocked_contact(user, vacancy, now=current_time)
-
-    deadline = policy.paid_window_deadline()
-    paid_window_active = bool(deadline and current_time < deadline)
-
-    if policy.contact_unlock_mode == "paid_then_ad":
-        current_mode = "paid" if paid_window_active else "ad"
-    elif policy.contact_unlock_mode == "paid_forever":
-        current_mode = "paid"
-    else:
-        current_mode = "ad"
+    current_mode = mode_state["current_mode"]
 
     base_price = int(policy.contact_unlock_price_credits or 0)
     effective_price = base_price
@@ -664,6 +751,10 @@ def build_contact_access_state(user, vacancy, *, now=None):
         "contact_unlock_timer_hours": policy.contact_unlock_timer_hours,
         "paid_window_deadline": deadline,
         "paid_window_is_active": paid_window_active,
+        "paid_unlock_click_limit": paid_click_limit,
+        "paid_unlocks_count": paid_unlocks_count,
+        "paid_unlocks_remaining": paid_unlocks_remaining,
+        "paid_click_limit_reached": paid_click_limit_reached,
         "can_use_ad": bool(not unlocked and (action == "ad" or action == "subscription_free")),
         "ad_required": bool(not unlocked and ad_required),
         "has_seeker_subscription": has_seeker_subscription,
@@ -715,6 +806,7 @@ def unlock_vacancy_contacts(
         expires_at = current_time + timedelta(minutes=duration_minutes)
         charged_credits = int(state["effective_price_credits"] or 0)
         unlock_source = "paid"
+        metadata["charged_credits"] = charged_credits
         _, tx = spend_credits(
             user,
             amount=charged_credits,

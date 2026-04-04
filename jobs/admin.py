@@ -22,8 +22,7 @@ from .driver_licenses import (
     decode_driver_license_categories,
     encode_driver_license_categories,
 )
-from .economy import set_wallet_balances
-from .monetization import CONTACT_PRICE_PRESET_CHOICES, CONTACT_TIMER_PRESET_CHOICES
+from .economy import get_vacancy_contact_unlock_stats, set_wallet_balances
 from .models import (
     AccountDeletionRequest,
     Complaint,
@@ -146,6 +145,33 @@ def _bool_badge(value, true_label="Yes", false_label="No"):
     )
 
 
+def _contact_unlock_stats_summary(policy):
+    if not getattr(policy, "pk", None):
+        return _muted("No unlocks yet")
+
+    stats = get_vacancy_contact_unlock_stats(policy.vacancy, policy=policy)
+    paid_count = int(stats["paid_unlocks"] or 0)
+    ad_count = int(stats["ad_unlocks"] or 0)
+    subscription_count = int(stats["subscription_unlocks"] or 0)
+    unique_users = int(stats["unique_users"] or 0)
+    earned_credits = int(stats["earned_credits"] or 0)
+    click_limit = getattr(policy, "contact_unlock_paid_click_limit", None)
+    limit_label = (
+        f"Paid {paid_count}/{int(click_limit)}"
+        if click_limit
+        else f"Paid {paid_count}"
+    )
+    limit_bg = "#B42318" if click_limit and paid_count >= int(click_limit) else "#175CD3"
+    badges = [
+        _badge(limit_label, bg=limit_bg),
+        _badge(f"Ad {ad_count}", bg="#027A48"),
+        _badge(f"Sub {subscription_count}", bg="#7A5AF8"),
+        _badge(f"Users {unique_users}", bg="#475467"),
+        _badge(f"Credits {earned_credits}", bg="#B54708"),
+    ]
+    return format_html(" ".join(str(item) for item in badges))
+
+
 def _vacancy_status_meta(obj):
     now = timezone.now()
     if obj.is_deleted_by_moderator:
@@ -251,16 +277,21 @@ class VacancyContactAccessPolicyInline(admin.StackedInline):
     fk_name = "vacancy"
     fields = (
         ("contact_unlock_mode", "contact_unlock_timer_hours"),
-        "contact_unlock_price_credits",
+        ("contact_unlock_price_credits", "contact_unlock_paid_click_limit"),
+        "unlock_stats_summary",
         "paid_window_started_at",
         ("set_by", "set_at"),
     )
-    readonly_fields = ("paid_window_started_at", "set_at")
+    readonly_fields = ("paid_window_started_at", "set_at", "unlock_stats_summary")
 
     def get_extra(self, request, obj=None, **kwargs):
         if obj is None:
             return 1
         return 0 if hasattr(obj, "contact_access_policy") else 1
+
+    @admin.display(description="Unlock stats")
+    def unlock_stats_summary(self, obj):
+        return _contact_unlock_stats_summary(obj)
 
 
 try:
@@ -1129,14 +1160,57 @@ class VacancyContactAccessPolicyAdmin(admin.ModelAdmin):
         "contact_unlock_mode",
         "contact_unlock_timer_hours",
         "contact_unlock_price_credits",
+        "contact_unlock_paid_click_limit",
+        "paid_click_progress",
+        "earned_credits_display",
+        "unique_users_display",
         "paid_window_started_at",
         "set_by",
         "set_at",
     )
-    list_filter = ("contact_unlock_mode", "contact_unlock_timer_hours", "contact_unlock_price_credits")
+    list_filter = (
+        "contact_unlock_mode",
+        "contact_unlock_timer_hours",
+        "contact_unlock_price_credits",
+        "contact_unlock_paid_click_limit",
+    )
     search_fields = ("vacancy__title", "vacancy__id", "set_by__username", "set_by__email")
     ordering = ("-set_at",)
     list_select_related = ("vacancy", "set_by")
+    fields = (
+        "vacancy",
+        ("contact_unlock_mode", "contact_unlock_timer_hours"),
+        ("contact_unlock_price_credits", "contact_unlock_paid_click_limit"),
+        "unlock_stats_summary",
+        ("paid_window_started_at", "set_by", "set_at"),
+    )
+    readonly_fields = ("unlock_stats_summary", "paid_window_started_at", "set_at")
+
+    @admin.display(description="Paid opens")
+    def paid_click_progress(self, obj):
+        stats = get_vacancy_contact_unlock_stats(obj.vacancy, policy=obj)
+        paid_count = int(stats["paid_unlocks"] or 0)
+        click_limit = getattr(obj, "contact_unlock_paid_click_limit", None)
+        if click_limit:
+            return _badge(
+                f"{paid_count}/{int(click_limit)}",
+                bg="#B42318" if paid_count >= int(click_limit) else "#175CD3",
+            )
+        return _badge(str(paid_count), bg="#175CD3")
+
+    @admin.display(description="Credits earned")
+    def earned_credits_display(self, obj):
+        stats = get_vacancy_contact_unlock_stats(obj.vacancy, policy=obj)
+        return stats["earned_credits"]
+
+    @admin.display(description="Unique users")
+    def unique_users_display(self, obj):
+        stats = get_vacancy_contact_unlock_stats(obj.vacancy, policy=obj)
+        return stats["unique_users"]
+
+    @admin.display(description="Unlock stats")
+    def unlock_stats_summary(self, obj):
+        return _contact_unlock_stats_summary(obj)
 
 
 @admin.register(PushDevice)

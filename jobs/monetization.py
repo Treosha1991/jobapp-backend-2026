@@ -34,6 +34,15 @@ CONTACT_PRICE_PRESET_CHOICES = [
 ]
 
 
+CONTACT_PAID_CLICK_LIMIT_CHOICES = [
+    (5, "5 paid opens"),
+    (10, "10 paid opens"),
+    (20, "20 paid opens"),
+    (50, "50 paid opens"),
+    (100, "100 paid opens"),
+]
+
+
 STORE_PRODUCT_TYPE_CHOICES = [
     ("credits", "Credits pack"),
     ("employer_subscription", "Employer subscription"),

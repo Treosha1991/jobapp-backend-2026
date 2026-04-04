@@ -9,6 +9,7 @@ from .driver_licenses import DRIVER_LICENSE_CHOICES as DRIVER_LICENSE_CATEGORY_C
 from .monetization import (
     CONTACT_ACCESS_DURATION_MINUTES_DEFAULT,
     CONTACT_ACCESS_MODE_CHOICES,
+    CONTACT_PAID_CLICK_LIMIT_CHOICES,
     CONTACT_PRICE_PRESET_CHOICES,
     CONTACT_TIMER_PRESET_CHOICES,
     CONTACT_UNLOCK_SOURCE_CHOICES,
@@ -470,6 +471,11 @@ class VacancyContactAccessPolicy(models.Model):
     contact_unlock_price_credits = models.PositiveSmallIntegerField(
         default=CONTACT_PRICE_PRESET_CHOICES[1][0],
     )
+    contact_unlock_paid_click_limit = models.PositiveSmallIntegerField(
+        choices=CONTACT_PAID_CLICK_LIMIT_CHOICES,
+        blank=True,
+        null=True,
+    )
     paid_window_started_at = models.DateTimeField(
         blank=True,
         null=True,
@@ -505,7 +511,7 @@ class VacancyContactAccessPolicy(models.Model):
         if update_fields is not None:
             normalized_update_fields = set(update_fields)
 
-        if self.contact_unlock_mode == "paid_then_ad":
+        if self.contact_unlock_mode in {"paid_then_ad", "paid_forever"}:
             should_restart_window = self._state.adding
             if not should_restart_window and self.pk:
                 previous = (
@@ -515,6 +521,7 @@ class VacancyContactAccessPolicy(models.Model):
                         "contact_unlock_mode",
                         "contact_unlock_timer_hours",
                         "contact_unlock_price_credits",
+                        "contact_unlock_paid_click_limit",
                         "paid_window_started_at",
                     )
                     .first()
@@ -524,6 +531,7 @@ class VacancyContactAccessPolicy(models.Model):
                     or previous["contact_unlock_mode"] != self.contact_unlock_mode
                     or previous["contact_unlock_timer_hours"] != self.contact_unlock_timer_hours
                     or previous["contact_unlock_price_credits"] != self.contact_unlock_price_credits
+                    or previous["contact_unlock_paid_click_limit"] != self.contact_unlock_paid_click_limit
                     or previous["paid_window_started_at"] is None
                 )
             if should_restart_window:
