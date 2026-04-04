@@ -46,6 +46,11 @@ _PHONE_REQUEST_MAX_ATTEMPTS = 3
 _ACCOUNT_DELETION_DELAY = timedelta(days=30)
 _phone_request_attempts = {}
 _phone_request_lock = threading.Lock()
+_PHONE_CODE_COOLDOWN = timedelta(seconds=45)
+_PHONE_RESET_REQUEST_HOURLY_LIMIT = 5
+_PHONE_RESET_REQUEST_DAILY_LIMIT = 10
+_PHONE_RESET_VERIFY_ATTEMPT_LIMIT = 5
+_PHONE_RESET_VERIFY_BLOCK_WINDOW = timedelta(minutes=15)
 _PASSWORD_MIN_LENGTH = 8
 _PROFILE_DESCRIPTION_MAX_LENGTH = 160
 _PROFILE_DESCRIPTION_MAX_LINES = 3
@@ -346,7 +351,7 @@ def _phone_code_too_frequent(phone_e164, purpose):
     return PhoneVerification.objects.filter(
         phone_e164=phone_e164,
         purpose=purpose,
-        created_at__gt=timezone.now() - timedelta(seconds=45),
+        created_at__gt=timezone.now() - _PHONE_CODE_COOLDOWN,
     ).exists()
 
 
@@ -365,6 +370,55 @@ def _create_phone_code(phone_e164, purpose, user=None):
         expires_at=timezone.now() + timedelta(minutes=10),
     )
     return record
+
+
+def _latest_phone_code_record(phone_e164, purpose):
+    return (
+        PhoneVerification.objects.filter(
+            phone_e164=phone_e164,
+            purpose=purpose,
+            is_used=False,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def _phone_reset_failed_attempts(phone_e164):
+    window_start = timezone.now() - _PHONE_RESET_VERIFY_BLOCK_WINDOW
+    return sum(
+        PhoneVerification.objects.filter(
+            phone_e164=phone_e164,
+            purpose="reset",
+            created_at__gt=window_start,
+        ).values_list("attempts", flat=True)
+    )
+
+
+def _phone_reset_verify_blocked(phone_e164):
+    return _phone_reset_failed_attempts(phone_e164) >= _PHONE_RESET_VERIFY_ATTEMPT_LIMIT
+
+
+def _phone_reset_request_blocked(phone_e164):
+    if _phone_code_too_frequent(phone_e164, "reset"):
+        return True
+    if _phone_reset_verify_blocked(phone_e164):
+        return True
+    now = timezone.now()
+    base_qs = PhoneVerification.objects.filter(phone_e164=phone_e164, purpose="reset")
+    if base_qs.filter(created_at__gt=now - timedelta(hours=1)).count() >= _PHONE_RESET_REQUEST_HOURLY_LIMIT:
+        return True
+    if base_qs.filter(created_at__gt=now - timedelta(days=1)).count() >= _PHONE_RESET_REQUEST_DAILY_LIMIT:
+        return True
+    return False
+
+
+def _increment_phone_attempt(record):
+    if not record:
+        return 0
+    record.attempts = max(0, int(record.attempts or 0)) + 1
+    record.save(update_fields=["attempts"])
+    return record.attempts
 
 
 def _email_code_too_frequent(user, purpose):
@@ -575,7 +629,10 @@ class PhoneRequestCodeAPIView(APIView):
 
         if purpose not in {"verify_phone", "login", "reset"}:
             return Response({"error": "invalid purpose"}, status=status.HTTP_400_BAD_REQUEST)
-        if _phone_code_too_frequent(phone, purpose):
+        if purpose == "reset":
+            if _phone_reset_request_blocked(phone):
+                return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        elif _phone_code_too_frequent(phone, purpose):
             return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         user = None
@@ -636,6 +693,9 @@ class PhoneVerifyCodeAPIView(APIView):
         if purpose not in {"verify_phone", "login", "reset"}:
             return Response({"error": "invalid purpose"}, status=status.HTTP_400_BAD_REQUEST)
 
+        if purpose == "reset" and _phone_reset_verify_blocked(phone):
+            return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         rec = PhoneVerification.objects.filter(
             phone_e164=phone,
             purpose=purpose,
@@ -645,16 +705,26 @@ class PhoneVerifyCodeAPIView(APIView):
         if _twilio_verify_service_sid():
             approved, _, _ = _twilio_verify_check(phone, code)
             if not approved:
+                if purpose == "reset":
+                    _increment_phone_attempt(_latest_phone_code_record(phone, purpose))
+                    if _phone_reset_verify_blocked(phone):
+                        return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
                 return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
             if rec:
                 rec.is_used = True
                 rec.save(update_fields=["is_used"])
         else:
             if not rec or not rec.is_valid():
+                if purpose == "reset":
+                    _increment_phone_attempt(_latest_phone_code_record(phone, purpose))
+                    if _phone_reset_verify_blocked(phone):
+                        return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
                 return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
             if rec.code != code:
                 rec.attempts += 1
                 rec.save(update_fields=["attempts"])
+                if purpose == "reset" and _phone_reset_verify_blocked(phone):
+                    return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
                 return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
             rec.is_used = True
             rec.save(update_fields=["is_used"])
@@ -702,7 +772,7 @@ class ResetPasswordRequestAPIView(APIView):
             return Response({"error": "email or phone required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if phone:
-            if _phone_code_too_frequent(phone, "reset"):
+            if _phone_reset_request_blocked(phone):
                 return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
             prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
             if not prof:
@@ -751,6 +821,8 @@ class ResetPasswordConfirmAPIView(APIView):
             return Response({"error": "password_policy_violation"}, status=status.HTTP_400_BAD_REQUEST)
 
         if phone:
+            if _phone_reset_verify_blocked(phone):
+                return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
             prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
             if not prof:
                 return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
@@ -761,6 +833,9 @@ class ResetPasswordConfirmAPIView(APIView):
                 is_used=False,
             ).order_by("-created_at").first()
             if not rec or not rec.is_valid():
+                _increment_phone_attempt(_latest_phone_code_record(phone, "reset"))
+                if _phone_reset_verify_blocked(phone):
+                    return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
                 return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
             rec.is_used = True
             rec.save(update_fields=["is_used"])
