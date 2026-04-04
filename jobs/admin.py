@@ -77,13 +77,13 @@ class VacancyAdminForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         audience_value = getattr(self.instance, "audience_country_codes", "")
-        self.fields["audience_country_codes"].initial = decode_audience_country_codes(
-            audience_value
-        )
+        audience_initial = decode_audience_country_codes(audience_value)
+        self.initial["audience_country_codes"] = audience_initial
+        self.fields["audience_country_codes"].initial = audience_initial
         initial_value = getattr(self.instance, "driver_license_categories", "")
-        self.fields["driver_license_categories"].initial = decode_driver_license_categories(
-            initial_value
-        )
+        driver_initial = decode_driver_license_categories(initial_value)
+        self.initial["driver_license_categories"] = driver_initial
+        self.fields["driver_license_categories"].initial = driver_initial
 
     def clean_audience_country_codes(self):
         selected = self.cleaned_data.get("audience_country_codes") or []
