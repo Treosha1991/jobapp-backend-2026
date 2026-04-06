@@ -25,6 +25,12 @@ from .models import (
     WalletTransaction,
     VacancyModerationAttempt,
 )
+from .review_presets import REVIEW_PRESET_CHOICES
+from .reviews import (
+    build_vacancy_review_state,
+    get_employer_review_summary,
+    get_vacancy_review_preset_counts,
+)
 from .service_sources import service_board_meta_for_user
 from .economy import is_employer_profile_visible_for_vacancy
 from .text_filters import censor_minimal, contains_link
@@ -463,6 +469,9 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
     moderation_history = serializers.SerializerMethodField()
     is_service_board = serializers.SerializerMethodField()
     service_board_kind = serializers.SerializerMethodField()
+    employer_review_summary = serializers.SerializerMethodField()
+    review_state = serializers.SerializerMethodField()
+    moderator_review_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -499,6 +508,9 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "moderation_history",
             "is_service_board",
             "service_board_kind",
+            "employer_review_summary",
+            "review_state",
+            "moderator_review_summary",
         ]
 
     def get_contacts(self, obj):
@@ -547,6 +559,28 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
 
     def get_service_board_kind(self, obj):
         return _service_board_meta(obj)["service_board_kind"]
+
+    def get_employer_review_summary(self, obj):
+        return get_employer_review_summary(getattr(obj, "created_by", None))
+
+    def get_review_state(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return build_vacancy_review_state(user, obj)
+
+    def get_moderator_review_summary(self, obj):
+        if not self._is_staff_view():
+            return {}
+        payload = get_vacancy_review_preset_counts(obj)
+        payload["presets"] = [
+            {
+                "code": item["code"],
+                "label": dict(REVIEW_PRESET_CHOICES).get(item["code"], item["code"]),
+                "count": item["count"],
+            }
+            for item in payload["presets"]
+        ]
+        return payload
 
 class VacancyCreateSerializer(serializers.ModelSerializer):
     audience_countries = AudienceCountriesField(

@@ -33,6 +33,7 @@ from .avatar_utils import (
 )
 from .economy import get_or_create_monetization_profile, get_or_create_wallet
 from .models import AccountDeletionRequest, EmailVerification, PhoneVerification, UserProfile, Vacancy
+from .reviews import get_employer_review_summary
 from .text_filters import (
     censor_minimal,
     contains_digit_or_number_emoji,
@@ -103,6 +104,7 @@ def _auth_payload(user, token):
         "wallet_bonus_credits": wallet.bonus_credits,
         "employer_subscription_until": monetization_profile.employer_subscription_until,
         "seeker_subscription_until": monetization_profile.seeker_subscription_until,
+        "employer_review_summary": get_employer_review_summary(user),
     }
 
 

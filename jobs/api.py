@@ -60,10 +60,19 @@ from .models import (
     VacancyModerationAttempt,
     UserProfile,
     UnlockedContact,
+    VacancyReview,
     WalletTransaction,
 )
 from .monetization import CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
 from .service_sources import service_board_meta_for_user, is_service_board_user
+from .review_presets import REVIEW_PRESET_CHOICES
+from .reviews import (
+    build_vacancy_review_state,
+    delete_vacancy_review,
+    get_employer_review_records_for_moderator,
+    get_employer_review_summary,
+    save_vacancy_review,
+)
 from .serializers import (
     ComplaintListSerializer,
     EconomyConfigSerializer,
@@ -1355,6 +1364,103 @@ class VacancyContactAPIView(APIView):
         return Response(payload)
 
 
+class VacancyReviewAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        vacancy = Vacancy.objects.select_related("created_by").filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
+        return Response(
+            {
+                "review_state": build_vacancy_review_state(request.user, vacancy),
+                "employer_review_summary": get_employer_review_summary(vacancy.created_by),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, pk):
+        vacancy = Vacancy.objects.select_related("created_by").filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
+
+        try:
+            review, _ = save_vacancy_review(
+                user=request.user,
+                vacancy=vacancy,
+                rating=request.data.get("rating"),
+                preset_codes=request.data.get("preset_codes"),
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "review": {
+                    "id": review.id,
+                    "rating": int(review.rating or 0),
+                    "preset_codes": list(review.preset_codes or []),
+                    "created_at": review.created_at,
+                    "updated_at": review.updated_at,
+                },
+                "review_state": build_vacancy_review_state(request.user, vacancy),
+                "employer_review_summary": get_employer_review_summary(vacancy.created_by),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request, pk):
+        return self.post(request, pk)
+
+    def delete(self, request, pk):
+        vacancy = Vacancy.objects.select_related("created_by").filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
+        try:
+            delete_vacancy_review(user=request.user, vacancy=vacancy)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "deleted": True,
+                "review_state": build_vacancy_review_state(request.user, vacancy),
+                "employer_review_summary": get_employer_review_summary(vacancy.created_by),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class EmployerReviewModeratorListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, owner_user_id):
+        if not _is_moderator(request):
+            return Response({"error": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        owner = User.objects.filter(id=owner_user_id).select_related("profile").first()
+        if not owner:
+            return Response({"error": "employer_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(
+            {
+                "employer": {
+                    "id": owner.id,
+                    "nickname": _owner_nickname_or_fallback(owner),
+                    "review_summary": get_employer_review_summary(owner),
+                },
+                "preset_codes": [
+                    {"code": code, "label": label}
+                    for code, label in REVIEW_PRESET_CHOICES
+                ],
+                "results": get_employer_review_records_for_moderator(owner),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class EmployerProfileAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1417,6 +1523,8 @@ class EmployerProfileAPIView(APIView):
             "subscribers_count": _subscriber_count_for_owner(owner),
             "can_subscribe": can_subscribe,
             "is_subscribed": is_subscribed,
+            "review_summary": get_employer_review_summary(owner),
+            "viewer_is_staff": bool(getattr(request.user, "is_staff", False)),
         }
         employer_payload.update(service_board_meta_for_user(owner))
 

@@ -25,6 +25,7 @@ from .monetization import (
     VACANCY_SUBMIT_PRICE_CREDITS_DEFAULT,
     contact_paid_window_deadline,
 )
+from .review_presets import REVIEW_PRESET_CHOICES
 
 
 class Vacancy(models.Model):
@@ -549,6 +550,48 @@ class VacancyContactAccessPolicy(models.Model):
 
     def __str__(self):
         return f"VacancyContactAccessPolicy vacancy={self.vacancy_id}"
+
+
+class VacancyReview(models.Model):
+    reviewer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="vacancy_reviews",
+    )
+    employer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="received_vacancy_reviews",
+    )
+    vacancy = models.ForeignKey(
+        Vacancy,
+        on_delete=models.CASCADE,
+        related_name="reviews",
+    )
+    rating = models.PositiveSmallIntegerField()
+    preset_codes = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reviewer", "vacancy"],
+                name="jobs_unique_reviewer_vacancy_review",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["employer", "updated_at"]),
+            models.Index(fields=["vacancy", "updated_at"]),
+            models.Index(fields=["reviewer", "updated_at"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"VacancyReview reviewer={self.reviewer_id} "
+            f"vacancy={self.vacancy_id} rating={self.rating}"
+        )
 
 
 class UnlockedContact(models.Model):

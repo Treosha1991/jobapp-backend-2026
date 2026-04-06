@@ -42,11 +42,13 @@ from .models import (
     VacancyContactAccessPolicy,
     UserProfile,
     Vacancy,
+    VacancyReview,
     VacancyAlertDelivery,
     VacancyAlertSubscription,
     VacancyModerationAttempt,
     WalletTransaction,
 )
+from .review_presets import REVIEW_PRESET_LABELS
 
 
 admin.site.site_header = "JobHub Operator Console"
@@ -169,6 +171,16 @@ def _contact_unlock_stats_summary(policy):
         _badge(f"Users {unique_users}", bg="#475467"),
         _badge(f"Credits {earned_credits}", bg="#B54708"),
     ]
+    return format_html(" ".join(str(item) for item in badges))
+
+
+def _review_presets_html(codes):
+    if not codes:
+        return _muted("No presets")
+    badges = []
+    for code in codes:
+        label = REVIEW_PRESET_LABELS.get(code, code)
+        badges.append(_badge(label, bg="#155EEF"))
     return format_html(" ".join(str(item) for item in badges))
 
 
@@ -928,6 +940,34 @@ class UnlockedContactAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__email", "vacancy__title")
     ordering = ("-opened_at",)
     raw_id_fields = ("user", "vacancy")
+
+
+@admin.register(VacancyReview)
+class VacancyReviewAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "reviewer",
+        "employer",
+        "vacancy",
+        "rating",
+        "preset_badges",
+        "updated_at",
+    )
+    search_fields = (
+        "reviewer__username",
+        "reviewer__email",
+        "employer__username",
+        "employer__email",
+        "vacancy__title",
+    )
+    list_filter = ("rating", "updated_at")
+    ordering = ("-updated_at", "-id")
+    raw_id_fields = ("reviewer", "employer", "vacancy")
+    readonly_fields = ("created_at", "updated_at")
+
+    @admin.display(description="Presets")
+    def preset_badges(self, obj):
+        return _review_presets_html(list(getattr(obj, "preset_codes", []) or []))
 
 
 @admin.register(UnlockRequest)
