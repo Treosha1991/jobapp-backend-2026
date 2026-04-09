@@ -1,4 +1,6 @@
-﻿from rest_framework import serializers
+from decimal import Decimal
+
+from rest_framework import serializers
 import re
 from .avatar_utils import avatar_public_url
 from .country_choices import (
@@ -1110,7 +1112,11 @@ class ComplaintListSerializer(serializers.ModelSerializer):
 
 
 class UserWalletSerializer(serializers.ModelSerializer):
-    total_credits = serializers.IntegerField(read_only=True)
+    total_credits = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
 
     class Meta:
         model = UserWallet
@@ -1203,7 +1209,9 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
         ]
 
     def get_total_delta(self, obj):
-        return int(obj.delta_paid_credits or 0) + int(obj.delta_bonus_credits or 0)
+        return (obj.delta_paid_credits or Decimal("0.00")) + (
+            obj.delta_bonus_credits or Decimal("0.00")
+        )
 
 
 class GooglePlayPurchaseCompleteSerializer(serializers.Serializer):

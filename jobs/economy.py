@@ -1,5 +1,5 @@
 from datetime import timedelta
-from math import ceil
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
 from django.db.models import Count, Max, Q, Sum
@@ -20,6 +20,8 @@ from .monetization import (
 )
 
 TRANSACTION_KINDS = {code for code, _ in TRANSACTION_KIND_CHOICES}
+ZERO_CREDITS = Decimal("0.00")
+CREDIT_QUANT = Decimal("0.01")
 
 
 class InsufficientCreditsError(Exception):
@@ -72,6 +74,20 @@ def _normalize_tx_kind(kind):
     return kind
 
 
+def _credit_decimal(value):
+    if isinstance(value, Decimal):
+        raw = value
+    elif value in (None, ""):
+        raw = ZERO_CREDITS
+    else:
+        raw = Decimal(str(value))
+    return raw.quantize(CREDIT_QUANT, rounding=ROUND_HALF_UP)
+
+
+def _credit_json_value(value):
+    return float(_credit_decimal(value))
+
+
 @transaction.atomic
 def grant_credits(
     user,
@@ -83,7 +99,9 @@ def grant_credits(
     related_vacancy=None,
     metadata=None,
 ):
-    if paid_credits < 0 or bonus_credits < 0:
+    paid_credits = _credit_decimal(paid_credits)
+    bonus_credits = _credit_decimal(bonus_credits)
+    if paid_credits < ZERO_CREDITS or bonus_credits < ZERO_CREDITS:
         raise ValueError("grant_credits expects non-negative deltas")
 
     wallet = UserWallet.objects.select_for_update().filter(user=user).first()
@@ -129,9 +147,9 @@ def set_wallet_balances(
     related_vacancy=None,
     metadata=None,
 ):
-    paid_credits = int(paid_credits)
-    bonus_credits = int(bonus_credits)
-    if paid_credits < 0 or bonus_credits < 0:
+    paid_credits = _credit_decimal(paid_credits)
+    bonus_credits = _credit_decimal(bonus_credits)
+    if paid_credits < ZERO_CREDITS or bonus_credits < ZERO_CREDITS:
         raise ValueError("wallet balances cannot be negative")
 
     wallet = UserWallet.objects.select_for_update().filter(user=user).first()
@@ -184,8 +202,8 @@ def spend_credits(
     related_vacancy=None,
     metadata=None,
 ):
-    amount = int(amount or 0)
-    if amount <= 0:
+    amount = _credit_decimal(amount)
+    if amount <= ZERO_CREDITS:
         raise ValueError("spend amount must be positive")
 
     wallet = UserWallet.objects.select_for_update().filter(user=user).first()
@@ -196,7 +214,7 @@ def spend_credits(
         raise InsufficientCreditsError("insufficient_credits")
 
     spend_bonus = min(wallet.bonus_credits, amount)
-    spend_paid = amount - spend_bonus
+    spend_paid = _credit_decimal(amount - spend_bonus)
     wallet.bonus_credits -= spend_bonus
     wallet.paid_credits -= spend_paid
     wallet.save(update_fields=["paid_credits", "bonus_credits", "updated_at"])
@@ -442,8 +460,8 @@ def get_vacancy_contact_unlock_stats(vacancy, *, policy=None):
         bonus_spent=Sum("delta_bonus_credits", filter=Q(metadata__method="credits")),
         last_opened_at=Max("created_at"),
     )
-    paid_spent = int(aggregate.get("paid_spent") or 0)
-    bonus_spent = int(aggregate.get("bonus_spent") or 0)
+    paid_spent = _credit_decimal(aggregate.get("paid_spent") or ZERO_CREDITS)
+    bonus_spent = _credit_decimal(aggregate.get("bonus_spent") or ZERO_CREDITS)
     return {
         "campaign_started_at": campaign_started_at,
         "total_unlocks": int(aggregate.get("total_unlocks") or 0),
@@ -451,7 +469,7 @@ def get_vacancy_contact_unlock_stats(vacancy, *, policy=None):
         "ad_unlocks": int(aggregate.get("ad_unlocks") or 0),
         "subscription_unlocks": int(aggregate.get("subscription_unlocks") or 0),
         "unique_users": int(aggregate.get("unique_users") or 0),
-        "earned_credits": max(0, -(paid_spent + bonus_spent)),
+        "earned_credits": max(ZERO_CREDITS, _credit_decimal(-(paid_spent + bonus_spent))),
         "last_opened_at": aggregate.get("last_opened_at"),
     }
 
@@ -687,8 +705,8 @@ def build_contact_access_state(user, vacancy, *, now=None):
                 "mode": policy.contact_unlock_mode,
                 "current_action": "already_unlocked",
                 "expected_method": "",
-                "base_price_credits": int(policy.contact_unlock_price_credits or 0),
-                "effective_price_credits": 0,
+                "base_price_credits": _credit_json_value(policy.contact_unlock_price_credits or ZERO_CREDITS),
+                "effective_price_credits": _credit_json_value(ZERO_CREDITS),
                 "contact_unlock_timer_hours": policy.contact_unlock_timer_hours,
                 "paid_window_deadline": deadline,
                 "paid_window_is_active": paid_window_active,
@@ -699,7 +717,7 @@ def build_contact_access_state(user, vacancy, *, now=None):
                 "can_use_ad": False,
                 "ad_required": False,
                 "has_seeker_subscription": False,
-                "wallet_total_credits": 0,
+                "wallet_total_credits": _credit_json_value(ZERO_CREDITS),
                 "can_afford": True,
             }
 
@@ -711,7 +729,7 @@ def build_contact_access_state(user, vacancy, *, now=None):
         unlocked = get_active_unlocked_contact(user, vacancy, now=current_time)
     current_mode = mode_state["current_mode"]
 
-    base_price = int(policy.contact_unlock_price_credits or 0)
+    base_price = _credit_decimal(policy.contact_unlock_price_credits or ZERO_CREDITS)
     effective_price = base_price
     has_seeker_subscription = bool(profile and profile.has_seeker_subscription(current_time))
     discount_percent = int(config.seeker_contact_discount_percent or 0)
@@ -720,11 +738,18 @@ def build_contact_access_state(user, vacancy, *, now=None):
     ad_required = current_mode == "ad"
     if has_seeker_subscription:
         if current_mode == "paid":
-            effective_price = max(1, ceil(base_price * max(0, 100 - discount_percent) / 100.0)) if base_price > 0 else 0
+            remaining_percent = max(0, 100 - discount_percent)
+            effective_price = (
+                _credit_decimal(
+                    base_price * Decimal(str(remaining_percent)) / Decimal("100")
+                )
+                if base_price > ZERO_CREDITS
+                else ZERO_CREDITS
+            )
         else:
             action = "subscription_free"
             ad_required = False
-            effective_price = 0
+            effective_price = ZERO_CREDITS
 
     return {
         "vacancy_id": vacancy.id,
@@ -746,8 +771,8 @@ def build_contact_access_state(user, vacancy, *, now=None):
                 "subscription_free": "subscription",
             }.get(action, "")
         ),
-        "base_price_credits": base_price,
-        "effective_price_credits": 0 if unlocked else effective_price,
+        "base_price_credits": _credit_json_value(base_price),
+        "effective_price_credits": _credit_json_value(ZERO_CREDITS if unlocked else effective_price),
         "contact_unlock_timer_hours": policy.contact_unlock_timer_hours,
         "paid_window_deadline": deadline,
         "paid_window_is_active": paid_window_active,
@@ -758,7 +783,7 @@ def build_contact_access_state(user, vacancy, *, now=None):
         "can_use_ad": bool(not unlocked and (action == "ad" or action == "subscription_free")),
         "ad_required": bool(not unlocked and ad_required),
         "has_seeker_subscription": has_seeker_subscription,
-        "wallet_total_credits": wallet.total_credits if wallet else 0,
+        "wallet_total_credits": _credit_json_value(wallet.total_credits if wallet else ZERO_CREDITS),
         "can_afford": bool(wallet and wallet.total_credits >= effective_price),
     }
 
@@ -791,7 +816,7 @@ def unlock_vacancy_contacts(
         raise EconomyActionRequiredError("contact_unlock_action_required", state)
 
     tx = None
-    charged_credits = 0
+    charged_credits = ZERO_CREDITS
     unlock_source = "paid"
     metadata = {"method": normalized_method, "state_action": state["current_action"]}
     should_persist_unlock = True
@@ -804,9 +829,9 @@ def unlock_vacancy_contacts(
             or CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
         )
         expires_at = current_time + timedelta(minutes=duration_minutes)
-        charged_credits = int(state["effective_price_credits"] or 0)
+        charged_credits = _credit_decimal(state["effective_price_credits"] or ZERO_CREDITS)
         unlock_source = "paid"
-        metadata["charged_credits"] = charged_credits
+        metadata["charged_credits"] = str(charged_credits)
         _, tx = spend_credits(
             user,
             amount=charged_credits,

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.signals import post_save
@@ -290,10 +292,26 @@ class EconomyConfig(models.Model):
 
 class UserWallet(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="wallet")
-    paid_credits = models.PositiveIntegerField(default=0)
-    bonus_credits = models.PositiveIntegerField(default=0)
-    lifetime_paid_credits = models.PositiveIntegerField(default=0)
-    lifetime_bonus_credits = models.PositiveIntegerField(default=0)
+    paid_credits = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    bonus_credits = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    lifetime_paid_credits = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    lifetime_bonus_credits = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -302,7 +320,7 @@ class UserWallet(models.Model):
 
     @property
     def total_credits(self):
-        return self.paid_credits + self.bonus_credits
+        return (self.paid_credits or Decimal("0.00")) + (self.bonus_credits or Decimal("0.00"))
 
     def __str__(self):
         return f"Wallet user={self.user_id} balance={self.total_credits}"
@@ -320,10 +338,26 @@ class WalletTransaction(models.Model):
         related_name="transactions",
     )
     kind = models.CharField(max_length=40, choices=TRANSACTION_KIND_CHOICES)
-    delta_paid_credits = models.IntegerField(default=0)
-    delta_bonus_credits = models.IntegerField(default=0)
-    balance_paid_after = models.PositiveIntegerField(default=0)
-    balance_bonus_after = models.PositiveIntegerField(default=0)
+    delta_paid_credits = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    delta_bonus_credits = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    balance_paid_after = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    balance_bonus_after = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
     note = models.CharField(max_length=255, blank=True, default="")
     related_vacancy = models.ForeignKey(
         Vacancy,
@@ -604,7 +638,11 @@ class UnlockedContact(models.Model):
         choices=CONTACT_UNLOCK_SOURCE_CHOICES,
         default="paid",
     )
-    charged_credits = models.PositiveIntegerField(default=0)
+    charged_credits = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
     metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:

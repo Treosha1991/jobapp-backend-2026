@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from django import forms
 from django.contrib import admin
@@ -140,6 +141,18 @@ def _muted(text):
     )
 
 
+def _format_credit_value(value):
+    try:
+        amount = Decimal(str(value or 0))
+    except (InvalidOperation, TypeError, ValueError):
+        return "0"
+    normalized = amount.quantize(Decimal("0.01"))
+    text = format(normalized, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def _bool_badge(value, true_label="Yes", false_label="No"):
     return _badge(
         true_label if value else false_label,
@@ -156,7 +169,7 @@ def _contact_unlock_stats_summary(policy):
     ad_count = int(stats["ad_unlocks"] or 0)
     subscription_count = int(stats["subscription_unlocks"] or 0)
     unique_users = int(stats["unique_users"] or 0)
-    earned_credits = int(stats["earned_credits"] or 0)
+    earned_credits = _format_credit_value(stats["earned_credits"])
     click_limit = getattr(policy, "contact_unlock_paid_click_limit", None)
     limit_label = (
         f"Paid {paid_count}/{int(click_limit)}"
