@@ -18,6 +18,7 @@ from .monetization import (
     CONTACT_ACCESS_DURATION_MINUTES_DEFAULT,
     TRANSACTION_KIND_CHOICES,
 )
+from .service_sources import is_service_board_user
 
 TRANSACTION_KINDS = {code for code, _ in TRANSACTION_KIND_CHOICES}
 ZERO_CREDITS = Decimal("0.00")
@@ -57,6 +58,8 @@ def get_or_create_contact_policy(vacancy):
 
 def is_employer_profile_visible_for_vacancy(vacancy, *, now=None):
     current_time = now or timezone.now()
+    if is_service_board_user(getattr(vacancy, "created_by", None)):
+        return True
     policy = getattr(vacancy, "contact_access_policy", None)
     if policy is None:
         return True
