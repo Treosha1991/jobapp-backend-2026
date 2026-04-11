@@ -146,6 +146,16 @@ def _filter_by_audience_country_codes(queryset, codes):
     return queryset.filter(audience_query)
 
 
+def _filter_visible_vacancies(queryset, *, now=None):
+    current_time = now or timezone.now()
+    visible_ids = [
+        vacancy.id
+        for vacancy in queryset
+        if is_employer_profile_visible_for_vacancy(vacancy, now=current_time)
+    ]
+    return queryset.filter(id__in=visible_ids)
+
+
 def _economy_overview_payload(user):
     config = get_economy_config()
     wallet = get_or_create_wallet(user)
@@ -255,11 +265,12 @@ class VacancyListAPIView(generics.ListAPIView):
     serializer_class = VacancyListSerializer
 
     def get_queryset(self):
+        current_time = timezone.now()
         qs = Vacancy.objects.filter(
             is_approved=True,
             is_paused_by_owner=False,
             is_deleted_by_moderator=False,
-            expires_at__gt=timezone.now()
+            expires_at__gt=current_time
         ).select_related(
             "contact_access_policy",
             "created_by",
@@ -359,6 +370,9 @@ class VacancyListAPIView(generics.ListAPIView):
                     )
                 )
             )
+
+        if subscribed in {"1", "true", "yes", "on"}:
+            qs = _filter_visible_vacancies(qs, now=current_time)
 
         return qs
 
@@ -1501,11 +1515,7 @@ class EmployerProfileAPIView(APIView):
             "created_by__profile",
         ).order_by("-published_at")
 
-        visible_vacancies = [
-            vacancy
-            for vacancy in qs
-            if is_employer_profile_visible_for_vacancy(vacancy)
-        ]
+        visible_vacancies = _filter_visible_vacancies(qs)
 
         paginator = PageNumberPagination()
         page = paginator.paginate_queryset(visible_vacancies, request, view=self)
