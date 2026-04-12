@@ -133,6 +133,8 @@ class Vacancy(models.Model):
     # Контакты (скрытые)
     phone = models.CharField(max_length=30, blank=True)
     additional_phone = models.CharField(max_length=30, blank=True)
+    additional_phone_2 = models.CharField(max_length=30, blank=True)
+    additional_phone_3 = models.CharField(max_length=30, blank=True)
     hide_primary_phone = models.BooleanField(default=False)
     whatsapp = models.CharField(max_length=100, blank=True)
     viber = models.CharField(max_length=100, blank=True)

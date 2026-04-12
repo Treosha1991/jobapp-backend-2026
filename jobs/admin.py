@@ -529,7 +529,13 @@ class VacancyAdmin(admin.ModelAdmin):
             {
                 "classes": ("collapse",),
                 "fields": (
-                    ("phone", "additional_phone", "hide_primary_phone"),
+                    (
+                        "phone",
+                        "additional_phone",
+                        "additional_phone_2",
+                        "additional_phone_3",
+                        "hide_primary_phone",
+                    ),
                     ("whatsapp", "viber", "telegram"),
                     "email",
                 ),
