@@ -41,6 +41,7 @@ from .api import (
 from .auth_api import (
     RegisterAPIView,
     LoginAPIView,
+    GoogleLoginAPIView,
     VerifyEmailAPIView,
     ResendCodeAPIView,
     ResetPasswordRequestAPIView,
@@ -61,6 +62,7 @@ from .auth_api import (
 urlpatterns = [
     path("auth/register/", RegisterAPIView.as_view(), name="api-register"),
     path("auth/login/", LoginAPIView.as_view(), name="api-login"),
+    path("auth/google/", GoogleLoginAPIView.as_view(), name="api-google-login"),
     path("auth/me/", MeAPIView.as_view(), name="api-me"),
     path("auth/me/avatar/", MeAvatarAPIView.as_view(), name="api-me-avatar"),
     path("auth/account-deletion/request/", AccountDeletionRequestAPIView.as_view(), name="api-account-deletion-request"),

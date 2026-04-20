@@ -169,6 +169,81 @@ def _is_valid_email(email):
     return bool(_EMAIL_RE.match(value))
 
 
+def _google_sign_in_client_ids():
+    raw = (getattr(settings, "GOOGLE_SIGN_IN_CLIENT_IDS", "") or "").strip()
+    return {
+        item.strip()
+        for item in raw.split(",")
+        if item and item.strip()
+    }
+
+
+def _verify_google_id_token(raw_token):
+    token = (raw_token or "").strip()
+    if not token:
+        raise ValueError("google_token_required")
+
+    allowed_client_ids = _google_sign_in_client_ids()
+    if not allowed_client_ids:
+        raise RuntimeError("google_sign_in_not_configured")
+
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2 import id_token
+    except ImportError as exc:
+        raise RuntimeError("google_sign_in_dependencies_missing") from exc
+
+    try:
+        payload = id_token.verify_oauth2_token(token, Request(), audience=None)
+    except Exception as exc:
+        raise ValueError("google_token_invalid") from exc
+
+    issuer = (payload.get("iss") or "").strip()
+    if issuer not in {"accounts.google.com", "https://accounts.google.com"}:
+        raise ValueError("google_token_invalid")
+
+    audience = (payload.get("aud") or "").strip()
+    if audience not in allowed_client_ids:
+        raise ValueError("google_token_invalid")
+
+    email = (payload.get("email") or "").strip().lower()
+    if not _is_valid_email(email):
+        raise ValueError("google_email_missing")
+
+    if payload.get("email_verified") is not True:
+        raise ValueError("google_email_not_verified")
+
+    return payload
+
+
+def _google_login_user(payload):
+    email = (payload.get("email") or "").strip().lower()
+    user = User.objects.filter(username__iexact=email).first()
+    if not user:
+        user = User.objects.filter(email__iexact=email).first()
+
+    if user is None:
+        user = User(username=email, email=email, is_active=True)
+        user.set_unusable_password()
+        user.save()
+    else:
+        updated_fields = []
+        if user.username != email:
+            user.username = email
+            updated_fields.append("username")
+        if user.email != email:
+            user.email = email
+            updated_fields.append("email")
+        if not user.is_active:
+            user.is_active = True
+            updated_fields.append("is_active")
+        if updated_fields:
+            user.save(update_fields=updated_fields)
+
+    UserProfile.objects.get_or_create(user=user)
+    return user
+
+
 def _send_email_code(email, code, purpose="register"):
     if purpose == "reset":
         subject = "JobHub password reset code"
@@ -1062,6 +1137,27 @@ class LoginAPIView(APIView):
 
         token, _ = Token.objects.get_or_create(user=user)
         return Response(_auth_payload(user, token))
+
+
+class GoogleLoginAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        try:
+            payload = _verify_google_id_token(request.data.get("id_token"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except RuntimeError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        user = _google_login_user(payload)
+        token, _ = Token.objects.get_or_create(user=user)
+        auth_payload = _auth_payload(user, token)
+        auth_payload["detail"] = "google_login"
+        return Response(auth_payload)
 
 
 class MeAPIView(APIView):
