@@ -33,6 +33,7 @@ from .api import (
     VacancyAlertPreviewAPIView,
     VacancyAlertSubscriptionAPIView,
     EconomyOverviewAPIView,
+    ApplePurchaseCompleteAPIView,
     GooglePlayPurchaseCompleteAPIView,
     WalletTransactionListAPIView,
     VacancySubmissionStateAPIView,
@@ -86,6 +87,11 @@ urlpatterns = [
         "economy/google-play/complete/",
         GooglePlayPurchaseCompleteAPIView.as_view(),
         name="economy-google-play-complete",
+    ),
+    path(
+        "economy/apple/complete/",
+        ApplePurchaseCompleteAPIView.as_view(),
+        name="economy-apple-complete",
     ),
     path("economy/vacancy-submission-state/", VacancySubmissionStateAPIView.as_view(), name="economy-vacancy-submission-state"),
 

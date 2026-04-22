@@ -1,6 +1,7 @@
 from math import ceil
 import secrets
 from datetime import datetime, time, timedelta
+import requests
 
 from django.utils import timezone
 from django.conf import settings
@@ -74,6 +75,7 @@ from .reviews import (
     save_vacancy_review,
 )
 from .serializers import (
+    ApplePurchaseCompleteSerializer,
     ComplaintListSerializer,
     EconomyConfigSerializer,
     PushDeviceRegisterSerializer,
@@ -100,6 +102,154 @@ OWNER_RESUME_REPEAT_COOLDOWN = timedelta(minutes=5)
 OWNER_RESUME_REPEAT_THRESHOLD = 2
 OWNER_MODERATION_RESUBMIT_MIN_INTERVAL = timedelta(minutes=30)
 OWNER_MODERATION_RESUBMIT_MAX_PER_DAY = 3
+
+APPLE_VERIFY_RECEIPT_PRODUCTION_URL = "https://buy.itunes.apple.com/verifyReceipt"
+APPLE_VERIFY_RECEIPT_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt"
+APPLE_VERIFY_RECEIPT_TIMEOUT_SECONDS = 20
+
+
+class AppleIAPNotConfiguredError(Exception):
+    code = "apple_iap_not_configured"
+
+
+class AppleIAPVerificationError(Exception):
+    def __init__(self, code, *, detail="", payload=None):
+        super().__init__(detail or code)
+        self.code = code
+        self.detail = detail or code
+        self.payload = payload or {}
+
+
+def _apple_store_product_id(product):
+    metadata = product.metadata or {}
+    explicit = (metadata.get("ios_store_product_id") or "").strip()
+    if explicit:
+        return explicit
+    bundle_id = settings.APPLE_IAP_BUNDLE_ID.strip()
+    if not bundle_id:
+        return ""
+    code = (product.code or "").strip()
+    if not code:
+        return ""
+    return f"{bundle_id}.{code}"
+
+
+def _post_apple_verify_receipt(url, *, receipt_data):
+    payload = {
+        "receipt-data": receipt_data,
+        "exclude-old-transactions": False,
+    }
+    shared_secret = settings.APPLE_IAP_SHARED_SECRET.strip()
+    if shared_secret:
+        payload["password"] = shared_secret
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=APPLE_VERIFY_RECEIPT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as exc:
+        raise AppleIAPVerificationError(
+            "apple_receipt_request_failed",
+            detail="Could not reach Apple receipt verification.",
+        ) from exc
+    except ValueError as exc:
+        raise AppleIAPVerificationError(
+            "apple_receipt_invalid_response",
+            detail="Apple receipt verification returned an invalid response.",
+        ) from exc
+
+
+def _verify_apple_receipt(receipt_data):
+    if not settings.APPLE_IAP_BUNDLE_ID.strip():
+        raise AppleIAPNotConfiguredError()
+
+    verified_payload = _post_apple_verify_receipt(
+        APPLE_VERIFY_RECEIPT_PRODUCTION_URL,
+        receipt_data=receipt_data,
+    )
+    status_code = int(verified_payload.get("status") or 0)
+    if status_code == 21007:
+        verified_payload = _post_apple_verify_receipt(
+            APPLE_VERIFY_RECEIPT_SANDBOX_URL,
+            receipt_data=receipt_data,
+        )
+        status_code = int(verified_payload.get("status") or 0)
+    elif status_code == 21008:
+        verified_payload = _post_apple_verify_receipt(
+            APPLE_VERIFY_RECEIPT_PRODUCTION_URL,
+            receipt_data=receipt_data,
+        )
+        status_code = int(verified_payload.get("status") or 0)
+
+    if status_code != 0:
+        raise AppleIAPVerificationError(
+            "apple_receipt_invalid",
+            detail=f"Apple receipt verification failed with status {status_code}.",
+            payload=verified_payload,
+        )
+
+    receipt = verified_payload.get("receipt") or {}
+    bundle_id = (receipt.get("bundle_id") or "").strip()
+    expected_bundle_id = settings.APPLE_IAP_BUNDLE_ID.strip()
+    if expected_bundle_id and bundle_id and bundle_id != expected_bundle_id:
+        raise AppleIAPVerificationError(
+            "apple_receipt_bundle_mismatch",
+            detail="Apple receipt bundle ID does not match the app bundle ID.",
+            payload=verified_payload,
+        )
+
+    return verified_payload
+
+
+def _apple_receipt_items(verified_payload):
+    items = []
+    latest_items = verified_payload.get("latest_receipt_info")
+    if isinstance(latest_items, list):
+        items.extend(item for item in latest_items if isinstance(item, dict))
+    receipt = verified_payload.get("receipt") or {}
+    in_app_items = receipt.get("in_app")
+    if isinstance(in_app_items, list):
+        items.extend(item for item in in_app_items if isinstance(item, dict))
+    return items
+
+
+def _apple_receipt_item_sort_key(item):
+    for key in ("expires_date_ms", "purchase_date_ms", "original_purchase_date_ms"):
+        raw = (item.get(key) or "").strip()
+        if raw.isdigit():
+            return int(raw)
+    return 0
+
+
+def _find_apple_receipt_item(*, verified_payload, expected_product_id, purchase_id=""):
+    matching = [
+        item for item in _apple_receipt_items(verified_payload)
+        if (item.get("product_id") or "").strip() == expected_product_id
+    ]
+    if not matching:
+        raise AppleIAPVerificationError(
+            "apple_receipt_product_not_found",
+            detail="The Apple receipt does not contain the expected product.",
+            payload=verified_payload,
+        )
+
+    raw_purchase_id = (purchase_id or "").strip()
+    if raw_purchase_id:
+        exact = [
+            item for item in matching
+            if raw_purchase_id in {
+                (item.get("transaction_id") or "").strip(),
+                (item.get("original_transaction_id") or "").strip(),
+            }
+        ]
+        if exact:
+            matching = exact
+
+    matching.sort(key=_apple_receipt_item_sort_key, reverse=True)
+    return matching[0]
 
 
 def _parse_driver_license_filter_value(raw_value):
@@ -1265,6 +1415,105 @@ class GooglePlayPurchaseCompleteAPIView(APIView):
                 platform="android",
                 external_transaction_id=transaction_id,
                 purchase_token=purchase_token,
+                payload=merged_payload,
+            )
+        except ValueError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "detail": "purchase_validated",
+                "purchase": {
+                    "id": purchase_record.id,
+                    "status": purchase_record.status,
+                    "created": created,
+                    "product_code": product.code,
+                    "product_type": product.product_type,
+                    "credits_granted": purchase_record.credits_granted,
+                    "entitlement_started_at": purchase_record.entitlement_started_at,
+                    "entitlement_expires_at": purchase_record.entitlement_expires_at,
+                    "external_transaction_id": purchase_record.external_transaction_id,
+                },
+                "economy": _economy_overview_payload(request.user),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ApplePurchaseCompleteAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ApplePurchaseCompleteSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+        product = serializer.context["store_product"]
+        receipt_data = payload["receipt_data"]
+        raw_purchase_id = (payload.get("purchase_id") or "").strip()
+
+        expected_product_id = _apple_store_product_id(product)
+        if not expected_product_id:
+            return Response(
+                {"error": "store_product_id_missing"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            verified_payload = _verify_apple_receipt(receipt_data)
+            matched_item = _find_apple_receipt_item(
+                verified_payload=verified_payload,
+                expected_product_id=expected_product_id,
+                purchase_id=raw_purchase_id,
+            )
+        except AppleIAPNotConfiguredError as exc:
+            return Response(
+                {
+                    "error": exc.code,
+                    "message": "Apple in-app purchase verification is not configured on the backend.",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except AppleIAPVerificationError as exc:
+            return Response(
+                {
+                    "error": exc.code,
+                    "message": exc.detail or exc.code,
+                    "payload": exc.payload,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        transaction_id = (
+            (matched_item.get("transaction_id") or "").strip()
+            or (matched_item.get("original_transaction_id") or "").strip()
+            or raw_purchase_id
+        )
+        if not transaction_id:
+            return Response(
+                {"error": "purchase_transaction_id_required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        merged_payload = {
+            "verified_payload": verified_payload,
+            "matched_item": matched_item,
+            "client_payload": payload.get("purchase_payload") or {},
+            "verification_data": (payload.get("verification_data") or "").strip(),
+            "local_verification_data": (payload.get("local_verification_data") or "").strip(),
+        }
+
+        try:
+            purchase_record, created = apply_store_product_purchase(
+                request.user,
+                product=product,
+                platform="ios",
+                external_transaction_id=transaction_id,
                 payload=merged_payload,
             )
         except ValueError as exc:

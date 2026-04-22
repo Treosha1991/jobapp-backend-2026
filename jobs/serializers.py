@@ -1309,3 +1309,29 @@ class GooglePlayPurchaseCompleteSerializer(serializers.Serializer):
             raise serializers.ValidationError("purchase_token_required")
         return token
 
+
+class ApplePurchaseCompleteSerializer(serializers.Serializer):
+    product_code = serializers.CharField(max_length=80)
+    receipt_data = serializers.CharField()
+    purchase_id = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    verification_data = serializers.CharField(required=False, allow_blank=True)
+    local_verification_data = serializers.CharField(required=False, allow_blank=True)
+    purchase_payload = serializers.JSONField(required=False)
+
+    def validate_product_code(self, value):
+        code = (value or "").strip()
+        if not code:
+            raise serializers.ValidationError("product_code_required")
+        try:
+            product = StoreProduct.objects.get(code=code, is_active=True)
+        except StoreProduct.DoesNotExist as exc:
+            raise serializers.ValidationError("store_product_not_found") from exc
+        self.context["store_product"] = product
+        return code
+
+    def validate_receipt_data(self, value):
+        receipt = (value or "").strip()
+        if not receipt:
+            raise serializers.ValidationError("receipt_data_required")
+        return receipt
+
