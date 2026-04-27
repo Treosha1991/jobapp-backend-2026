@@ -128,6 +128,13 @@ def _apple_store_product_id(product):
     bundle_id = settings.APPLE_IAP_BUNDLE_ID.strip()
     if not bundle_id:
         return ""
+    store_product_id = (product.store_product_id or "").strip()
+    if store_product_id.startswith(f"{bundle_id}."):
+        return store_product_id
+    if product.product_type == "employer_subscription":
+        return f"{bundle_id}.employer_subscription"
+    if product.product_type == "seeker_subscription":
+        return f"{bundle_id}.seeker_subscription"
     code = (product.code or "").strip()
     if not code:
         return ""

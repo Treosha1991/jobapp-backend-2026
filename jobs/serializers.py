@@ -1250,6 +1250,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
             "duration_days",
             "price_label",
             "sort_order",
+            "metadata",
         ]
 
 
