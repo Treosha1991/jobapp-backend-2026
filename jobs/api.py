@@ -1,6 +1,6 @@
 from math import ceil
 import secrets
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone as datetime_timezone
 import requests
 
 from django.utils import timezone
@@ -10,7 +10,7 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Case, Count, Exists, IntegerField, Max, OuterRef, Q, Value, When
 from django.db.models.functions import Coalesce
-from django.utils.dateparse import parse_date
+from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
@@ -141,13 +141,18 @@ def _apple_store_product_id(product):
     return f"{bundle_id}.{code}"
 
 
-def _post_apple_verify_receipt(url, *, receipt_data):
+def _post_apple_verify_receipt(url, *, receipt_data, include_shared_secret=False):
     payload = {
         "receipt-data": receipt_data,
         "exclude-old-transactions": False,
     }
     shared_secret = settings.APPLE_IAP_SHARED_SECRET.strip()
-    if shared_secret:
+    if include_shared_secret and not shared_secret:
+        raise AppleIAPVerificationError(
+            "apple_shared_secret_missing",
+            detail="Apple shared secret is required for subscription receipt verification.",
+        )
+    if include_shared_secret:
         payload["password"] = shared_secret
     try:
         response = requests.post(
@@ -169,31 +174,40 @@ def _post_apple_verify_receipt(url, *, receipt_data):
         ) from exc
 
 
-def _verify_apple_receipt(receipt_data):
+def _apple_receipt_status_error_code(status_code):
+    if status_code == 21004:
+        return "apple_shared_secret_invalid"
+    return "apple_receipt_invalid"
+
+
+def _verify_apple_receipt(receipt_data, *, requires_shared_secret=False):
     if not settings.APPLE_IAP_BUNDLE_ID.strip():
         raise AppleIAPNotConfiguredError()
 
     verified_payload = _post_apple_verify_receipt(
         APPLE_VERIFY_RECEIPT_PRODUCTION_URL,
         receipt_data=receipt_data,
+        include_shared_secret=requires_shared_secret,
     )
     status_code = int(verified_payload.get("status") or 0)
     if status_code == 21007:
         verified_payload = _post_apple_verify_receipt(
             APPLE_VERIFY_RECEIPT_SANDBOX_URL,
             receipt_data=receipt_data,
+            include_shared_secret=requires_shared_secret,
         )
         status_code = int(verified_payload.get("status") or 0)
     elif status_code == 21008:
         verified_payload = _post_apple_verify_receipt(
             APPLE_VERIFY_RECEIPT_PRODUCTION_URL,
             receipt_data=receipt_data,
+            include_shared_secret=requires_shared_secret,
         )
         status_code = int(verified_payload.get("status") or 0)
 
     if status_code != 0:
         raise AppleIAPVerificationError(
-            "apple_receipt_invalid",
+            _apple_receipt_status_error_code(status_code),
             detail=f"Apple receipt verification failed with status {status_code}.",
             payload=verified_payload,
         )
@@ -257,6 +271,34 @@ def _find_apple_receipt_item(*, verified_payload, expected_product_id, purchase_
 
     matching.sort(key=_apple_receipt_item_sort_key, reverse=True)
     return matching[0]
+
+
+def _is_subscription_store_product(product):
+    return product.product_type in {"employer_subscription", "seeker_subscription"}
+
+
+def _apple_receipt_item_expires_at(item):
+    raw_ms = (item.get("expires_date_ms") or "").strip()
+    if raw_ms.isdigit():
+        return datetime.fromtimestamp(int(raw_ms) / 1000, tz=datetime_timezone.utc)
+    raw = (item.get("expires_date") or "").strip()
+    parsed = parse_datetime(raw) if raw else None
+    if parsed and timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, datetime_timezone.utc)
+    return parsed
+
+
+def _google_subscription_expires_at(payload, *, subscription_id):
+    line_items = payload.get("lineItems") or []
+    for item in line_items:
+        if (item.get("productId") or "").strip() != subscription_id:
+            continue
+        raw = (item.get("expiryTime") or "").strip()
+        parsed = parse_datetime(raw) if raw else None
+        if parsed and timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, datetime_timezone.utc)
+        return parsed
+    return None
 
 
 def _parse_driver_license_filter_value(raw_value):
@@ -1379,10 +1421,16 @@ class GooglePlayPurchaseCompleteAPIView(APIView):
                     product_id=(product.store_product_id or "").strip(),
                     purchase_token=purchase_token,
                 )
+                entitlement_expires_at = None
             else:
+                subscription_id = (product.store_product_id or "").strip()
                 verified_payload = verify_google_play_subscription_purchase(
-                    subscription_id=(product.store_product_id or "").strip(),
+                    subscription_id=subscription_id,
                     purchase_token=purchase_token,
+                )
+                entitlement_expires_at = _google_subscription_expires_at(
+                    verified_payload,
+                    subscription_id=subscription_id,
                 )
         except GooglePlayNotConfiguredError as exc:
             return Response(
@@ -1423,6 +1471,7 @@ class GooglePlayPurchaseCompleteAPIView(APIView):
                 external_transaction_id=transaction_id,
                 purchase_token=purchase_token,
                 payload=merged_payload,
+                store_entitlement_expires_at=entitlement_expires_at,
             )
         except ValueError as exc:
             return Response(
@@ -1472,7 +1521,10 @@ class ApplePurchaseCompleteAPIView(APIView):
             )
 
         try:
-            verified_payload = _verify_apple_receipt(receipt_data)
+            verified_payload = _verify_apple_receipt(
+                receipt_data,
+                requires_shared_secret=_is_subscription_store_product(product),
+            )
             matched_item = _find_apple_receipt_item(
                 verified_payload=verified_payload,
                 expected_product_id=expected_product_id,
@@ -1514,6 +1566,11 @@ class ApplePurchaseCompleteAPIView(APIView):
             "verification_data": (payload.get("verification_data") or "").strip(),
             "local_verification_data": (payload.get("local_verification_data") or "").strip(),
         }
+        entitlement_expires_at = (
+            _apple_receipt_item_expires_at(matched_item)
+            if _is_subscription_store_product(product)
+            else None
+        )
 
         try:
             purchase_record, created = apply_store_product_purchase(
@@ -1522,6 +1579,7 @@ class ApplePurchaseCompleteAPIView(APIView):
                 platform="ios",
                 external_transaction_id=transaction_id,
                 payload=merged_payload,
+                store_entitlement_expires_at=entitlement_expires_at,
             )
         except ValueError as exc:
             return Response(

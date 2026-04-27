@@ -270,6 +270,30 @@ def _subscription_extension_window(current_until, *, now, duration_days):
     return baseline, baseline + timedelta(days=duration_days)
 
 
+def _normalized_future_expiration(value, *, now):
+    if value is None:
+        return None
+    expires_at = value
+    if timezone.is_naive(expires_at):
+        expires_at = timezone.make_aware(expires_at, timezone.get_current_timezone())
+    if expires_at <= now:
+        return None
+    return expires_at
+
+
+def _subscription_entitlement_window(current_until, *, now, duration_days, store_expires_at):
+    store_expires_at = _normalized_future_expiration(store_expires_at, now=now)
+    if store_expires_at is not None:
+        if current_until and current_until > store_expires_at:
+            return now, current_until
+        return now, store_expires_at
+    return _subscription_extension_window(
+        current_until,
+        now=now,
+        duration_days=duration_days,
+    )
+
+
 @transaction.atomic
 def apply_store_product_purchase(
     user,
@@ -279,6 +303,7 @@ def apply_store_product_purchase(
     external_transaction_id,
     purchase_token="",
     payload=None,
+    store_entitlement_expires_at=None,
 ):
     external_transaction_id = (external_transaction_id or "").strip()
     if not external_transaction_id:
@@ -356,10 +381,11 @@ def apply_store_product_purchase(
         if duration_days <= 0:
             raise ValueError("store_subscription_duration_invalid")
         profile = get_or_create_monetization_profile(user)
-        entitlement_started_at, entitlement_expires_at = _subscription_extension_window(
+        entitlement_started_at, entitlement_expires_at = _subscription_entitlement_window(
             profile.employer_subscription_until,
             now=now,
             duration_days=duration_days,
+            store_expires_at=store_entitlement_expires_at,
         )
         profile.employer_subscription_until = entitlement_expires_at
         profile.save(update_fields=["employer_subscription_until", "updated_at"])
@@ -381,10 +407,11 @@ def apply_store_product_purchase(
         if duration_days <= 0:
             raise ValueError("store_subscription_duration_invalid")
         profile = get_or_create_monetization_profile(user)
-        entitlement_started_at, entitlement_expires_at = _subscription_extension_window(
+        entitlement_started_at, entitlement_expires_at = _subscription_entitlement_window(
             profile.seeker_subscription_until,
             now=now,
             duration_days=duration_days,
+            store_expires_at=store_entitlement_expires_at,
         )
         profile.seeker_subscription_until = entitlement_expires_at
         profile.save(update_fields=["seeker_subscription_until", "updated_at"])
