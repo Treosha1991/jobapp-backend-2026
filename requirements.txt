@@ -14,5 +14,6 @@ boto3==1.37.38
 Pillow==11.2.1
 firebase-admin==6.9.0
 google-auth==2.40.3
+PyJWT[crypto]==2.10.1
 requests==2.32.5
 

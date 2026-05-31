@@ -199,6 +199,14 @@ GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = os.environ.get(
 # Comma-separated list of allowed OAuth client IDs for Google Sign-In.
 GOOGLE_SIGN_IN_CLIENT_IDS = os.environ.get("GOOGLE_SIGN_IN_CLIENT_IDS", "").strip()
 
+# Sign in with Apple / ID token verification
+# Comma-separated list of allowed Apple client IDs. For the native iOS app this
+# is usually the bundle id, for example: today.jobhub.app.
+APPLE_SIGN_IN_CLIENT_IDS = os.environ.get(
+    "APPLE_SIGN_IN_CLIENT_IDS",
+    os.environ.get("APPLE_IAP_BUNDLE_ID", "today.jobhub.app"),
+).strip()
+
 # Apple In-App Purchases / receipt verification
 APPLE_IAP_BUNDLE_ID = os.environ.get("APPLE_IAP_BUNDLE_ID", "today.jobhub.app").strip()
 APPLE_IAP_SHARED_SECRET = os.environ.get("APPLE_IAP_SHARED_SECRET", "").strip()

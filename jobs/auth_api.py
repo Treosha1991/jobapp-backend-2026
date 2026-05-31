@@ -4,6 +4,7 @@ import random
 import re
 import threading
 import base64
+import hashlib
 from importlib import util as importlib_util
 from datetime import timedelta
 from urllib import parse, request as urllib_request
@@ -57,6 +58,10 @@ _PROFILE_DESCRIPTION_MAX_LENGTH = 160
 _PROFILE_DESCRIPTION_MAX_LINES = 3
 _PROFILE_DESCRIPTION_MAX_CHARS_PER_LINE = 27
 _EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
+APPLE_ID_KEYS_URL = "https://appleid.apple.com/auth/keys"
+_APPLE_JWKS_CACHE = {"fetched_at": None, "keys": []}
+_APPLE_JWKS_LOCK = threading.Lock()
+_APPLE_JWKS_TTL = timedelta(hours=1)
 _RESERVED_NICKNAME_PARTS = (
     "jobhub",
     "support",
@@ -239,6 +244,160 @@ def _google_login_user(payload):
             updated_fields.append("is_active")
         if updated_fields:
             user.save(update_fields=updated_fields)
+
+    UserProfile.objects.get_or_create(user=user)
+    return user
+
+
+def _apple_sign_in_client_ids():
+    raw = (getattr(settings, "APPLE_SIGN_IN_CLIENT_IDS", "") or "").strip()
+    return {
+        item.strip()
+        for item in raw.split(",")
+        if item and item.strip()
+    }
+
+
+def _apple_public_keys(force_refresh=False):
+    now = timezone.now()
+    with _APPLE_JWKS_LOCK:
+        fetched_at = _APPLE_JWKS_CACHE.get("fetched_at")
+        cached_keys = _APPLE_JWKS_CACHE.get("keys") or []
+        if (
+            not force_refresh
+            and cached_keys
+            and fetched_at
+            and now - fetched_at < _APPLE_JWKS_TTL
+        ):
+            return cached_keys
+
+        try:
+            with urllib_request.urlopen(APPLE_ID_KEYS_URL, timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            raise RuntimeError("apple_sign_in_keys_unavailable") from exc
+
+        keys = data.get("keys") or []
+        if not isinstance(keys, list) or not keys:
+            raise RuntimeError("apple_sign_in_keys_invalid")
+
+        _APPLE_JWKS_CACHE["fetched_at"] = now
+        _APPLE_JWKS_CACHE["keys"] = keys
+        return keys
+
+
+def _verify_apple_id_token(raw_token):
+    token = (raw_token or "").strip()
+    if not token:
+        raise ValueError("apple_token_required")
+
+    allowed_client_ids = _apple_sign_in_client_ids()
+    if not allowed_client_ids:
+        raise RuntimeError("apple_sign_in_not_configured")
+
+    try:
+        import jwt
+    except ImportError as exc:
+        raise RuntimeError("apple_sign_in_dependencies_missing") from exc
+
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError as exc:
+        raise ValueError("apple_token_invalid") from exc
+
+    key_id = (header.get("kid") or "").strip()
+    if not key_id:
+        raise ValueError("apple_token_invalid")
+
+    last_error = None
+    for force_refresh in (False, True):
+        keys = _apple_public_keys(force_refresh=force_refresh)
+        key = next((item for item in keys if item.get("kid") == key_id), None)
+        if not key:
+            last_error = ValueError("apple_token_invalid")
+            continue
+
+        try:
+            public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+            payload = jwt.decode(
+                token,
+                public_key,
+                algorithms=["RS256"],
+                audience=list(allowed_client_ids),
+                issuer="https://appleid.apple.com",
+            )
+        except jwt.PyJWTError as exc:
+            last_error = exc
+            continue
+
+        apple_user_id = (payload.get("sub") or "").strip()
+        if not apple_user_id:
+            raise ValueError("apple_token_invalid")
+
+        email = (payload.get("email") or "").strip().lower()
+        if email:
+            if not _is_valid_email(email):
+                raise ValueError("apple_email_missing")
+            email_verified = payload.get("email_verified")
+            if email_verified not in {True, "true", "1", 1}:
+                raise ValueError("apple_email_not_verified")
+
+        return payload
+
+    raise ValueError("apple_token_invalid") from last_error
+
+
+def _synthetic_apple_username(apple_user_id):
+    digest = hashlib.sha256(apple_user_id.encode("utf-8")).hexdigest()[:32]
+    return f"apple_{digest}"
+
+
+def _apple_login_user(payload):
+    apple_user_id = (payload.get("sub") or "").strip()
+    email = (payload.get("email") or "").strip().lower()
+    email = email if _is_valid_email(email) else ""
+
+    profile = (
+        UserProfile.objects.select_related("user")
+        .filter(apple_user_id=apple_user_id)
+        .first()
+    )
+    if profile:
+        user = profile.user
+    else:
+        user = None
+        if email:
+            user = User.objects.filter(username__iexact=email).first()
+            if user is None:
+                user = User.objects.filter(email__iexact=email).first()
+
+        if user is None:
+            username = email or _synthetic_apple_username(apple_user_id)
+            user = User(username=username, email=email, is_active=True)
+            user.set_unusable_password()
+            user.save()
+
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        if profile.apple_user_id and profile.apple_user_id != apple_user_id:
+            raise ValueError("apple_account_conflict")
+        if not profile.apple_user_id:
+            profile.apple_user_id = apple_user_id
+            profile.save(update_fields=["apple_user_id"])
+
+    updated_fields = []
+    if email and not user.email:
+        user.email = email
+        updated_fields.append("email")
+    if email and user.username.startswith("apple_"):
+        username_taken = User.objects.filter(username__iexact=email).exclude(id=user.id).exists()
+        if not username_taken:
+            user.username = email
+            updated_fields.append("username")
+    if not user.is_active:
+        user.is_active = True
+        updated_fields.append("is_active")
+    if updated_fields:
+        user.save(update_fields=updated_fields)
 
     UserProfile.objects.get_or_create(user=user)
     return user
@@ -1157,6 +1316,32 @@ class GoogleLoginAPIView(APIView):
         token, _ = Token.objects.get_or_create(user=user)
         auth_payload = _auth_payload(user, token)
         auth_payload["detail"] = "google_login"
+        return Response(auth_payload)
+
+
+class AppleLoginAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        try:
+            payload = _verify_apple_id_token(request.data.get("id_token"))
+            user = _apple_login_user(payload)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except RuntimeError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except IntegrityError:
+            return Response(
+                {"error": "apple_account_conflict"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        token, _ = Token.objects.get_or_create(user=user)
+        auth_payload = _auth_payload(user, token)
+        auth_payload["detail"] = "apple_login"
         return Response(auth_payload)
 
 

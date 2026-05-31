@@ -710,6 +710,7 @@ class UserProfile(models.Model):
     phone_e164 = models.CharField(max_length=20, blank=True, null=True, unique=True)
     phone_verified = models.BooleanField(default=False)
     phone_verified_at = models.DateTimeField(blank=True, null=True)
+    apple_user_id = models.CharField(max_length=255, blank=True, null=True, unique=True)
     # Object key in Cloudflare R2 bucket (public URL is derived in API layer).
     avatar_key = models.CharField(max_length=500, blank=True, default="")
     avatar_updated_at = models.DateTimeField(blank=True, null=True)
