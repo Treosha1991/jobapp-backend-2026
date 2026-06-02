@@ -1,4 +1,5 @@
 from math import ceil
+from hmac import compare_digest
 import secrets
 from datetime import datetime, time, timedelta, timezone as datetime_timezone
 import requests
@@ -65,7 +66,11 @@ from .models import (
     WalletTransaction,
 )
 from .monetization import CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
-from .service_sources import service_board_meta_for_user, is_service_board_user
+from .service_sources import (
+    SERVICE_BOARD_USERNAME,
+    service_board_meta_for_user,
+    is_service_board_user,
+)
 from .review_presets import REVIEW_PRESET_CHOICES
 from .reviews import (
     build_vacancy_review_state,
@@ -85,6 +90,7 @@ from .serializers import (
     UserWalletSerializer,
     VacancyAlertSubscriptionSerializer,
     VacancyContactSerializer,
+    InternalVacancyImportSerializer,
     WalletTransactionSerializer,
     VacancyListSerializer,
     VacancyModerationSerializer,
@@ -819,6 +825,119 @@ class VacancyCreateAPIView(generics.CreateAPIView):
                 print(f"[VACANCY-ALERTS] vacancy={vacancy.id} summary={summary}")
             except Exception as exc:
                 print(f"[VACANCY-ALERTS-ERROR] vacancy={vacancy.id}: {exc}")
+
+
+def _internal_import_token_from_request(request):
+    header_token = (request.headers.get("X-Internal-Import-Token") or "").strip()
+    if header_token:
+        return header_token
+    auth_header = (request.headers.get("Authorization") or "").strip()
+    prefix = "Bearer "
+    if auth_header.startswith(prefix):
+        return auth_header[len(prefix):].strip()
+    return ""
+
+
+class InternalVacancyImportAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        configured_token = (settings.INTERNAL_IMPORT_TOKEN or "").strip()
+        request_token = _internal_import_token_from_request(request)
+        if not configured_token:
+            return Response(
+                {"error": "internal_import_not_configured"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        if not request_token or not compare_digest(request_token, configured_token):
+            return Response(
+                {"error": "invalid_internal_import_token"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = InternalVacancyImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        title = (data.get("title") or "").strip()
+        city = (data.get("city") or "").strip()
+        phone = (data.get("phone") or "").strip()
+
+        now = timezone.now()
+        service_user, created = User.objects.get_or_create(
+            username=SERVICE_BOARD_USERNAME,
+            defaults={"email": ""},
+        )
+        if created:
+            service_user.set_unusable_password()
+            service_user.save(update_fields=["password"])
+
+        duplicate = None
+        if title and city and phone:
+            duplicate = (
+                Vacancy.objects.filter(
+                    created_by=service_user,
+                    title=title,
+                    city=city,
+                    phone=phone,
+                    is_deleted_by_moderator=False,
+                )
+                .order_by("-id")
+                .first()
+            )
+        if duplicate:
+            return Response(
+                {
+                    "error": "duplicate_import",
+                    "vacancy_id": duplicate.id,
+                    "moderation_status": duplicate.moderation_status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        source_url = (data.get("source_url") or "").strip()
+        source_text = (data.get("source_text") or "").strip()
+        extraction_notes = (data.get("extraction_notes") or "").strip()
+        extra_context = {
+            "import_source": "internal_import",
+            "source_url": source_url,
+            "source_text": source_text,
+            "extraction_notes": extraction_notes,
+        }
+
+        with transaction.atomic():
+            vacancy = serializer.save(
+                created_by=service_user,
+                creator_token=secrets.token_hex(32),
+                approved_at=None,
+                expires_at=now + VACANCY_LIVE_WINDOW,
+                is_approved=False,
+                is_rejected=False,
+                rejection_reason="",
+                moderation_baseline={},
+                last_moderator_rejection_reason="",
+                is_deleted_by_moderator=False,
+                is_paused_by_owner=False,
+                is_editing=False,
+                editing_started_at=now,
+                revision=1,
+            )
+            _create_moderation_attempt(
+                vacancy,
+                trigger_type="create",
+                submitted_by=service_user,
+                submitted_at=now,
+                extra_context=extra_context,
+            )
+
+        return Response(
+            {
+                "status": "created",
+                "vacancy_id": vacancy.id,
+                "moderation_status": vacancy.moderation_status,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
 
 def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff

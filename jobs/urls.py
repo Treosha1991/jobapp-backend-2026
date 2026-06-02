@@ -38,6 +38,7 @@ from .api import (
     WalletTransactionListAPIView,
     VacancySubmissionStateAPIView,
     VacancyContactAccessStateAPIView,
+    InternalVacancyImportAPIView,
 )
 from .auth_api import (
     RegisterAPIView,
@@ -96,6 +97,7 @@ urlpatterns = [
         name="economy-apple-complete",
     ),
     path("economy/vacancy-submission-state/", VacancySubmissionStateAPIView.as_view(), name="economy-vacancy-submission-state"),
+    path("internal/import-vacancy/", InternalVacancyImportAPIView.as_view(), name="internal-import-vacancy"),
 
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),
     path("vacancies/bookmark-status/", VacancyBookmarkStatusAPIView.as_view(), name="vacancy-bookmark-status"),

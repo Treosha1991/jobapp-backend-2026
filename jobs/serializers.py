@@ -844,6 +844,187 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class InternalVacancyImportSerializer(serializers.ModelSerializer):
+    audience_countries = AudienceCountriesField(source="audience_country_codes")
+    driver_license_categories = DriverLicenseCategoriesField(
+        required=False,
+        max_selections=MAX_DRIVER_LICENSE_SELECTIONS,
+    )
+    source_url = serializers.URLField(
+        required=False,
+        allow_blank=True,
+        write_only=True,
+        max_length=500,
+    )
+    source_text = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        write_only=True,
+        max_length=10000,
+    )
+    extraction_notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        write_only=True,
+        max_length=2000,
+    )
+
+    class Meta:
+        model = Vacancy
+        fields = [
+            "title",
+            "country",
+            "city",
+            "city_code",
+            "category",
+            "audience_countries",
+            "employment_type",
+            "experience_required",
+            "driver_license_categories",
+            "salary",
+            "salary_from",
+            "salary_to",
+            "salary_currency",
+            "salary_tax_type",
+            "salary_hours_month",
+            "description",
+            "housing_type",
+            "housing_cost",
+            "phone",
+            "additional_phone",
+            "additional_phone_2",
+            "additional_phone_3",
+            "hide_primary_phone",
+            "whatsapp",
+            "viber",
+            "telegram",
+            "email",
+            "source",
+            "source_url",
+            "source_text",
+            "extraction_notes",
+        ]
+        extra_kwargs = {
+            "city_code": {"required": False, "allow_blank": True},
+            "salary": {"required": False, "allow_blank": True},
+            "salary_from": {"required": False, "allow_null": True},
+            "salary_to": {"required": False, "allow_null": True},
+            "salary_currency": {"required": False, "allow_blank": True},
+            "salary_tax_type": {"required": False, "allow_blank": True},
+            "salary_hours_month": {"required": False, "allow_null": True},
+            "additional_phone": {"required": False, "allow_blank": True},
+            "additional_phone_2": {"required": False, "allow_blank": True},
+            "additional_phone_3": {"required": False, "allow_blank": True},
+            "experience_required": {"required": False, "allow_blank": True},
+            "housing_cost": {"required": False, "allow_blank": True},
+            "hide_primary_phone": {"required": False},
+            "whatsapp": {"required": False, "allow_blank": True},
+            "viber": {"required": False, "allow_blank": True},
+            "telegram": {"required": False, "allow_blank": True},
+            "email": {"required": False, "allow_blank": True},
+        }
+
+    def validate(self, attrs):
+        errors = {}
+
+        for field in ("title", "city", "description", "salary", "housing_cost"):
+            val = attrs.get(field)
+            if isinstance(val, str):
+                attrs[field] = censor_minimal(val).strip()
+
+        def _check_len(field, max_len):
+            val = attrs.get(field)
+            if isinstance(val, str) and len(val) > max_len:
+                errors[field] = f"max {max_len} chars"
+
+        _check_len("title", 120)
+        _check_len("city", 80)
+        _check_len("city_code", 64)
+        _check_len("salary", 80)
+        _check_len("description", 3000)
+        _check_len("housing_cost", 80)
+        _check_len("phone", 30)
+        _check_len("additional_phone", 30)
+        _check_len("additional_phone_2", 30)
+        _check_len("additional_phone_3", 30)
+        _check_len("telegram", 100)
+        _check_len("whatsapp", 100)
+        _check_len("viber", 100)
+        _check_len("email", 254)
+
+        for field in ("title", "city", "description", "salary", "housing_cost"):
+            val = attrs.get(field)
+            if isinstance(val, str) and contains_link(val):
+                errors[field] = "links are not allowed"
+
+        city_code = (attrs.get("city_code") or "").strip().lower()
+        if city_code:
+            if not re.match(r"^[a-z0-9_]+$", city_code):
+                errors["city_code"] = "invalid city code"
+            attrs["city_code"] = city_code
+
+        contact_pattern = re.compile(r"^[0-9+()\-\ ]+$")
+        for field in (
+            "phone",
+            "additional_phone",
+            "additional_phone_2",
+            "additional_phone_3",
+            "telegram",
+            "whatsapp",
+            "viber",
+        ):
+            val = attrs.get(field)
+            if val and not contact_pattern.match(val):
+                errors[field] = "only digits and symbols"
+
+        primary_phone = (attrs.get("phone") or "").strip()
+        additional_phones = [
+            (attrs.get("additional_phone") or "").strip(),
+            (attrs.get("additional_phone_2") or "").strip(),
+            (attrs.get("additional_phone_3") or "").strip(),
+        ]
+        additional_phones = [value for value in additional_phones if value]
+        attrs["additional_phone"] = additional_phones[0] if additional_phones else ""
+        attrs["additional_phone_2"] = (
+            additional_phones[1] if len(additional_phones) > 1 else ""
+        )
+        attrs["additional_phone_3"] = (
+            additional_phones[2] if len(additional_phones) > 2 else ""
+        )
+
+        email = (attrs.get("email") or "").strip()
+        if email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+            errors["email"] = "invalid email"
+        if not primary_phone and not email:
+            errors["contacts"] = "provide at least one contact"
+
+        salary_from = attrs.get("salary_from")
+        salary_to = attrs.get("salary_to")
+        salary_hours_month = attrs.get("salary_hours_month")
+        salary_text = (attrs.get("salary") or "").strip()
+        if salary_from is not None and (salary_from < 1 or salary_from > 999):
+            errors["salary_from"] = "must be in range 1..999"
+        if salary_to is not None and (salary_to < 1 or salary_to > 999):
+            errors["salary_to"] = "must be in range 1..999"
+        if salary_from is not None and salary_to is not None and salary_from > salary_to:
+            errors["salary_to"] = "must be greater or equal salary_from"
+        if salary_hours_month is not None and (
+            salary_hours_month < 1 or salary_hours_month > 300
+        ):
+            errors["salary_hours_month"] = "must be in range 1..300"
+        if not salary_text and salary_from is None and salary_to is None:
+            errors["salary"] = "required"
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+    def create(self, validated_data):
+        for key in ("source_url", "source_text", "extraction_notes"):
+            validated_data.pop(key, None)
+        return super().create(validated_data)
+
+
 class VacancyMineSerializer(serializers.ModelSerializer):
     contacts = serializers.SerializerMethodField()
     moderation_status = serializers.SerializerMethodField()

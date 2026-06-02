@@ -28,6 +28,7 @@ SECRET_KEY = os.environ.get(
     "SECRET_KEY",
     "django-insecure-#yqfi@^q7msdck-asl-8e-u@opc9io!@2$^ip139v$2w^mlpim",
 )
+INTERNAL_IMPORT_TOKEN = os.environ.get("INTERNAL_IMPORT_TOKEN", "").strip()
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "1") == "1"
