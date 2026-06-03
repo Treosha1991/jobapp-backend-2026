@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Max, Q, Sum
 from django.utils import timezone
@@ -34,6 +35,10 @@ class EconomyActionRequiredError(Exception):
         super().__init__(code)
         self.code = code
         self.state = state
+
+
+def rewarded_ads_enabled():
+    return bool(getattr(settings, "REWARDED_ADS_ENABLED", False))
 
 
 def get_economy_config():
@@ -586,6 +591,8 @@ def build_vacancy_submission_state(user, *, flow, now=None):
         tx_kind = "vacancy_edit_resubmit"
 
     free_remaining = max(0, free_limit - free_used)
+    if not rewarded_ads_enabled():
+        free_remaining = 0
     employer_subscription_active = profile.has_employer_subscription(current_time)
     employer_daily_limit = int(config.employer_daily_free_submissions_limit or 0)
     employer_daily_used = _current_employer_daily_submission_usage(
@@ -758,6 +765,8 @@ def build_contact_access_state(user, vacancy, *, now=None):
     if getattr(user, "is_authenticated", False):
         unlocked = get_active_unlocked_contact(user, vacancy, now=current_time)
     current_mode = mode_state["current_mode"]
+    if current_mode == "ad" and not rewarded_ads_enabled():
+        current_mode = "paid"
 
     base_price = _credit_decimal(policy.contact_unlock_price_credits or ZERO_CREDITS)
     effective_price = base_price

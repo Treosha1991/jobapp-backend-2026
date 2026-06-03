@@ -196,6 +196,8 @@ GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = os.environ.get(
     "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON", ""
 ).strip()
 
+REWARDED_ADS_ENABLED = os.environ.get("REWARDED_ADS_ENABLED", "0") == "1"
+
 # Google Sign-In / ID token verification
 # Comma-separated list of allowed OAuth client IDs for Google Sign-In.
 GOOGLE_SIGN_IN_CLIENT_IDS = os.environ.get("GOOGLE_SIGN_IN_CLIENT_IDS", "").strip()
