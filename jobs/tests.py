@@ -24,7 +24,11 @@ class InternalVacancyImportAPITest(TestCase):
             "salary_to": 35,
             "salary_currency": "PLN",
             "salary_tax_type": "netto",
-            "description": "Imported vacancy from a verified source text.",
+            "description": (
+                "Imported vacancy from a verified source text.\n"
+                "Contacts: +48661590180\n"
+                "Important details stay visible."
+            ),
             "housing_type": "paid",
             "housing_cost": "Hostel provided, cost not specified",
             "phone": "+48661590180",
@@ -59,6 +63,8 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertFalse(vacancy.is_rejected)
         self.assertFalse(vacancy.is_editing)
         self.assertEqual(vacancy.moderation_status, "pending")
+        self.assertNotIn("+48661590180", vacancy.description)
+        self.assertIn("Important details stay visible.", vacancy.description)
 
         attempt = VacancyModerationAttempt.objects.get(vacancy=vacancy)
         self.assertEqual(attempt.decision, "pending")

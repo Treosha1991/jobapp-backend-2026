@@ -63,6 +63,27 @@ def _salary_monthly_to(obj):
     return salary_to * hours
 
 
+_IMPORT_PHONE_RE = re.compile(r"(?:\+|00)\d(?:[\s().-]*\d){7,16}")
+_IMPORT_CONTACT_HEADING_RE = re.compile(
+    r"^\s*(?:contacts?|phones?|tel|telephone|kontakt|kontakty|контакты?)\s*:?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_import_description_contacts(value):
+    text = value or ""
+    if not text:
+        return text
+    kept_lines = []
+    for line in text.splitlines():
+        if _IMPORT_PHONE_RE.search(line):
+            continue
+        if _IMPORT_CONTACT_HEADING_RE.match(line):
+            continue
+        kept_lines.append(line.rstrip())
+    return "\n".join(kept_lines).strip()
+
+
 _MODERATION_COMPARISON_FIELDS = [
     "title",
     "country",
@@ -926,6 +947,9 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         errors = {}
+        description = attrs.get("description")
+        if isinstance(description, str):
+            attrs["description"] = _strip_import_description_contacts(description)
 
         for field in ("title", "city", "description", "salary", "housing_cost"):
             val = attrs.get(field)
