@@ -286,12 +286,33 @@ def _normalized_future_expiration(value, *, now):
     return expires_at
 
 
-def _subscription_entitlement_window(current_until, *, now, duration_days, store_expires_at):
-    store_expires_at = _normalized_future_expiration(store_expires_at, now=now)
+def _normalize_expiration(value):
+    if value is None:
+        return None
+    expires_at = value
+    if timezone.is_naive(expires_at):
+        expires_at = timezone.make_aware(expires_at, timezone.get_current_timezone())
+    return expires_at
+
+
+def _subscription_entitlement_window(
+    current_until,
+    *,
+    now,
+    duration_days,
+    store_expires_at,
+    require_store_expiration=False,
+):
+    current_until = _normalized_future_expiration(current_until, now=now)
+    store_expires_at = _normalize_expiration(store_expires_at)
     if store_expires_at is not None:
+        if store_expires_at <= now:
+            return now, current_until
         if current_until and current_until > store_expires_at:
             return now, current_until
         return now, store_expires_at
+    if require_store_expiration:
+        raise ValueError("store_subscription_expiration_missing")
     return _subscription_extension_window(
         current_until,
         now=now,
@@ -386,53 +407,71 @@ def apply_store_product_purchase(
         if duration_days <= 0:
             raise ValueError("store_subscription_duration_invalid")
         profile = get_or_create_monetization_profile(user)
+        previous_until = _normalized_future_expiration(
+            profile.employer_subscription_until,
+            now=now,
+        )
         entitlement_started_at, entitlement_expires_at = _subscription_entitlement_window(
             profile.employer_subscription_until,
             now=now,
             duration_days=duration_days,
             store_expires_at=store_entitlement_expires_at,
+            require_store_expiration=platform in {"android", "ios"},
         )
         profile.employer_subscription_until = entitlement_expires_at
         profile.save(update_fields=["employer_subscription_until", "updated_at"])
-        record_wallet_event(
-            user,
-            kind="subscription_activation",
-            note=(product.title or "").strip(),
-            metadata={
-                "store_product_code": product.code,
-                "store_product_id": product.store_product_id,
-                "platform": platform,
-                "purchase_record_id": purchase_record.id,
-                "subscription_kind": "employer",
-                "duration_days": duration_days,
-            },
-        )
+        if entitlement_expires_at and (
+            previous_until is None or entitlement_expires_at > previous_until
+        ):
+            record_wallet_event(
+                user,
+                kind="subscription_activation",
+                note=(product.title or "").strip(),
+                metadata={
+                    "store_product_code": product.code,
+                    "store_product_id": product.store_product_id,
+                    "platform": platform,
+                    "purchase_record_id": purchase_record.id,
+                    "subscription_kind": "employer",
+                    "duration_days": duration_days,
+                    "entitlement_expires_at": entitlement_expires_at.isoformat(),
+                },
+            )
     elif product.product_type == "seeker_subscription":
         duration_days = int(product.duration_days or 0)
         if duration_days <= 0:
             raise ValueError("store_subscription_duration_invalid")
         profile = get_or_create_monetization_profile(user)
+        previous_until = _normalized_future_expiration(
+            profile.seeker_subscription_until,
+            now=now,
+        )
         entitlement_started_at, entitlement_expires_at = _subscription_entitlement_window(
             profile.seeker_subscription_until,
             now=now,
             duration_days=duration_days,
             store_expires_at=store_entitlement_expires_at,
+            require_store_expiration=platform in {"android", "ios"},
         )
         profile.seeker_subscription_until = entitlement_expires_at
         profile.save(update_fields=["seeker_subscription_until", "updated_at"])
-        record_wallet_event(
-            user,
-            kind="subscription_activation",
-            note=(product.title or "").strip(),
-            metadata={
-                "store_product_code": product.code,
-                "store_product_id": product.store_product_id,
-                "platform": platform,
-                "purchase_record_id": purchase_record.id,
-                "subscription_kind": "seeker",
-                "duration_days": duration_days,
-            },
-        )
+        if entitlement_expires_at and (
+            previous_until is None or entitlement_expires_at > previous_until
+        ):
+            record_wallet_event(
+                user,
+                kind="subscription_activation",
+                note=(product.title or "").strip(),
+                metadata={
+                    "store_product_code": product.code,
+                    "store_product_id": product.store_product_id,
+                    "platform": platform,
+                    "purchase_record_id": purchase_record.id,
+                    "subscription_kind": "seeker",
+                    "duration_days": duration_days,
+                    "entitlement_expires_at": entitlement_expires_at.isoformat(),
+                },
+            )
     else:
         raise ValueError("store_product_type_invalid")
 
