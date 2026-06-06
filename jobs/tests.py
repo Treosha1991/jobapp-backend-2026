@@ -75,3 +75,8 @@ class InternalVacancyImportAPITest(TestCase):
 
         service_user = User.objects.get(username=SERVICE_BOARD_USERNAME)
         self.assertFalse(service_user.has_usable_password())
+
+        policy = vacancy.contact_access_policy
+        self.assertEqual(policy.contact_unlock_mode, "ad_forever")
+        self.assertEqual(policy.contact_unlock_price_credits, 0)
+        self.assertEqual(policy.set_by, service_user)

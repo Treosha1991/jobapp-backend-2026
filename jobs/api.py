@@ -928,6 +928,17 @@ class InternalVacancyImportAPIView(APIView):
                 submitted_at=now,
                 extra_context=extra_context,
             )
+            VacancyContactAccessPolicy.objects.update_or_create(
+                vacancy=vacancy,
+                defaults={
+                    "contact_unlock_mode": "ad_forever",
+                    "contact_unlock_timer_hours": None,
+                    "contact_unlock_price_credits": 0,
+                    "contact_unlock_paid_click_limit": None,
+                    "paid_window_started_at": None,
+                    "set_by": service_user,
+                },
+            )
 
         return Response(
             {
