@@ -320,6 +320,48 @@ def _subscription_entitlement_window(
     )
 
 
+def _locked_monetization_profile(user):
+    profile = (
+        UserMonetizationProfile.objects.select_for_update()
+        .filter(user=user)
+        .first()
+    )
+    if profile is None:
+        profile = UserMonetizationProfile.objects.create(user=user)
+    return profile
+
+
+def _restore_subscription_entitlement(user, *, product_type, expires_at, now):
+    expires_at = _normalized_future_expiration(expires_at, now=now)
+    if expires_at is None:
+        return False
+
+    profile = _locked_monetization_profile(user)
+    if product_type == "employer_subscription":
+        current_until = _normalized_future_expiration(
+            profile.employer_subscription_until,
+            now=now,
+        )
+        if current_until is not None and current_until >= expires_at:
+            return False
+        profile.employer_subscription_until = expires_at
+        profile.save(update_fields=["employer_subscription_until", "updated_at"])
+        return True
+
+    if product_type == "seeker_subscription":
+        current_until = _normalized_future_expiration(
+            profile.seeker_subscription_until,
+            now=now,
+        )
+        if current_until is not None and current_until >= expires_at:
+            return False
+        profile.seeker_subscription_until = expires_at
+        profile.save(update_fields=["seeker_subscription_until", "updated_at"])
+        return True
+
+    return False
+
+
 @transaction.atomic
 def apply_store_product_purchase(
     user,
@@ -379,6 +421,26 @@ def apply_store_product_purchase(
         )
 
     if purchase_record.status == "validated":
+        if product.product_type in {"employer_subscription", "seeker_subscription"}:
+            now = timezone.now()
+            store_expires_at = _normalize_expiration(store_entitlement_expires_at)
+            record_expires_at = _normalize_expiration(
+                purchase_record.entitlement_expires_at,
+            )
+            if store_expires_at and (
+                record_expires_at is None or store_expires_at > record_expires_at
+            ):
+                purchase_record.entitlement_expires_at = store_expires_at
+                purchase_record.save(
+                    update_fields=["entitlement_expires_at", "updated_at"],
+                )
+                record_expires_at = store_expires_at
+            _restore_subscription_entitlement(
+                user,
+                product_type=product.product_type,
+                expires_at=record_expires_at,
+                now=now,
+            )
         return purchase_record, False
 
     now = timezone.now()
@@ -406,7 +468,7 @@ def apply_store_product_purchase(
         duration_days = int(product.duration_days or 0)
         if duration_days <= 0:
             raise ValueError("store_subscription_duration_invalid")
-        profile = get_or_create_monetization_profile(user)
+        profile = _locked_monetization_profile(user)
         previous_until = _normalized_future_expiration(
             profile.employer_subscription_until,
             now=now,
@@ -441,7 +503,7 @@ def apply_store_product_purchase(
         duration_days = int(product.duration_days or 0)
         if duration_days <= 0:
             raise ValueError("store_subscription_duration_invalid")
-        profile = get_or_create_monetization_profile(user)
+        profile = _locked_monetization_profile(user)
         previous_until = _normalized_future_expiration(
             profile.seeker_subscription_until,
             now=now,
