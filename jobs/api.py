@@ -1653,9 +1653,13 @@ class ApplePurchaseCompleteAPIView(APIView):
             )
 
         try:
+            # App receipts may contain auto-renewable subscription entries even
+            # when the current purchase is a consumable credit pack. Sending the
+            # shared secret for every iOS receipt keeps Apple's verification
+            # response consistent across mixed consumable/subscription receipts.
             verified_payload = _verify_apple_receipt(
                 receipt_data,
-                requires_shared_secret=_is_subscription_store_product(product),
+                requires_shared_secret=True,
             )
             matched_item = _find_apple_receipt_item(
                 verified_payload=verified_payload,
