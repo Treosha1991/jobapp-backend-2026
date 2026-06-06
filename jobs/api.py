@@ -1,5 +1,6 @@
 from math import ceil
 from hmac import compare_digest
+import logging
 import secrets
 from datetime import datetime, time, timedelta, timezone as datetime_timezone
 import requests
@@ -112,6 +113,7 @@ OWNER_MODERATION_RESUBMIT_MAX_PER_DAY = 3
 APPLE_VERIFY_RECEIPT_PRODUCTION_URL = "https://buy.itunes.apple.com/verifyReceipt"
 APPLE_VERIFY_RECEIPT_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt"
 APPLE_VERIFY_RECEIPT_TIMEOUT_SECONDS = 20
+logger = logging.getLogger(__name__)
 
 
 class AppleIAPNotConfiguredError(Exception):
@@ -1669,6 +1671,39 @@ class ApplePurchaseCompleteAPIView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         except AppleIAPVerificationError as exc:
+            payload_status = ""
+            payload_bundle = ""
+            payload_product_ids = []
+            if isinstance(exc.payload, dict):
+                payload_status = exc.payload.get("status", "")
+                receipt = exc.payload.get("receipt") or {}
+                if isinstance(receipt, dict):
+                    payload_bundle = (receipt.get("bundle_id") or "").strip()
+                    in_app = receipt.get("in_app") or []
+                    if isinstance(in_app, list):
+                        payload_product_ids.extend(
+                            (item.get("product_id") or "").strip()
+                            for item in in_app
+                            if isinstance(item, dict)
+                        )
+                latest = exc.payload.get("latest_receipt_info") or []
+                if isinstance(latest, list):
+                    payload_product_ids.extend(
+                        (item.get("product_id") or "").strip()
+                        for item in latest
+                        if isinstance(item, dict)
+                    )
+            logger.warning(
+                "Apple IAP verification failed: code=%s detail=%s product_code=%s expected_product_id=%s purchase_id=%s apple_status=%s receipt_bundle=%s receipt_product_ids=%s",
+                exc.code,
+                exc.detail,
+                product.code,
+                expected_product_id,
+                raw_purchase_id,
+                payload_status,
+                payload_bundle,
+                sorted({item for item in payload_product_ids if item}),
+            )
             return Response(
                 {
                     "error": exc.code,
