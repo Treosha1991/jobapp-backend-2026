@@ -972,14 +972,26 @@ def unlock_vacancy_contacts(
         charged_credits = _credit_decimal(state["effective_price_credits"] or ZERO_CREDITS)
         unlock_source = "paid"
         metadata["charged_credits"] = str(charged_credits)
-        _, tx = spend_credits(
-            user,
-            amount=charged_credits,
-            kind="contact_unlock",
-            note="Paid contact unlock",
-            related_vacancy=vacancy,
-            metadata=metadata,
-        )
+        if charged_credits > ZERO_CREDITS:
+            _, tx = spend_credits(
+                user,
+                amount=charged_credits,
+                kind="contact_unlock",
+                note="Paid contact unlock",
+                related_vacancy=vacancy,
+                metadata=metadata,
+            )
+        else:
+            # Some legacy/imported vacancies still have a zero contact price.
+            # Treat those as a successful free unlock instead of trying to
+            # spend 0 credits, which would raise and surface as a server error.
+            _, tx = record_wallet_event(
+                user,
+                kind="contact_unlock",
+                note="Free contact unlock",
+                related_vacancy=vacancy,
+                metadata=metadata,
+            )
     elif state["current_action"] == "ad":
         should_persist_unlock = False
         unlock_source = "ad"
