@@ -910,9 +910,9 @@ class InternalVacancyImportAPIView(APIView):
             vacancy = serializer.save(
                 created_by=service_user,
                 creator_token=secrets.token_hex(32),
-                approved_at=None,
+                approved_at=now,
                 expires_at=now + VACANCY_LIVE_WINDOW,
-                is_approved=False,
+                is_approved=True,
                 is_rejected=False,
                 rejection_reason="",
                 moderation_baseline={},
@@ -920,15 +920,8 @@ class InternalVacancyImportAPIView(APIView):
                 is_deleted_by_moderator=False,
                 is_paused_by_owner=False,
                 is_editing=False,
-                editing_started_at=now,
+                editing_started_at=None,
                 revision=1,
-            )
-            _create_moderation_attempt(
-                vacancy,
-                trigger_type="create",
-                submitted_by=service_user,
-                submitted_at=now,
-                extra_context=extra_context,
             )
             VacancyContactAccessPolicy.objects.update_or_create(
                 vacancy=vacancy,
@@ -941,6 +934,12 @@ class InternalVacancyImportAPIView(APIView):
                     "set_by": service_user,
                 },
             )
+
+        try:
+            summary = dispatch_vacancy_alerts(vacancy)
+            print(f"[VACANCY-ALERTS] vacancy={vacancy.id} summary={summary}")
+        except Exception as exc:
+            print(f"[VACANCY-ALERTS-ERROR] vacancy={vacancy.id}: {exc}")
 
         return Response(
             {

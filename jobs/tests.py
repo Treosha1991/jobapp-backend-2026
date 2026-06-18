@@ -49,7 +49,7 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertEqual(Vacancy.objects.count(), 0)
 
     @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
-    def test_creates_pending_service_board_vacancy(self):
+    def test_creates_approved_service_board_vacancy(self):
         response = self.client.post(
             self.url,
             self.payload,
@@ -60,19 +60,14 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertEqual(response.status_code, 201)
         vacancy = Vacancy.objects.get(id=response.data["vacancy_id"])
         self.assertEqual(vacancy.created_by.username, SERVICE_BOARD_USERNAME)
-        self.assertFalse(vacancy.is_approved)
+        self.assertTrue(vacancy.is_approved)
         self.assertFalse(vacancy.is_rejected)
         self.assertFalse(vacancy.is_editing)
-        self.assertEqual(vacancy.moderation_status, "pending")
+        self.assertEqual(vacancy.moderation_status, "approved")
+        self.assertIsNotNone(vacancy.approved_at)
         self.assertNotIn("+48661590180", vacancy.description)
         self.assertIn("Important details stay visible.", vacancy.description)
-
-        attempt = VacancyModerationAttempt.objects.get(vacancy=vacancy)
-        self.assertEqual(attempt.decision, "pending")
-        self.assertEqual(attempt.trigger_type, "create")
-        self.assertEqual(attempt.submitted_by, vacancy.created_by)
-        self.assertEqual(attempt.extra_context["import_source"], "internal_import")
-        self.assertEqual(attempt.extra_context["source_text"], "Original external vacancy text")
+        self.assertFalse(VacancyModerationAttempt.objects.filter(vacancy=vacancy).exists())
 
         service_user = User.objects.get(username=SERVICE_BOARD_USERNAME)
         self.assertFalse(service_user.has_usable_password())
