@@ -952,6 +952,91 @@ class InternalVacancyImportAPIView(APIView):
         )
 
 
+class InternalVacancyDeleteAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        configured_token = (settings.INTERNAL_IMPORT_TOKEN or "").strip()
+        request_token = _internal_import_token_from_request(request)
+        if not configured_token:
+            return Response(
+                {"error": "internal_import_not_configured"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        if not request_token or not compare_digest(request_token, configured_token):
+            return Response(
+                {"error": "invalid_internal_import_token"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        raw_ids = request.data.get("vacancy_ids")
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return Response(
+                {"error": "vacancy_ids_required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        vacancy_ids = []
+        for raw_id in raw_ids:
+            try:
+                vacancy_id = int(raw_id)
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "invalid_vacancy_id", "value": raw_id},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if vacancy_id > 0:
+                vacancy_ids.append(vacancy_id)
+
+        service_user = User.objects.filter(username=SERVICE_BOARD_USERNAME).first()
+        if not service_user:
+            return Response({"deleted": [], "skipped": vacancy_ids}, status=status.HTTP_200_OK)
+
+        now = timezone.now()
+        deleted = []
+        with transaction.atomic():
+            vacancies = (
+                Vacancy.objects.select_for_update()
+                .filter(
+                    id__in=vacancy_ids,
+                    created_by=service_user,
+                    is_deleted_by_moderator=False,
+                )
+                .order_by("id")
+            )
+            for vacancy in vacancies:
+                vacancy.is_approved = False
+                vacancy.is_rejected = True
+                vacancy.is_paused_by_owner = False
+                vacancy.paused_by_owner_at = None
+                vacancy.is_editing = False
+                vacancy.rejection_reason = "Removed by internal import cleanup"
+                vacancy.moderation_baseline = {}
+                vacancy.last_moderator_rejection_reason = vacancy.rejection_reason
+                vacancy.editing_started_at = None
+                vacancy.is_deleted_by_moderator = True
+                vacancy.deleted_by_moderator_at = now
+                vacancy.save(
+                    update_fields=[
+                        "is_approved",
+                        "is_rejected",
+                        "is_paused_by_owner",
+                        "paused_by_owner_at",
+                        "is_editing",
+                        "rejection_reason",
+                        "moderation_baseline",
+                        "last_moderator_rejection_reason",
+                        "editing_started_at",
+                        "is_deleted_by_moderator",
+                        "deleted_by_moderator_at",
+                    ]
+                )
+                deleted.append(vacancy.id)
+
+        skipped = [vacancy_id for vacancy_id in vacancy_ids if vacancy_id not in deleted]
+        return Response({"deleted": deleted, "skipped": skipped}, status=status.HTTP_200_OK)
+
+
 def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff
 

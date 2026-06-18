@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .models import Vacancy, VacancyModerationAttempt
@@ -80,3 +81,50 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertEqual(policy.contact_unlock_mode, "ad_forever")
         self.assertEqual(policy.contact_unlock_price_credits, 0)
         self.assertEqual(policy.set_by, service_user)
+
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    def test_soft_deletes_only_service_board_vacancies(self):
+        create_response = self.client.post(
+            self.url,
+            self.payload,
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+        service_vacancy = Vacancy.objects.get(id=create_response.data["vacancy_id"])
+        other_user = User.objects.create_user(username="other", password="password")
+        other_vacancy = Vacancy.objects.create(
+            created_by=other_user,
+            title="Other vacancy",
+            country="PL",
+            city="Poznan",
+            city_code="poznan",
+            category="warehouse",
+            audience_country_codes="UA",
+            employment_type="shift",
+            experience_required="without",
+            salary="27 PLN",
+            salary_currency="PLN",
+            description="Visible description",
+            housing_type="none",
+            phone="+48111111111",
+            source="agency",
+            expires_at=timezone.now() + timezone.timedelta(days=30),
+        )
+
+        response = self.client.post(
+            "/api/internal/delete-vacancies/",
+            {"vacancy_ids": [service_vacancy.id, other_vacancy.id]},
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], [service_vacancy.id])
+        self.assertEqual(response.data["skipped"], [other_vacancy.id])
+
+        service_vacancy.refresh_from_db()
+        other_vacancy.refresh_from_db()
+        self.assertTrue(service_vacancy.is_deleted_by_moderator)
+        self.assertFalse(service_vacancy.is_approved)
+        self.assertTrue(service_vacancy.is_rejected)
+        self.assertFalse(other_vacancy.is_deleted_by_moderator)

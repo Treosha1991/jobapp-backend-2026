@@ -38,6 +38,7 @@ from .api import (
     WalletTransactionListAPIView,
     VacancySubmissionStateAPIView,
     VacancyContactAccessStateAPIView,
+    InternalVacancyDeleteAPIView,
     InternalVacancyImportAPIView,
 )
 from .auth_api import (
@@ -98,6 +99,7 @@ urlpatterns = [
     ),
     path("economy/vacancy-submission-state/", VacancySubmissionStateAPIView.as_view(), name="economy-vacancy-submission-state"),
     path("internal/import-vacancy/", InternalVacancyImportAPIView.as_view(), name="internal-import-vacancy"),
+    path("internal/delete-vacancies/", InternalVacancyDeleteAPIView.as_view(), name="internal-delete-vacancies"),
 
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),
     path("vacancies/bookmark-status/", VacancyBookmarkStatusAPIView.as_view(), name="vacancy-bookmark-status"),
