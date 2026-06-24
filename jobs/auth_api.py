@@ -45,6 +45,37 @@ from .text_filters import (
 
 _PHONE_REQUEST_WINDOW = timedelta(minutes=10)
 _PHONE_REQUEST_MAX_ATTEMPTS = 3
+_DEFAULT_ALLOWED_PHONE_COUNTRY_CODES = (
+    "+43",  # Austria
+    "+32",  # Belgium
+    "+359",  # Bulgaria
+    "+385",  # Croatia
+    "+357",  # Cyprus
+    "+420",  # Czech Republic
+    "+45",  # Denmark
+    "+372",  # Estonia
+    "+358",  # Finland
+    "+33",  # France
+    "+49",  # Germany
+    "+30",  # Greece
+    "+36",  # Hungary
+    "+353",  # Ireland
+    "+39",  # Italy
+    "+371",  # Latvia
+    "+370",  # Lithuania
+    "+352",  # Luxembourg
+    "+356",  # Malta
+    "+31",  # Netherlands
+    "+48",  # Poland
+    "+351",  # Portugal
+    "+40",  # Romania
+    "+421",  # Slovakia
+    "+386",  # Slovenia
+    "+34",  # Spain
+    "+46",  # Sweden
+    "+375",  # Belarus
+    "+380",  # Ukraine
+)
 _ACCOUNT_DELETION_DELAY = timedelta(days=30)
 _phone_request_attempts = {}
 _phone_request_lock = threading.Lock()
@@ -70,6 +101,34 @@ _RESERVED_NICKNAME_PARTS = (
     "creator",
     "administrator",
 )
+
+
+def _allowed_phone_country_codes():
+    raw_codes = os.environ.get("PHONE_AUTH_ALLOWED_COUNTRY_CODES", "").strip()
+    if raw_codes:
+        codes = tuple(code.strip() for code in raw_codes.split(",") if code.strip())
+    else:
+        codes = _DEFAULT_ALLOWED_PHONE_COUNTRY_CODES
+    return tuple(sorted(codes, key=len, reverse=True))
+
+
+def _phone_country_allowed(phone_e164):
+    return any(phone_e164.startswith(code) for code in _allowed_phone_country_codes())
+
+
+def _unsupported_phone_country_payload(simple_mode=False):
+    text = (
+        "Подтверждение по телефону доступно только для номеров стран ЕС, Украины "
+        "и Беларуси. Укажите поддерживаемый номер или свяжитесь с поддержкой."
+    )
+    payload = {
+        "error": "unsupported_phone_country",
+        "message": text,
+        "detail": text,
+    }
+    if simple_mode:
+        payload["status"] = "error"
+    return payload
 
 
 def _generate_code():
@@ -423,6 +482,9 @@ def _send_email_code(email, code, purpose="register"):
 
 
 def _send_whatsapp_code(phone_e164, code, purpose):
+    if not _phone_country_allowed(phone_e164):
+        return False
+
     if purpose == "reset":
         text = f"JobHub: password reset code {code}. Valid 10 minutes."
     elif purpose == "login":
@@ -516,6 +578,9 @@ def _twilio_credentials():
 
 
 def _twilio_verify_start(phone_e164, channel="whatsapp"):
+    if not _phone_country_allowed(phone_e164):
+        return False, "unsupported_phone_country", status.HTTP_400_BAD_REQUEST
+
     service_sid = _twilio_verify_service_sid()
     sid, token = _twilio_credentials()
     if not service_sid or not sid or not token:
@@ -851,6 +916,12 @@ class PhoneRequestCodeAPIView(APIView):
                 return Response({"error": "invalid phone"}, status=status.HTTP_400_BAD_REQUEST)
             return Response({"status": "error", "message": "invalid_phone"}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not _phone_country_allowed(phone):
+            return Response(
+                _unsupported_phone_country_payload(simple_mode=not bool(purpose)),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # New simple mode (no purpose): pure Twilio Verify request.
         if not purpose:
             if not _consume_phone_request_slot(phone):
@@ -1008,6 +1079,11 @@ class ResetPasswordRequestAPIView(APIView):
             return Response({"error": "email or phone required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if phone:
+            if not _phone_country_allowed(phone):
+                return Response(
+                    _unsupported_phone_country_payload(),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             if _phone_reset_request_blocked(phone):
                 return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
             prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
@@ -1134,6 +1210,11 @@ class ChangePasswordRequestAPIView(APIView):
         profile = UserProfile.objects.filter(user=user).first()
         if not profile or not profile.phone_verified or not profile.phone_e164:
             return Response({"error": "phone_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
+        if not _phone_country_allowed(profile.phone_e164):
+            return Response(
+                _unsupported_phone_country_payload(),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if _phone_code_too_frequent(profile.phone_e164, "change_password"):
             return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
@@ -1560,6 +1641,11 @@ class AccountDeletionRequestAPIView(APIView):
         profile = UserProfile.objects.filter(user=user).first()
         if not profile or not profile.phone_verified or not profile.phone_e164:
             return Response({"error": "phone_not_verified"}, status=status.HTTP_400_BAD_REQUEST)
+        if not _phone_country_allowed(profile.phone_e164):
+            return Response(
+                _unsupported_phone_country_payload(),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if _phone_code_too_frequent(profile.phone_e164, "delete_account"):
             return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
