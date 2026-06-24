@@ -3,7 +3,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import Vacancy, VacancyModerationAttempt
+from .models import ModeratorNotificationDelivery, PushDevice, Vacancy, VacancyModerationAttempt
 from .service_sources import SERVICE_BOARD_USERNAME
 
 
@@ -77,16 +77,29 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertEqual(policy.contact_unlock_price_credits, 0)
         self.assertEqual(policy.set_by, service_user)
 
-    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token", PUSH_PROVIDER="log")
     def test_can_create_pending_service_board_vacancy(self):
         payload = {**self.payload, "moderation_status": "pending"}
-
-        response = self.client.post(
-            self.url,
-            payload,
-            format="json",
-            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        moderator = User.objects.create_user(
+            username="moderator",
+            email="moderator@example.com",
+            password="password",
+            is_staff=True,
         )
+        PushDevice.objects.create(
+            user=moderator,
+            token="moderator-device-token",
+            platform="android",
+            app_language="en",
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                self.url,
+                payload,
+                format="json",
+                HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+            )
 
         self.assertEqual(response.status_code, 201)
         vacancy = Vacancy.objects.get(id=response.data["vacancy_id"])
@@ -104,6 +117,13 @@ class InternalVacancyImportAPITest(TestCase):
             ).count(),
             1,
         )
+        delivery = ModeratorNotificationDelivery.objects.get(
+            user=moderator,
+            vacancy=vacancy,
+            kind="vacancy_pending",
+        )
+        self.assertEqual(delivery.status, "sent")
+        self.assertEqual(delivery.device_platform, "android")
 
     @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
     def test_soft_deletes_only_service_board_vacancies(self):

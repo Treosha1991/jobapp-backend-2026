@@ -67,6 +67,7 @@ from .models import (
     WalletTransaction,
 )
 from .monetization import CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
+from .moderation_notifications import notify_moderators_about_pending_vacancy
 from .service_sources import (
     SERVICE_BOARD_USERNAME,
     service_board_meta_for_user,
@@ -114,6 +115,14 @@ APPLE_VERIFY_RECEIPT_PRODUCTION_URL = "https://buy.itunes.apple.com/verifyReceip
 APPLE_VERIFY_RECEIPT_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt"
 APPLE_VERIFY_RECEIPT_TIMEOUT_SECONDS = 20
 logger = logging.getLogger(__name__)
+
+
+def _notify_moderators_about_pending_vacancy_safe(vacancy):
+    try:
+        summary = notify_moderators_about_pending_vacancy(vacancy)
+        print(f"[MODERATION-PUSH] vacancy={vacancy.id} summary={summary}")
+    except Exception as exc:
+        print(f"[MODERATION-PUSH-ERROR] vacancy={vacancy.id}: {exc}")
 
 
 class AppleIAPNotConfiguredError(Exception):
@@ -770,6 +779,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
         save_as_draft_raw = str(self.request.data.get("save_as_draft", "")).strip().lower()
         save_as_draft = save_as_draft_raw in ("1", "true", "yes", "on")
         submission_method = (self.request.data.get("submission_method") or "").strip().lower()
+        notify_moderators = False
         try:
             with transaction.atomic():
                 vacancy = serializer.save(
@@ -796,6 +806,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
                         submitted_by=self.request.user,
                         submitted_at=now,
                     )
+                    notify_moderators = True
                     apply_vacancy_submission_action(
                         self.request.user,
                         flow="create",
@@ -821,6 +832,8 @@ class VacancyCreateAPIView(generics.CreateAPIView):
                     ),
                 }
             )
+        if notify_moderators:
+            transaction.on_commit(lambda: _notify_moderators_about_pending_vacancy_safe(vacancy))
         if vacancy.is_approved and not vacancy.is_deleted_by_moderator:
             try:
                 summary = dispatch_vacancy_alerts(vacancy)
@@ -946,6 +959,9 @@ class InternalVacancyImportAPIView(APIView):
                     "set_by": service_user,
                 },
             )
+
+        if create_pending:
+            transaction.on_commit(lambda: _notify_moderators_about_pending_vacancy_safe(vacancy))
 
         if vacancy.is_approved:
             try:
@@ -2523,6 +2539,7 @@ class VacancyResubmitAPIView(APIView):
             trigger_type="moderator_resubmit",
             submitted_by=request.user,
         )
+        transaction.on_commit(lambda: _notify_moderators_about_pending_vacancy_safe(vacancy))
         return Response({"detail": "resubmitted"}, status=200)
 
 
@@ -2637,6 +2654,7 @@ class VacancyOwnerPauseAPIView(APIView):
                 submitted_by=request.user,
                 submitted_at=current_time,
             )
+            transaction.on_commit(lambda: _notify_moderators_about_pending_vacancy_safe(vacancy))
             return Response(
                 {
                     "detail": "sent_to_moderation",
@@ -2794,6 +2812,9 @@ class VacancyEditAPIView(APIView):
                         trigger_type="create" if submission_flow == "create" else "edit",
                         submitted_by=request.user,
                         submitted_at=current_time,
+                    )
+                    transaction.on_commit(
+                        lambda: _notify_moderators_about_pending_vacancy_safe(vacancy)
                     )
                     apply_vacancy_submission_action(
                         request.user,
@@ -3131,6 +3152,7 @@ class ComplaintModerationActionAPIView(APIView):
                 submitted_at=vacancy.editing_started_at or timezone.now(),
                 extra_context={"complaint_id": complaint.id},
             )
+            transaction.on_commit(lambda: _notify_moderators_about_pending_vacancy_safe(vacancy))
         elif attempt_decision:
             _resolve_latest_moderation_attempt(
                 vacancy,

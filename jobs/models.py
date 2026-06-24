@@ -1007,6 +1007,56 @@ class VacancyAlertDelivery(models.Model):
         return f"VacancyAlertDelivery user={self.user_id} vacancy={self.vacancy_id} status={self.status}"
 
 
+class ModeratorNotificationDelivery(models.Model):
+    STATUS_CHOICES = [
+        ("sent", "Sent"),
+        ("failed", "Failed"),
+        ("skipped_no_device", "Skipped (no device)"),
+        ("skipped_not_configured", "Skipped (provider not configured)"),
+    ]
+
+    KIND_CHOICES = [
+        ("vacancy_pending", "Vacancy pending moderation"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="moderator_notification_deliveries",
+    )
+    vacancy = models.ForeignKey(
+        Vacancy,
+        on_delete=models.CASCADE,
+        related_name="moderator_notification_deliveries",
+    )
+    kind = models.CharField(max_length=40, choices=KIND_CHOICES, default="vacancy_pending")
+    status = models.CharField(max_length=40, choices=STATUS_CHOICES)
+    device_platform = models.CharField(max_length=20, blank=True, default="")
+    device_token_tail = models.CharField(max_length=12, blank=True, default="")
+    provider_message_id = models.CharField(max_length=255, blank=True, default="")
+    error_text = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "vacancy", "kind"],
+                name="jobs_unique_moderator_notification",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["kind", "status", "created_at"]),
+            models.Index(fields=["vacancy", "kind", "created_at"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"ModeratorNotificationDelivery user={self.user_id} "
+            f"vacancy={self.vacancy_id} kind={self.kind} status={self.status}"
+        )
+
+
 @receiver(post_save, sender=User)
 def ensure_user_economy_objects(sender, instance, created, **kwargs):
     if not created:

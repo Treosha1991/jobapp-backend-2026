@@ -34,6 +34,7 @@ from .models import (
     PhoneVerification,
     PurchaseRecord,
     PushDevice,
+    ModeratorNotificationDelivery,
     StoreProduct,
     UnlockedContact,
     UnlockRequest,
@@ -1318,6 +1319,32 @@ class VacancyAlertDeliveryAdmin(admin.ModelAdmin):
     )
     search_fields = ("user__username", "user__email", "vacancy__title", "provider_message_id")
     list_filter = ("status", "device_platform", "created_at")
+    ordering = ("-created_at",)
+
+    @admin.display(description="Status", ordering="status")
+    def status_badge(self, obj):
+        meta = {
+            "sent": ("Sent", "#198754"),
+            "failed": ("Failed", "#B42318"),
+            "skipped_no_device": ("No device", "#667085"),
+            "skipped_not_configured": ("Not configured", "#7A5AF8"),
+        }.get(obj.status, ("Unknown", "#667085"))
+        return _badge(meta[0], bg=meta[1])
+
+
+@admin.register(ModeratorNotificationDelivery)
+class ModeratorNotificationDeliveryAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "user",
+        "vacancy",
+        "kind",
+        "status_badge",
+        "device_platform",
+        "created_at",
+    )
+    search_fields = ("user__username", "user__email", "vacancy__title", "provider_message_id")
+    list_filter = ("kind", "status", "device_platform", "created_at")
     ordering = ("-created_at",)
 
     @admin.display(description="Status", ordering="status")
