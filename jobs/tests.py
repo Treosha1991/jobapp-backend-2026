@@ -92,6 +92,12 @@ class InternalVacancyImportAPITest(TestCase):
             platform="android",
             app_language="en",
         )
+        PushDevice.objects.create(
+            user=moderator,
+            token="moderator-ios-token",
+            platform="ios",
+            app_language="ru",
+        )
 
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(
@@ -123,7 +129,7 @@ class InternalVacancyImportAPITest(TestCase):
             kind="vacancy_pending",
         )
         self.assertEqual(delivery.status, "sent")
-        self.assertEqual(delivery.device_platform, "android")
+        self.assertEqual(delivery.device_platform, "android,ios")
 
     @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
     def test_soft_deletes_only_service_board_vacancies(self):
