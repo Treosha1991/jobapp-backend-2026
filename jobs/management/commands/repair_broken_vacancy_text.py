@@ -13,6 +13,36 @@ TEXT_FIELDS = (
     "salary",
 )
 
+EDITABLE_BASELINE_FIELDS = (
+    "title",
+    "country",
+    "city",
+    "city_code",
+    "category",
+    "audience_country_codes",
+    "employment_type",
+    "experience_required",
+    "driver_license_categories",
+    "salary_from",
+    "salary_to",
+    "salary_currency",
+    "salary_tax_type",
+    "salary_hours_month",
+    "description",
+    "housing_type",
+    "housing_cost",
+    "phone",
+    "additional_phone",
+    "additional_phone_2",
+    "additional_phone_3",
+    "hide_primary_phone",
+    "whatsapp",
+    "viber",
+    "telegram",
+    "email",
+    "source",
+)
+
 
 def looks_broken(value):
     text = (value or "").strip()
@@ -31,6 +61,10 @@ def is_clean_candidate(value):
     return bool(text) and not looks_broken(text)
 
 
+def preview(value):
+    return str(value or "").replace("\n", " ")[:160]
+
+
 class Command(BaseCommand):
     help = "Restore broken question-mark vacancy text from moderation_baseline."
 
@@ -45,16 +79,31 @@ class Command(BaseCommand):
             default="",
             help="Optional comma-separated vacancy IDs to inspect/fix.",
         )
+        parser.add_argument(
+            "--show",
+            action="store_true",
+            help="Print current values and moderation_baseline values for inspected vacancies.",
+        )
+        parser.add_argument(
+            "--restore-baseline",
+            action="store_true",
+            help="For explicit --ids only: restore all editable fields present in moderation_baseline.",
+        )
 
     def handle(self, *args, **options):
         apply_changes = bool(options["apply"])
+        show_values = bool(options["show"])
+        restore_baseline = bool(options["restore_baseline"])
         raw_ids = (options.get("ids") or "").strip()
 
         qs = Vacancy.objects.all().order_by("id")
-        if raw_ids:
+        explicit_ids = bool(raw_ids)
+        if explicit_ids:
             ids = [int(part.strip()) for part in raw_ids.split(",") if part.strip()]
             qs = qs.filter(id__in=ids)
         else:
+            if restore_baseline:
+                raise SystemExit("--restore-baseline requires explicit --ids")
             query = Q()
             for field in TEXT_FIELDS:
                 query |= Q(**{f"{field}__contains": "?"})
@@ -69,40 +118,59 @@ class Command(BaseCommand):
             baseline = vacancy.moderation_baseline or {}
             changes = {}
             unresolved_fields = []
-
-            for field in TEXT_FIELDS:
-                current = getattr(vacancy, field, "") or ""
-                if not looks_broken(current):
-                    continue
-                baseline_value = baseline.get(field, "")
-                if is_clean_candidate(baseline_value):
-                    changes[field] = baseline_value
-                else:
-                    unresolved_fields.append(field)
-
             status = vacancy.moderation_status
+
+            self.stdout.write(self.style.NOTICE(f"Vacancy #{vacancy.id} status={status}"))
+
+            if show_values:
+                for field in TEXT_FIELDS:
+                    self.stdout.write(f"  current.{field}: {preview(getattr(vacancy, field, ''))}")
+                    self.stdout.write(f"  baseline.{field}: {preview(baseline.get(field, ''))}")
+                for field in ("country", "category", "housing_type", "salary_from", "salary_to", "salary_currency", "salary_tax_type"):
+                    self.stdout.write(f"  current.{field}: {preview(getattr(vacancy, field, ''))}")
+                    self.stdout.write(f"  baseline.{field}: {preview(baseline.get(field, ''))}")
+
+            if restore_baseline:
+                for field in EDITABLE_BASELINE_FIELDS:
+                    if field not in baseline:
+                        continue
+                    current = getattr(vacancy, field, None)
+                    baseline_value = baseline.get(field)
+                    if current != baseline_value:
+                        changes[field] = baseline_value
+            else:
+                for field in TEXT_FIELDS:
+                    current = getattr(vacancy, field, "") or ""
+                    if not looks_broken(current):
+                        continue
+                    baseline_value = baseline.get(field, "")
+                    if is_clean_candidate(baseline_value):
+                        changes[field] = baseline_value
+                    else:
+                        unresolved_fields.append(field)
+
             if changes:
                 fixed += 1
                 self.stdout.write(
                     self.style.WARNING(
-                        f"Vacancy #{vacancy.id} ({status}) restore fields: {', '.join(changes.keys())}"
+                        f"  restore fields: {', '.join(changes.keys())}"
                     )
                 )
                 for field, value in changes.items():
-                    preview = str(value).replace("\n", " ")[:120]
-                    self.stdout.write(f"  - {field}: {preview}")
+                    self.stdout.write(f"    - {field}: {preview(getattr(vacancy, field, ''))} -> {preview(value)}")
                 if apply_changes:
                     with transaction.atomic():
                         for field, value in changes.items():
                             setattr(vacancy, field, value)
                         vacancy.save(update_fields=[*changes.keys()])
+            else:
+                self.stdout.write("  no changes")
 
             if unresolved_fields:
                 unresolved.append((vacancy.id, status, unresolved_fields))
                 self.stdout.write(
                     self.style.ERROR(
-                        f"Vacancy #{vacancy.id} ({status}) has broken fields without clean baseline: "
-                        f"{', '.join(unresolved_fields)}"
+                        f"  broken fields without clean baseline: {', '.join(unresolved_fields)}"
                     )
                 )
 
