@@ -78,6 +78,34 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertEqual(policy.set_by, service_user)
 
     @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    def test_can_create_pending_service_board_vacancy(self):
+        payload = {**self.payload, "moderation_status": "pending"}
+
+        response = self.client.post(
+            self.url,
+            payload,
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        vacancy = Vacancy.objects.get(id=response.data["vacancy_id"])
+        self.assertEqual(vacancy.created_by.username, SERVICE_BOARD_USERNAME)
+        self.assertFalse(vacancy.is_approved)
+        self.assertFalse(vacancy.is_rejected)
+        self.assertFalse(vacancy.is_editing)
+        self.assertEqual(vacancy.moderation_status, "pending")
+        self.assertIsNone(vacancy.approved_at)
+        self.assertIsNotNone(vacancy.editing_started_at)
+        self.assertEqual(
+            VacancyModerationAttempt.objects.filter(
+                vacancy=vacancy,
+                decision="pending",
+            ).count(),
+            1,
+        )
+
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
     def test_soft_deletes_only_service_board_vacancies(self):
         create_response = self.client.post(
             self.url,

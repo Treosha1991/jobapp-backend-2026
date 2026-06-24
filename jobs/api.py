@@ -899,6 +899,10 @@ class InternalVacancyImportAPIView(APIView):
         source_url = (data.get("source_url") or "").strip()
         source_text = (data.get("source_text") or "").strip()
         extraction_notes = (data.get("extraction_notes") or "").strip()
+        requested_moderation_status = (
+            request.data.get("moderation_status") or ""
+        ).strip().lower()
+        create_pending = requested_moderation_status == "pending"
         extra_context = {
             "import_source": "internal_import",
             "source_url": source_url,
@@ -910,9 +914,9 @@ class InternalVacancyImportAPIView(APIView):
             vacancy = serializer.save(
                 created_by=service_user,
                 creator_token=secrets.token_hex(32),
-                approved_at=now,
+                approved_at=None if create_pending else now,
                 expires_at=now + VACANCY_LIVE_WINDOW,
-                is_approved=True,
+                is_approved=not create_pending,
                 is_rejected=False,
                 rejection_reason="",
                 moderation_baseline={},
@@ -920,9 +924,17 @@ class InternalVacancyImportAPIView(APIView):
                 is_deleted_by_moderator=False,
                 is_paused_by_owner=False,
                 is_editing=False,
-                editing_started_at=None,
+                editing_started_at=now if create_pending else None,
                 revision=1,
             )
+            if create_pending:
+                _create_moderation_attempt(
+                    vacancy,
+                    trigger_type="create",
+                    submitted_by=service_user,
+                    submitted_at=now,
+                    extra_context=extra_context,
+                )
             VacancyContactAccessPolicy.objects.update_or_create(
                 vacancy=vacancy,
                 defaults={
@@ -935,11 +947,12 @@ class InternalVacancyImportAPIView(APIView):
                 },
             )
 
-        try:
-            summary = dispatch_vacancy_alerts(vacancy)
-            print(f"[VACANCY-ALERTS] vacancy={vacancy.id} summary={summary}")
-        except Exception as exc:
-            print(f"[VACANCY-ALERTS-ERROR] vacancy={vacancy.id}: {exc}")
+        if vacancy.is_approved:
+            try:
+                summary = dispatch_vacancy_alerts(vacancy)
+                print(f"[VACANCY-ALERTS] vacancy={vacancy.id} summary={summary}")
+            except Exception as exc:
+                print(f"[VACANCY-ALERTS-ERROR] vacancy={vacancy.id}: {exc}")
 
         return Response(
             {
