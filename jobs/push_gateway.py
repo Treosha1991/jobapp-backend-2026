@@ -69,9 +69,30 @@ def _firebase_app_instance():
         return _firebase_app
 
 
-def send_push_message(*, token, title, body, data=None):
+def _format_send_exception(exc):
+    parts = [exc.__class__.__name__]
+    code = getattr(exc, "code", None)
+    if code:
+        parts.append(f"code={code}")
+
+    http_response = getattr(exc, "http_response", None)
+    http_status = getattr(http_response, "status_code", None)
+    http_text = (getattr(http_response, "text", "") or "").strip()
+    if http_status:
+        parts.append(f"http={http_status}")
+    if http_text:
+        parts.append(f"response={http_text[:500]}")
+
+    message = str(exc).strip()
+    if message:
+        parts.append(f"message={message}")
+    return "; ".join(parts)
+
+
+def send_push_message(*, token, title, body, data=None, platform=""):
     provider = (getattr(settings, "PUSH_PROVIDER", "") or "").strip().lower()
     token = (token or "").strip()
+    platform = (platform or "").strip().lower()
     if not token:
         return "failed", "", "device_token_missing"
 
@@ -91,17 +112,16 @@ def send_push_message(*, token, title, body, data=None):
         except Exception as exc:
             return "skipped_not_configured", "", f"fcm_v1_setup_error:{exc}"
 
-        # iOS delivery is more reliable when APNs alert headers are explicit.
-        # Android still uses the top-level notification payload.
-        message = messaging.Message(
-            token=token,
-            notification=messaging.Notification(title=title, body=body),
-            data=payload_data,
-            android=messaging.AndroidConfig(
+        android_config = None
+        apns_config = None
+        if platform in ("", "android"):
+            android_config = messaging.AndroidConfig(
                 priority="high",
                 notification=messaging.AndroidNotification(sound="default"),
-            ),
-            apns=messaging.APNSConfig(
+            )
+        if platform in ("", "ios"):
+            # iOS delivery is more reliable when APNs alert headers are explicit.
+            apns_config = messaging.APNSConfig(
                 headers={
                     "apns-priority": "10",
                     "apns-push-type": "alert",
@@ -112,13 +132,20 @@ def send_push_message(*, token, title, body, data=None):
                         sound="default",
                     ),
                 ),
-            ),
+            )
+
+        message = messaging.Message(
+            token=token,
+            notification=messaging.Notification(title=title, body=body),
+            data=payload_data,
+            android=android_config,
+            apns=apns_config,
         )
         try:
             message_id = messaging.send(message, app=app)
             return "sent", (message_id or "").strip(), ""
         except Exception as exc:
-            return "failed", "", f"fcm_v1_send_error:{exc}"
+            return "failed", "", f"fcm_v1_send_error:{_format_send_exception(exc)}"
 
     if provider != "fcm_legacy":
         return "skipped_not_configured", "", "push_provider_not_configured"

@@ -5,6 +5,11 @@ from .push_gateway import send_push_message
 
 
 VALID_DELIVERY_STATUSES = {"sent", "failed", "skipped_not_configured"}
+PERMANENT_TOKEN_ERRORS = (
+    "Requested entity was not found",
+    "registration-token-not-registered",
+    "UNREGISTERED",
+)
 
 
 def _normalized(value):
@@ -91,6 +96,7 @@ def notify_moderators_about_pending_vacancy(vacancy):
             lang = _normalized(device.app_language)
             status, provider_message_id, error_text = send_push_message(
                 token=device.token,
+                platform=device.platform,
                 title=_localized_title(lang),
                 body=_localized_body(lang, vacancy),
                 data={
@@ -102,6 +108,9 @@ def notify_moderators_about_pending_vacancy(vacancy):
                 status = "failed"
                 error_text = error_text or "invalid_push_status"
             if status == "failed":
+                if any(marker in (error_text or "") for marker in PERMANENT_TOKEN_ERRORS):
+                    device.is_active = False
+                    device.save(update_fields=["is_active", "last_seen_at"])
                 print(
                     "[MODERATION-PUSH-DEVICE-FAILED] "
                     f"vacancy={vacancy.id} "

@@ -190,6 +190,7 @@ def dispatch_vacancy_alerts(vacancy):
         lang = _normalized(device.app_language)
         status, provider_message_id, error_text = send_push_message(
             token=device.token,
+            platform=device.platform,
             title=_localized_title(lang),
             body=_localized_body(lang, vacancy),
             data={
