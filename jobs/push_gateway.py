@@ -91,11 +91,28 @@ def send_push_message(*, token, title, body, data=None):
         except Exception as exc:
             return "skipped_not_configured", "", f"fcm_v1_setup_error:{exc}"
 
+        # iOS delivery is more reliable when APNs alert headers are explicit.
+        # Android still uses the top-level notification payload.
         message = messaging.Message(
             token=token,
             notification=messaging.Notification(title=title, body=body),
             data=payload_data,
-            android=messaging.AndroidConfig(priority="high"),
+            android=messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(sound="default"),
+            ),
+            apns=messaging.APNSConfig(
+                headers={
+                    "apns-priority": "10",
+                    "apns-push-type": "alert",
+                },
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        alert=messaging.ApsAlert(title=title, body=body),
+                        sound="default",
+                    ),
+                ),
+            ),
         )
         try:
             message_id = messaging.send(message, app=app)

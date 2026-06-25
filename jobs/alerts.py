@@ -78,9 +78,9 @@ def _city_matches(subscription_city_code, subscription_city, vacancy_city_code, 
 def _localized_title(lang):
     lang = (lang or "").strip().lower()
     if lang.startswith("ru"):
-        return "Новая вакансия по вашему фильтру"
+        return "\u041d\u043e\u0432\u0430\u044f \u0432\u0430\u043a\u0430\u043d\u0441\u0438\u044f \u043f\u043e \u0432\u0430\u0448\u0435\u043c\u0443 \u0444\u0438\u043b\u044c\u0442\u0440\u0443"
     if lang.startswith("uk"):
-        return "Нова вакансія за вашим фільтром"
+        return "\u041d\u043e\u0432\u0430 \u0432\u0430\u043a\u0430\u043d\u0441\u0456\u044f \u0437\u0430 \u0432\u0430\u0448\u0438\u043c \u0444\u0456\u043b\u044c\u0442\u0440\u043e\u043c"
     if lang.startswith("pl"):
         return "Nowa oferta wg Twojego filtra"
     return "New vacancy for your filters"
@@ -91,7 +91,7 @@ def _localized_body(lang, vacancy):
     location = ", ".join([x for x in location_parts if x])
     title = _normalized(vacancy.title)
     if location and title:
-        return f"{title} — {location}"
+        return f"{title} - {location}"
     if title:
         return title
     if location:
