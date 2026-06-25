@@ -794,7 +794,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
                     moderation_baseline={},
                     is_editing=save_as_draft,
                     revision=1,
-                    # Reuse this field as "submitted_at" for moderation visibility delay.
+                    # Reuse this field as "submitted_at" for moderation queue ordering.
                     editing_started_at=now,
                     creator_token=token,
                     expires_at=now + VACANCY_LIVE_WINDOW,
@@ -2370,14 +2370,11 @@ class VacancyPendingListAPIView(generics.ListAPIView):
     permission_classes = [IsModerator]
 
     def get_queryset(self):
-        visible_after = timezone.now() - timedelta(seconds=60)
         return Vacancy.objects.filter(
             is_approved=False,
             is_rejected=False,
             is_editing=False,
             is_deleted_by_moderator=False,
-        ).filter(
-            Q(editing_started_at__isnull=True) | Q(editing_started_at__lte=visible_after)
         ).filter(
             Q(rejection_reason="") | Q(rejection_reason__isnull=True)
         ).annotate(
@@ -2804,7 +2801,7 @@ class VacancyEditAPIView(APIView):
                         is_paused_by_owner=False,
                         paused_by_owner_at=None,
                         revision=next_revision,
-                        # Marks resubmission time; pending list applies 60s delay.
+                        # Marks resubmission time; pending list uses it for ordering.
                         editing_started_at=current_time,
                     )
                     _create_moderation_attempt(
