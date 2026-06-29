@@ -30,6 +30,7 @@ from .economy import (
     apply_store_product_purchase,
     build_contact_access_state,
     build_vacancy_submission_state,
+    ensure_free_contact_policy,
     get_economy_config,
     get_or_create_contact_policy,
     get_or_create_monetization_profile,
@@ -799,6 +800,7 @@ class VacancyCreateAPIView(generics.CreateAPIView):
                     creator_token=token,
                     expires_at=now + VACANCY_LIVE_WINDOW,
                 )
+                ensure_free_contact_policy(vacancy, set_by=self.request.user)
                 if not is_moderator and not save_as_draft:
                     _create_moderation_attempt(
                         vacancy,
@@ -2423,6 +2425,7 @@ class VacancyApproveAPIView(APIView):
             return Response({"error": "vacancy_editing"}, status=409)
         decision_time = timezone.now()
         _set_vacancy_live(vacancy, now=decision_time)
+        ensure_free_contact_policy(vacancy, set_by=request.user)
         vacancy.save(
             update_fields=[
                 "is_approved",

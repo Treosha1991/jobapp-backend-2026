@@ -3,8 +3,76 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import ModeratorNotificationDelivery, PushDevice, Vacancy, VacancyModerationAttempt
+from .economy import ensure_free_contact_policy
+from .models import (
+    ModeratorNotificationDelivery,
+    PushDevice,
+    Vacancy,
+    VacancyContactAccessPolicy,
+    VacancyModerationAttempt,
+)
 from .service_sources import SERVICE_BOARD_USERNAME
+
+
+class ContactAccessPolicyTests(TestCase):
+    def _create_vacancy(self):
+        owner = User.objects.create_user(
+            username="owner",
+            email="owner@example.com",
+            password="password",
+        )
+        vacancy = Vacancy.objects.create(
+            created_by=owner,
+            title="Warehouse worker",
+            country="PL",
+            city="Poznan",
+            city_code="poznan",
+            category="warehouse",
+            audience_country_codes="UA",
+            employment_type="shift",
+            experience_required="without",
+            salary="27 PLN",
+            salary_currency="PLN",
+            salary_tax_type="netto",
+            description="Visible description",
+            housing_type="none",
+            phone="+48111111111",
+            source="direct",
+            creator_token="contact-policy-test",
+            expires_at=timezone.now() + timezone.timedelta(days=30),
+        )
+        return owner, vacancy
+
+    def test_user_vacancy_ad_policy_contacts_are_free(self):
+        owner, vacancy = self._create_vacancy()
+        policy = VacancyContactAccessPolicy.objects.create(vacancy=vacancy)
+
+        self.assertEqual(policy.contact_unlock_mode, "ad_forever")
+        self.assertEqual(policy.contact_unlock_price_credits, 3)
+
+        ensure_free_contact_policy(vacancy, set_by=owner)
+
+        policy.refresh_from_db()
+        self.assertEqual(policy.contact_unlock_mode, "ad_forever")
+        self.assertEqual(policy.contact_unlock_price_credits, 0)
+        self.assertEqual(policy.contact_unlock_timer_hours, None)
+        self.assertEqual(policy.contact_unlock_paid_click_limit, None)
+        self.assertEqual(policy.set_by, owner)
+
+    def test_manual_paid_policy_is_not_overwritten(self):
+        owner, vacancy = self._create_vacancy()
+        policy = VacancyContactAccessPolicy.objects.create(
+            vacancy=vacancy,
+            contact_unlock_mode="paid_forever",
+            contact_unlock_price_credits=5,
+        )
+
+        ensure_free_contact_policy(vacancy, set_by=owner)
+
+        policy.refresh_from_db()
+        self.assertEqual(policy.contact_unlock_mode, "paid_forever")
+        self.assertEqual(policy.contact_unlock_price_credits, 5)
+        self.assertEqual(policy.set_by, None)
 
 
 class InternalVacancyImportAPITest(TestCase):

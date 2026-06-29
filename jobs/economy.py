@@ -61,6 +61,45 @@ def get_or_create_contact_policy(vacancy):
     return policy
 
 
+def ensure_free_contact_policy(vacancy, *, set_by=None):
+    policy, created = VacancyContactAccessPolicy.objects.get_or_create(
+        vacancy=vacancy,
+        defaults={
+            "contact_unlock_mode": "ad_forever",
+            "contact_unlock_timer_hours": None,
+            "contact_unlock_price_credits": 0,
+            "contact_unlock_paid_click_limit": None,
+            "paid_window_started_at": None,
+            "set_by": set_by,
+        },
+    )
+    if created:
+        return policy
+
+    if policy.contact_unlock_mode != "ad_forever":
+        return policy
+
+    update_fields = []
+    if policy.contact_unlock_price_credits != 0:
+        policy.contact_unlock_price_credits = 0
+        update_fields.append("contact_unlock_price_credits")
+    if policy.contact_unlock_timer_hours is not None:
+        policy.contact_unlock_timer_hours = None
+        update_fields.append("contact_unlock_timer_hours")
+    if policy.contact_unlock_paid_click_limit is not None:
+        policy.contact_unlock_paid_click_limit = None
+        update_fields.append("contact_unlock_paid_click_limit")
+    if policy.paid_window_started_at is not None:
+        policy.paid_window_started_at = None
+        update_fields.append("paid_window_started_at")
+    if set_by is not None and policy.set_by_id is None:
+        policy.set_by = set_by
+        update_fields.append("set_by")
+    if update_fields:
+        policy.save(update_fields=update_fields)
+    return policy
+
+
 def is_employer_profile_visible_for_vacancy(vacancy, *, now=None):
     current_time = now or timezone.now()
     if is_service_board_user(getattr(vacancy, "created_by", None)):
