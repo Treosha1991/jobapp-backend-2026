@@ -909,6 +909,35 @@ def build_contact_access_state(user, vacancy, *, now=None):
         current_mode = "paid"
 
     base_price = _credit_decimal(policy.contact_unlock_price_credits or ZERO_CREDITS)
+    if base_price <= ZERO_CREDITS:
+        return {
+            "vacancy_id": vacancy.id,
+            "is_unlocked": True,
+            "unlocked_until": None,
+            "unlock_source": "free",
+            "contact_access_duration_minutes": int(
+                getattr(config, "contact_access_duration_minutes", CONTACT_ACCESS_DURATION_MINUTES_DEFAULT)
+                or CONTACT_ACCESS_DURATION_MINUTES_DEFAULT
+            ),
+            "mode": policy.contact_unlock_mode,
+            "current_action": "already_unlocked",
+            "expected_method": "",
+            "base_price_credits": _credit_json_value(ZERO_CREDITS),
+            "effective_price_credits": _credit_json_value(ZERO_CREDITS),
+            "contact_unlock_timer_hours": policy.contact_unlock_timer_hours,
+            "paid_window_deadline": deadline,
+            "paid_window_is_active": paid_window_active,
+            "paid_unlock_click_limit": paid_click_limit,
+            "paid_unlocks_count": paid_unlocks_count,
+            "paid_unlocks_remaining": paid_unlocks_remaining,
+            "paid_click_limit_reached": paid_click_limit_reached,
+            "can_use_ad": False,
+            "ad_required": False,
+            "has_seeker_subscription": False,
+            "wallet_total_credits": _credit_json_value(wallet.total_credits if wallet else ZERO_CREDITS),
+            "can_afford": True,
+        }
+
     effective_price = base_price
     has_seeker_subscription = bool(profile and profile.has_seeker_subscription(current_time))
     discount_percent = int(config.seeker_contact_discount_percent or 0)

@@ -3,7 +3,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .economy import ensure_free_contact_policy
+from .economy import build_contact_access_state, ensure_free_contact_policy
 from .models import (
     ModeratorNotificationDelivery,
     PushDevice,
@@ -58,6 +58,12 @@ class ContactAccessPolicyTests(TestCase):
         self.assertEqual(policy.contact_unlock_timer_hours, None)
         self.assertEqual(policy.contact_unlock_paid_click_limit, None)
         self.assertEqual(policy.set_by, owner)
+
+        state = build_contact_access_state(owner, vacancy)
+        self.assertTrue(state["is_unlocked"])
+        self.assertEqual(state["current_action"], "already_unlocked")
+        self.assertEqual(state["base_price_credits"], 0.0)
+        self.assertEqual(state["effective_price_credits"], 0.0)
 
     def test_manual_paid_policy_is_not_overwritten(self):
         owner, vacancy = self._create_vacancy()
