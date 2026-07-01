@@ -163,7 +163,9 @@ EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1") == "1"
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "admin@jobhub.today")
 SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", DEFAULT_FROM_EMAIL)
-COMPLAINT_EMAIL = os.environ.get("COMPLAINT_EMAIL", "admin@jobhub.today")
+COMPLAINT_EMAIL = os.environ.get("COMPLAINT_EMAIL", "admin@jobhub.today").strip() or "admin@jobhub.today"
+if COMPLAINT_EMAIL.lower() in {"complaint@jobhub.today", "comptain@jobhub.today"}:
+    COMPLAINT_EMAIL = "admin@jobhub.today"
 
 # Avatar / Cloudflare R2 (public read URL expected)
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "").strip()
