@@ -200,6 +200,30 @@ GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = os.environ.get(
 
 REWARDED_ADS_ENABLED = os.environ.get("REWARDED_ADS_ENABLED", "0") == "1"
 
+
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+# Public mobile app update config. Bump these env vars when a newer store
+# version is available; old app builds will then show the update button.
+JOBHUB_LATEST_ANDROID_VERSION = os.environ.get(
+    "JOBHUB_LATEST_ANDROID_VERSION", "1.0.3"
+).strip()
+JOBHUB_LATEST_ANDROID_BUILD = _env_int("JOBHUB_LATEST_ANDROID_BUILD", 63)
+JOBHUB_LATEST_IOS_VERSION = os.environ.get("JOBHUB_LATEST_IOS_VERSION", "1.0.3").strip()
+JOBHUB_LATEST_IOS_BUILD = _env_int("JOBHUB_LATEST_IOS_BUILD", 63)
+JOBHUB_ANDROID_STORE_URL = os.environ.get(
+    "JOBHUB_ANDROID_STORE_URL",
+    "https://play.google.com/store/apps/details?id=today.jobhub.app",
+).strip()
+JOBHUB_IOS_STORE_URL = os.environ.get(
+    "JOBHUB_IOS_STORE_URL",
+    "https://apps.apple.com/app/jobhub-work-in-europe/id6761860677",
+).strip()
+
 # Google Sign-In / ID token verification
 # Comma-separated list of allowed OAuth client IDs for Google Sign-In.
 GOOGLE_SIGN_IN_CLIENT_IDS = os.environ.get("GOOGLE_SIGN_IN_CLIENT_IDS", "").strip()

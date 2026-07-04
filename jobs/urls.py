@@ -1,5 +1,6 @@
 from django.urls import path
 from .api import (
+    AppConfigAPIView,
     VacancyListAPIView,
     VacancyDetailAPIView,
     VacancyBookmarkStatusAPIView,
@@ -64,6 +65,7 @@ from .auth_api import (
 
 
 urlpatterns = [
+    path("app/config/", AppConfigAPIView.as_view(), name="app-config"),
     path("auth/register/", RegisterAPIView.as_view(), name="api-register"),
     path("auth/login/", LoginAPIView.as_view(), name="api-login"),
     path("auth/google/", GoogleLoginAPIView.as_view(), name="api-google-login"),

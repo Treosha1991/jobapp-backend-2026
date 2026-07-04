@@ -118,6 +118,22 @@ APPLE_VERIFY_RECEIPT_TIMEOUT_SECONDS = 20
 logger = logging.getLogger(__name__)
 
 
+class AppConfigAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response(
+            {
+                "latest_android_version": settings.JOBHUB_LATEST_ANDROID_VERSION,
+                "latest_android_build": settings.JOBHUB_LATEST_ANDROID_BUILD,
+                "latest_ios_version": settings.JOBHUB_LATEST_IOS_VERSION,
+                "latest_ios_build": settings.JOBHUB_LATEST_IOS_BUILD,
+                "android_store_url": settings.JOBHUB_ANDROID_STORE_URL,
+                "ios_store_url": settings.JOBHUB_IOS_STORE_URL,
+            }
+        )
+
+
 def _notify_moderators_about_pending_vacancy_safe(vacancy):
     try:
         summary = notify_moderators_about_pending_vacancy(vacancy)
