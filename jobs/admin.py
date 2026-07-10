@@ -32,6 +32,7 @@ from .models import (
     EmailVerification,
     EmployerSubscription,
     PhoneVerification,
+    PhoneVerificationAttempt,
     PurchaseRecord,
     PushDevice,
     ModeratorNotificationDelivery,
@@ -372,10 +373,24 @@ class UserAdmin(BaseUserAdmin):
         profile = getattr(obj, "profile", None)
         phone = profile.phone_e164 if profile and profile.phone_e164 else "—"
         email = obj.email or "—"
+        latest_failed = (
+            PhoneVerificationAttempt.objects.filter(user=obj)
+            .exclude(status__in=("sent", "approved"))
+            .order_by("-created_at")
+            .first()
+        )
+        failed_html = ""
+        if latest_failed and latest_failed.phone_e164:
+            failed_html = format_html(
+                "<br><span style='color:#B42318'>Last failed: {} ({})</span>",
+                latest_failed.phone_e164,
+                latest_failed.get_status_display(),
+            )
         return format_html(
-            "<strong>{}</strong><br><span style='color:#6B7280'>{}</span>",
+            "<strong>{}</strong><br><span style='color:#6B7280'>{}</span>{}",
             email,
             phone,
+            failed_html,
         )
 
     @admin.display(description="Roles")
@@ -761,6 +776,52 @@ class PhoneVerificationAdmin(admin.ModelAdmin):
         if active:
             return _badge("Active", bg="#198754")
         return _badge("Expired", bg="#B42318")
+
+
+@admin.register(PhoneVerificationAttempt)
+class PhoneVerificationAttemptAdmin(admin.ModelAdmin):
+    list_display = (
+        "phone_e164",
+        "user",
+        "status_badge",
+        "purpose",
+        "channel",
+        "http_status",
+        "ip_address",
+        "created_at",
+    )
+    search_fields = ("phone_e164", "user__username", "user__email", "message", "ip_address")
+    list_filter = ("status", "purpose", "channel", "created_at")
+    list_select_related = ("user",)
+    readonly_fields = (
+        "phone_e164",
+        "user",
+        "purpose",
+        "channel",
+        "status",
+        "message",
+        "http_status",
+        "ip_address",
+        "user_agent",
+        "created_at",
+    )
+    ordering = ("-created_at",)
+
+    @admin.display(description="Status", ordering="status")
+    def status_badge(self, obj):
+        if obj.status in {"sent", "approved"}:
+            return _badge(obj.get_status_display(), bg="#198754")
+        if obj.status == "unsupported_country":
+            return _badge(obj.get_status_display(), bg="#B42318")
+        if obj.status == "too_many_requests":
+            return _badge(obj.get_status_display(), bg="#B54708")
+        return _badge(obj.get_status_display(), bg="#667085")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(EmailVerification)

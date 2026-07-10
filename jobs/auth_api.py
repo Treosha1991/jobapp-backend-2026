@@ -33,7 +33,7 @@ from .avatar_utils import (
     process_avatar_image,
 )
 from .economy import get_or_create_monetization_profile, get_or_create_wallet
-from .models import AccountDeletionRequest, EmailVerification, PhoneVerification, UserProfile, Vacancy
+from .models import AccountDeletionRequest, EmailVerification, PhoneVerification, PhoneVerificationAttempt, UserProfile, Vacancy
 from .reviews import get_employer_review_summary
 from .text_filters import (
     censor_minimal,
@@ -643,6 +643,42 @@ def _twilio_verify_check(phone_e164, code):
         return False, _twilio_error_message(str(exc), "verification_check_failed"), status.HTTP_503_SERVICE_UNAVAILABLE
 
 
+def _request_ip(request):
+    forwarded = (request.META.get("HTTP_X_FORWARDED_FOR") or "").split(",", 1)[0].strip()
+    return forwarded or (request.META.get("REMOTE_ADDR") or None)
+
+
+def _record_phone_verification_attempt(
+    request,
+    *,
+    phone_e164="",
+    purpose="",
+    channel="",
+    status_code="",
+    message="",
+    http_status=None,
+    user=None,
+):
+    try:
+        request_user = getattr(request, "user", None)
+        if user is None and getattr(request_user, "is_authenticated", False):
+            user = request_user
+        PhoneVerificationAttempt.objects.create(
+            phone_e164=(phone_e164 or "")[:20],
+            user=user if user and getattr(user, "is_authenticated", True) else None,
+            purpose=(purpose or "")[:20],
+            channel=(channel or "")[:20],
+            status=status_code,
+            message=(message or "")[:255],
+            http_status=http_status,
+            ip_address=_request_ip(request),
+            user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:255],
+        )
+    except Exception as exc:
+        # Verification must not fail just because audit logging failed.
+        print(f"[PHONE-VERIFY-ATTEMPT-LOG-ERROR] {exc}")
+
+
 def _username_for_phone(phone_e164):
     # Keep usernames deterministic and ASCII-safe for phone-only accounts.
     return f"phone_{phone_e164.replace('+', '')}"
@@ -907,16 +943,43 @@ class PhoneRequestCodeAPIView(APIView):
         purpose = (request.data.get("purpose") or "").strip()
         channel = (request.data.get("channel") or "").strip().lower() or "whatsapp"
         if channel not in {"whatsapp", "sms"}:
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                channel=channel,
+                status_code="invalid_channel",
+                message="invalid_channel",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
             if purpose:
                 return Response({"error": "invalid channel"}, status=status.HTTP_400_BAD_REQUEST)
             return Response({"status": "error", "message": "invalid_channel"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not phone:
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                channel=channel,
+                status_code="invalid_phone",
+                message="invalid_phone",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
             if purpose:
                 return Response({"error": "invalid phone"}, status=status.HTTP_400_BAD_REQUEST)
             return Response({"status": "error", "message": "invalid_phone"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not _phone_country_allowed(phone):
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                channel=channel,
+                status_code="unsupported_country",
+                message="unsupported_phone_country",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
             return Response(
                 _unsupported_phone_country_payload(simple_mode=not bool(purpose)),
                 status=status.HTTP_400_BAD_REQUEST,
@@ -925,29 +988,97 @@ class PhoneRequestCodeAPIView(APIView):
         # New simple mode (no purpose): pure Twilio Verify request.
         if not purpose:
             if not _consume_phone_request_slot(phone):
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    channel=channel,
+                    status_code="too_many_requests",
+                    message="too_many_requests",
+                    http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
                 return Response({"status": "error", "message": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
             ok, msg, http_code = _twilio_verify_start(phone, channel=channel)
             if ok:
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    channel=channel,
+                    status_code="sent",
+                    http_status=status.HTTP_200_OK,
+                )
                 return Response({"status": "sent"})
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                channel=channel,
+                status_code="delivery_failed",
+                message=msg or "verification_not_sent",
+                http_status=http_code,
+            )
             payload = {"status": "error", "message": "verification_not_sent"}
             if settings.DEBUG and msg:
                 payload["detail"] = _debug_error_details(msg)
             return Response(payload, status=http_code)
 
         if purpose not in {"verify_phone", "login", "reset"}:
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                channel=channel,
+                status_code="invalid_purpose",
+                message="invalid_purpose",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
             return Response({"error": "invalid purpose"}, status=status.HTTP_400_BAD_REQUEST)
         if purpose == "reset":
             if _phone_reset_request_blocked(phone):
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    channel=channel,
+                    status_code="too_many_requests",
+                    message="too_many_requests",
+                    http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
                 return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         elif _phone_code_too_frequent(phone, purpose):
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                channel=channel,
+                status_code="too_many_requests",
+                message="too_many_requests",
+                http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
             return Response({"error": "too_many_requests"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         user = None
         if purpose == "verify_phone":
             if not request.user.is_authenticated:
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    channel=channel,
+                    status_code="auth_required",
+                    message="auth_required",
+                    http_status=status.HTTP_401_UNAUTHORIZED,
+                )
                 return Response({"error": "auth_required"}, status=status.HTTP_401_UNAUTHORIZED)
             owner = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).exclude(user=request.user).first()
             if owner:
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    channel=channel,
+                    status_code="phone_already_used",
+                    message="phone_already_used",
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
                 return Response({"error": "phone_already_used"}, status=status.HTTP_400_BAD_REQUEST)
             user = request.user
         elif purpose == "login":
@@ -957,6 +1088,15 @@ class PhoneRequestCodeAPIView(APIView):
         else:
             prof = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
             if not prof:
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    channel=channel,
+                    status_code="user_not_found",
+                    message="user not found",
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
                 return Response({"error": "user not found"}, status=status.HTTP_400_BAD_REQUEST)
             user = prof.user
 
@@ -965,10 +1105,29 @@ class PhoneRequestCodeAPIView(APIView):
 
         ok, msg, http_code = _twilio_verify_start(phone, channel=channel)
         if not ok:
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                channel=channel,
+                status_code="delivery_failed",
+                message=msg or f"{channel}_delivery_failed",
+                http_status=http_code,
+                user=user,
+            )
             payload = {"error": f"{channel}_delivery_failed"}
             if settings.DEBUG and msg:
                 payload["detail"] = _debug_error_details(msg)
             return Response(payload, status=http_code)
+        _record_phone_verification_attempt(
+            request,
+            phone_e164=phone,
+            purpose=purpose,
+            channel=channel,
+            status_code="sent",
+            http_status=status.HTTP_200_OK,
+            user=user,
+        )
         return Response({"detail": "code_sent", "channel": channel})
 
 
@@ -981,6 +1140,14 @@ class PhoneVerifyCodeAPIView(APIView):
         purpose = (request.data.get("purpose") or "").strip()
 
         if not phone or not code:
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                status_code="check_failed",
+                message="phone_and_code_required",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
             if purpose:
                 return Response({"error": "phone and code required"}, status=status.HTTP_400_BAD_REQUEST)
             return Response({"status": "error", "message": "phone_and_code_required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -989,18 +1156,54 @@ class PhoneVerifyCodeAPIView(APIView):
         if not purpose:
             ok, msg, http_code = _twilio_verify_check(phone, code)
             if ok:
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    status_code="approved",
+                    http_status=status.HTTP_200_OK,
+                )
                 return Response({"status": "approved"})
             if msg == "denied":
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    status_code="check_failed",
+                    message="denied",
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
                 return Response({"status": "denied"}, status=status.HTTP_400_BAD_REQUEST)
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                status_code="check_failed",
+                message=msg or "verification_check_failed",
+                http_status=http_code,
+            )
             payload = {"status": "error", "message": "verification_check_failed"}
             if settings.DEBUG and msg:
                 payload["detail"] = _debug_error_details(msg)
             return Response(payload, status=http_code)
 
         if purpose not in {"verify_phone", "login", "reset"}:
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                status_code="invalid_purpose",
+                message="invalid_purpose",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
             return Response({"error": "invalid purpose"}, status=status.HTTP_400_BAD_REQUEST)
 
         if purpose == "reset" and _phone_reset_verify_blocked(phone):
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                status_code="too_many_requests",
+                message="too_many_attempts",
+                http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
             return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         rec = PhoneVerification.objects.filter(
@@ -1015,7 +1218,23 @@ class PhoneVerifyCodeAPIView(APIView):
                 if purpose == "reset":
                     _increment_phone_attempt(_latest_phone_code_record(phone, purpose))
                     if _phone_reset_verify_blocked(phone):
+                        _record_phone_verification_attempt(
+                            request,
+                            phone_e164=phone,
+                            purpose=purpose,
+                            status_code="too_many_requests",
+                            message="too_many_attempts",
+                            http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+                        )
                         return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    status_code="check_failed",
+                    message="invalid_or_expired_code",
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
                 return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
             if rec:
                 rec.is_used = True
@@ -1025,19 +1244,59 @@ class PhoneVerifyCodeAPIView(APIView):
                 if purpose == "reset":
                     _increment_phone_attempt(_latest_phone_code_record(phone, purpose))
                     if _phone_reset_verify_blocked(phone):
+                        _record_phone_verification_attempt(
+                            request,
+                            phone_e164=phone,
+                            purpose=purpose,
+                            status_code="too_many_requests",
+                            message="too_many_attempts",
+                            http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+                        )
                         return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    status_code="check_failed",
+                    message="invalid_or_expired_code",
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
                 return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
             if rec.code != code:
                 rec.attempts += 1
                 rec.save(update_fields=["attempts"])
                 if purpose == "reset" and _phone_reset_verify_blocked(phone):
+                    _record_phone_verification_attempt(
+                        request,
+                        phone_e164=phone,
+                        purpose=purpose,
+                        status_code="too_many_requests",
+                        message="too_many_attempts",
+                        http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    )
                     return Response({"error": "too_many_attempts"}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    status_code="check_failed",
+                    message="invalid_or_expired_code",
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
                 return Response({"error": "invalid or expired code"}, status=status.HTTP_400_BAD_REQUEST)
             rec.is_used = True
             rec.save(update_fields=["is_used"])
 
         if purpose == "verify_phone":
             if not request.user.is_authenticated:
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    status_code="auth_required",
+                    message="auth_required",
+                    http_status=status.HTTP_401_UNAUTHORIZED,
+                )
                 return Response({"error": "auth_required"}, status=status.HTTP_401_UNAUTHORIZED)
             profile, _ = UserProfile.objects.get_or_create(user=request.user)
             try:
@@ -1046,10 +1305,32 @@ class PhoneVerifyCodeAPIView(APIView):
                 profile.phone_verified_at = timezone.now()
                 profile.save(update_fields=["phone_e164", "phone_verified", "phone_verified_at"])
             except IntegrityError:
+                _record_phone_verification_attempt(
+                    request,
+                    phone_e164=phone,
+                    purpose=purpose,
+                    status_code="phone_already_used",
+                    message="phone_already_used",
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
                 return Response({"error": "phone_already_used"}, status=status.HTTP_400_BAD_REQUEST)
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                status_code="approved",
+                http_status=status.HTTP_200_OK,
+            )
             return Response({"detail": "phone_verified", "phone": phone, "phone_verified": True})
 
         if purpose == "reset":
+            _record_phone_verification_attempt(
+                request,
+                phone_e164=phone,
+                purpose=purpose,
+                status_code="approved",
+                http_status=status.HTTP_200_OK,
+            )
             return Response({"detail": "code_verified"})
 
         profile = UserProfile.objects.filter(phone_e164=phone).select_related("user").first()
@@ -1065,6 +1346,14 @@ class PhoneVerifyCodeAPIView(APIView):
         profile.save(update_fields=["phone_e164", "phone_verified", "phone_verified_at"])
         user = profile.user
         token, _ = Token.objects.get_or_create(user=user)
+        _record_phone_verification_attempt(
+            request,
+            phone_e164=phone,
+            purpose=purpose,
+            status_code="approved",
+            http_status=status.HTTP_200_OK,
+            user=user,
+        )
         return Response(_auth_payload(user, token))
 
 
@@ -1820,3 +2109,4 @@ class LinkEmailConfirmAPIView(APIView):
 
         token, _ = Token.objects.get_or_create(user=user)
         return Response(_auth_payload(user, token))
+

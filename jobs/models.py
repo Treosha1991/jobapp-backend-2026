@@ -742,6 +742,48 @@ class PhoneVerification(models.Model):
         return f"PhoneVerification {self.phone_e164} {self.purpose}"
 
 
+class PhoneVerificationAttempt(models.Model):
+    STATUS_CHOICES = [
+        ("sent", "Sent"),
+        ("approved", "Approved"),
+        ("invalid_phone", "Invalid phone"),
+        ("unsupported_country", "Unsupported country"),
+        ("too_many_requests", "Too many requests"),
+        ("delivery_failed", "Delivery failed"),
+        ("check_failed", "Check failed"),
+        ("phone_already_used", "Phone already used"),
+        ("auth_required", "Auth required"),
+        ("invalid_channel", "Invalid channel"),
+        ("invalid_purpose", "Invalid purpose"),
+        ("user_not_found", "User not found"),
+    ]
+
+    phone_e164 = models.CharField(max_length=20, blank=True, db_index=True)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True)
+    purpose = models.CharField(max_length=20, blank=True, db_index=True)
+    channel = models.CharField(max_length=20, blank=True, default="")
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, db_index=True)
+    message = models.CharField(max_length=255, blank=True, default="")
+    http_status = models.PositiveSmallIntegerField(blank=True, null=True)
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    user_agent = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["phone_e164", "-created_at"]),
+        ]
+
+    @property
+    def is_failed(self):
+        return self.status not in {"sent", "approved"}
+
+    def __str__(self):
+        return f"PhoneVerificationAttempt {self.phone_e164 or '-'} {self.status}"
+
+
 class Complaint(models.Model):
     REASON_CHOICES = [
         ("spam", "Spam/advertising"),
