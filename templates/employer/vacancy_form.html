@@ -186,24 +186,29 @@
     const citySelect = document.getElementById("id_city");
     const cityPlaceholder = "{{ employer_t.city_placeholder|escapejs }}";
 
-    function refreshCities() {
+    const initialCity = citySelect ? (citySelect.value || "") : "";
+
+    function refreshCities(preserveSelectedCity = false) {
       const cities = cityCatalog[countrySelect ? countrySelect.value : ""] || [];
-      const previousValue = citySelect ? citySelect.value : "";
+      const previousValue = preserveSelectedCity ? (citySelect ? citySelect.value || initialCity : "") : "";
       if (!citySelect) return;
       citySelect.innerHTML = "";
       citySelect.appendChild(new Option(cityPlaceholder, ""));
+      if (previousValue && !cities.includes(previousValue)) {
+        citySelect.appendChild(new Option(previousValue, previousValue));
+      }
       cities.forEach((city) => {
         citySelect.appendChild(new Option(city, city));
       });
       citySelect.disabled = cities.length === 0;
-      if (cities.includes(previousValue)) {
+      if (previousValue) {
         citySelect.value = previousValue;
       }
     }
 
     if (countrySelect && citySelect) {
-      countrySelect.addEventListener("change", refreshCities);
-      refreshCities();
+      countrySelect.addEventListener("change", () => refreshCities(false));
+      refreshCities(true);
     }
 
     const housingTypeSelect = document.getElementById("id_housing_type");

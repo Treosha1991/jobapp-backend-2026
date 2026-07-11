@@ -37,6 +37,7 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 PHONE_FIELDS = ("phone", "additional_phone", "additional_phone_2", "additional_phone_3")
 MESSENGERS = ("whatsapp", "viber")
 DEFAULT_SALARY_HOURS_MONTH = 168
+VACANCY_DESCRIPTION_MAX_LENGTH = 1500
 HOUSING_COST_RE = re.compile(r"^\s*(\d{1,4})\s+([A-Za-z]{3})\s*/\s*([A-Za-z]+)\s*$")
 HOUSING_CURRENCY_CODES = CURRENCY_CODES
 HOUSING_PERIOD_CODES = ("day", "week", "month")
@@ -53,7 +54,7 @@ ERRORS = {'ru': {'title_required': 'Введите название ваканс
         'city_length': 'Город должен быть не длиннее 20 символов.',
         'links': 'Ссылки в этом поле не допускаются.',
         'description_required': 'Добавьте описание вакансии.',
-        'description_length': 'Описание должно быть не длиннее 300 символов.',
+        'description_length': 'Описание должно быть не длиннее 1500 символов.',
         'description_lines': 'Описание должно быть не длиннее 50 строк.',
         'salary_required': 'Заполните зарплату: от/до, валюту, тип ставки и часы в месяц.',
         'salary_range': 'Зарплата должна быть от 1 до 99.',
@@ -76,7 +77,7 @@ ERRORS = {'ru': {'title_required': 'Введите название ваканс
         'city_length': 'The city must be 20 characters or shorter.',
         'links': 'Links are not allowed in this field.',
         'description_required': 'Add the vacancy description.',
-        'description_length': 'The description must be 300 characters or shorter.',
+        'description_length': 'The description must be 1500 characters or shorter.',
         'description_lines': 'The description must be 50 lines or shorter.',
         'salary_required': 'Fill salary from/to, currency, rate type, and monthly hours.',
         'salary_range': 'Salary must be from 1 to 99.',
@@ -99,7 +100,7 @@ ERRORS = {'ru': {'title_required': 'Введите название ваканс
         'city_length': 'Miasto może mieć maksymalnie 20 znaków.',
         'links': 'Linki w tym polu są niedozwolone.',
         'description_required': 'Dodaj opis oferty.',
-        'description_length': 'Opis może mieć maksymalnie 300 znaków.',
+        'description_length': 'Opis może mieć maksymalnie 1500 znaków.',
         'description_lines': 'Opis może mieć maksymalnie 50 wierszy.',
         'salary_required': 'Uzupełnij wynagrodzenie: od/do, walutę, typ stawki i godziny miesięcznie.',
         'salary_range': 'Wynagrodzenie musi być od 1 do 99.',
@@ -122,7 +123,7 @@ ERRORS = {'ru': {'title_required': 'Введите название ваканс
         'city_length': 'Місто має бути не довше 20 символів.',
         'links': 'Посилання в цьому полі не допускаються.',
         'description_required': 'Додайте опис вакансії.',
-        'description_length': 'Опис має бути не довше 300 символів.',
+        'description_length': 'Опис має бути не довше 1500 символів.',
         'description_lines': 'Опис має бути не довше 50 рядків.',
         'salary_required': 'Заповніть зарплату: від/до, валюту, тип ставки та години на місяць.',
         'salary_range': 'Зарплата має бути від 1 до 99.',
@@ -257,7 +258,7 @@ class EmployerVacancyForm(forms.ModelForm):
             "salary_currency": forms.Select(attrs={"class": "jh-input"}),
             "salary_tax_type": forms.Select(attrs={"class": "jh-input"}),
             "salary_hours_month": forms.NumberInput(attrs={"class": "jh-input", "min": "1", "max": "300", "placeholder": "168"}),
-            "description": forms.Textarea(attrs={"class": "jh-input", "rows": "6", "maxlength": "300"}),
+            "description": forms.Textarea(attrs={"class": "jh-input", "rows": "6", "maxlength": str(VACANCY_DESCRIPTION_MAX_LENGTH)}),
             "housing_type": forms.Select(attrs={"class": "jh-input"}),
             "phone": forms.TextInput(attrs={"class": "jh-input", "maxlength": "15"}),
             "additional_phone": forms.TextInput(attrs={"class": "jh-input", "maxlength": "15"}),
@@ -354,6 +355,18 @@ class EmployerVacancyForm(forms.ModelForm):
         if not country:
             country = self.initial.get("country")
         cities = sorted(CITY_CATALOG.get(country or "", []), key=str.casefold)
+        # Keep older valid vacancy data editable even if a city was renamed or
+        # has not reached the current catalog yet.
+        selected_city = ""
+        if self.is_bound:
+            selected_city = _strip(self.data.get(self.add_prefix("city")))
+        if not selected_city and self.instance and self.instance.pk:
+            selected_city = _strip(self.instance.city)
+        if not selected_city:
+            selected_city = _strip(self.initial.get("city"))
+        if selected_city and selected_city not in cities:
+            cities.append(selected_city)
+            cities.sort(key=str.casefold)
         return [("", "---------")] + [(city, city) for city in cities]
 
     def _init_primary_phone_from_profile(self):
@@ -440,7 +453,7 @@ class EmployerVacancyForm(forms.ModelForm):
         cleaned["description"] = description
         if not self.draft_mode and not description:
             self.add_error("description", _err(self.lang, "description_required"))
-        if len(description) > 300:
+        if len(description) > VACANCY_DESCRIPTION_MAX_LENGTH:
             self.add_error("description", _err(self.lang, "description_length"))
         if description.count("\n") + 1 > 50:
             self.add_error("description", _err(self.lang, "description_lines"))

@@ -780,8 +780,8 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
 
         desc = raw_values.get("description", attrs.get("description"))
         if desc is not None:
-            if len(desc) > 300:
-                errors["description"] = "max 300 chars"
+            if len(desc) > 1500:
+                errors["description"] = "max 1500 chars"
             else:
                 lines = re.split(r"\r?\n", desc)
                 if len(lines) > 50:

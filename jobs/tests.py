@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from .economy import build_contact_access_state, ensure_free_contact_policy
 from .currency_catalog import CURRENCY_CODES
+from .serializers import VacancyCreateSerializer
+from .web_forms import EmployerVacancyForm
 from .models import (
     ChatConversation,
     ChatMessage,
@@ -73,6 +75,33 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
         self.assertContains(response, 'name="telegram_username_1"')
         self.assertContains(response, 'name="telegram_username_2"')
         self.assertContains(response, 'name="telegram_username_3"')
+
+    def test_edit_form_keeps_city_that_is_missing_from_the_current_catalog(self):
+        vacancy = Vacancy.objects.create(
+            created_by=self.employer,
+            title="Legacy city vacancy",
+            country="DE",
+            city="Oldtown",
+            category="warehouse",
+            employment_type="full",
+            description="Existing vacancy description.",
+            housing_type="none",
+            source="direct",
+            expires_at=timezone.now() + timezone.timedelta(days=30),
+        )
+
+        form = EmployerVacancyForm(instance=vacancy, user=self.employer, lang="ru")
+        self.assertIn(("Oldtown", "Oldtown"), form.fields["city"].choices)
+
+    def test_description_up_to_1500_characters_is_accepted_everywhere(self):
+        payload = self._valid_payload() | {"description": "x" * 1500}
+        web_form = EmployerVacancyForm(data=payload, user=self.employer, lang="ru")
+        self.assertTrue(web_form.is_valid(), web_form.errors)
+
+        api_payload = payload.copy()
+        api_payload.pop("telegram_username_1")
+        serializer = VacancyCreateSerializer(data=api_payload)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
 
     def test_empty_draft_can_be_saved_from_browser(self):
         response = self.client.post("/employer/vacancies/new/", {"save_draft": "1"})
