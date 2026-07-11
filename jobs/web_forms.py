@@ -304,6 +304,13 @@ class EmployerVacancyForm(forms.ModelForm):
         for field_name in optional_fields:
             self.fields[field_name].required = False
 
+        if self.draft_mode:
+            # A real draft may be intentionally incomplete. Submission uses the
+            # full validation below, while drafts can be completed later.
+            for field_name in self.Meta.fields:
+                if field_name in self.fields:
+                    self.fields[field_name].required = False
+
         if self.instance and self.instance.pk:
             self.initial["audience_countries"] = decode_audience_country_codes(self.instance.audience_country_codes)
             self.initial["driver_license_categories"] = decode_driver_license_categories(self.instance.driver_license_categories)

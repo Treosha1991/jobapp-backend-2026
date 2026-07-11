@@ -2,6 +2,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
 from .economy import build_contact_access_state, ensure_free_contact_policy
 from .currency_catalog import CURRENCY_CODES
@@ -24,6 +25,95 @@ class CurrencyCatalogTests(TestCase):
         for code in ("NOK", "ISK", "RSD", "BAM", "MKD", "ALL", "MDL", "TRY"):
             self.assertIn(code, CURRENCY_CODES)
             self.assertIn((code, code), Vacancy.SALARY_CURRENCY_CHOICES)
+
+
+class EmployerPortalVacancyWorkflowTests(TestCase):
+    """Keep the browser vacancy flow aligned with the mobile submission flow."""
+
+    def setUp(self):
+        self.employer = User.objects.create_user(
+            username="portal-employer",
+            email="portal-employer@example.com",
+            password="password",
+        )
+        self.profile, _ = UserProfile.objects.get_or_create(user=self.employer)
+        self.profile.phone_verified = True
+        self.profile.phone_e164 = "+48111111111"
+        self.profile.save(update_fields=["phone_verified", "phone_e164"])
+        self.client.login(username="portal-employer", password="password")
+
+    def _valid_payload(self):
+        return {
+            "title": "Warehouse worker",
+            "country": "DE",
+            "city": "Berlin",
+            "category": "warehouse",
+            "audience_countries": ["UA", "PL"],
+            "employment_type": "full",
+            "experience_required": "without",
+            "salary_from": "15",
+            "salary_to": "17",
+            "salary_currency": "EUR",
+            "salary_tax_type": "netto",
+            "salary_hours_month": "168",
+            "description": "Warehouse work with accommodation support.",
+            "housing_type": "paid",
+            "housing_cost": "200",
+            "housing_cost_currency": "EUR",
+            "housing_cost_period": "month",
+            "phone": "+48111111111",
+            "source": "direct",
+            "telegram_username": "jobhub_employer",
+        }
+
+    def test_empty_draft_can_be_saved_from_browser(self):
+        response = self.client.post("/employer/vacancies/new/", {"save_draft": "1"})
+
+        self.assertEqual(response.status_code, 302)
+        vacancy = Vacancy.objects.get(created_by=self.employer)
+        self.assertTrue(vacancy.is_editing)
+        self.assertFalse(vacancy.is_approved)
+        self.assertFalse(vacancy.moderation_attempts.exists())
+
+    @patch("jobs.web_views._notify_moderators_about_pending_vacancy_safe")
+    @patch("jobs.web_views.apply_vacancy_submission_action")
+    def test_submit_creates_pending_moderation_attempt(self, apply_submission, notify):
+        payload = self._valid_payload() | {"submit": "1"}
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post("/employer/vacancies/new/", payload)
+
+        self.assertEqual(response.status_code, 302)
+        vacancy = Vacancy.objects.get(created_by=self.employer)
+        self.assertFalse(vacancy.is_editing)
+        self.assertFalse(vacancy.is_approved)
+        self.assertEqual(vacancy.moderation_attempts.count(), 1)
+        self.assertEqual(vacancy.moderation_attempts.first().trigger_type, "create")
+        self.assertEqual(vacancy.housing_cost, "200 EUR/month")
+        self.assertEqual(vacancy.telegram_username, "jobhub_employer")
+        apply_submission.assert_called_once()
+        notify.assert_called_once_with(vacancy)
+
+    @patch("jobs.web_views._notify_moderators_about_pending_vacancy_safe")
+    @patch("jobs.web_views.apply_vacancy_submission_action")
+    def test_draft_can_be_edited_and_submitted(self, apply_submission, notify):
+        draft = self.client.post("/employer/vacancies/new/", {"save_draft": "1"})
+        self.assertEqual(draft.status_code, 302)
+        vacancy = Vacancy.objects.get(created_by=self.employer)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f"/employer/vacancies/{vacancy.id}/edit/",
+                self._valid_payload() | {"submit": "1"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        vacancy.refresh_from_db()
+        self.assertFalse(vacancy.is_editing)
+        self.assertEqual(vacancy.moderation_attempts.count(), 1)
+        self.assertEqual(vacancy.moderation_attempts.first().trigger_type, "create")
+        apply_submission.assert_called_once()
+        notify.assert_called_once_with(vacancy)
 
 
 class ChatAPITests(TestCase):
