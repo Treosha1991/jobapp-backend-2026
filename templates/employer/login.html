@@ -32,7 +32,7 @@
       <div class="jh-grid full">
         <div class="jh-field">
           <label for="id_username">{{ employer_t.login_username }}</label>
-          <input class="jh-input" type="text" name="username" autofocus autocapitalize="none" autocomplete="username" required id="id_username">
+          <input class="jh-input" type="text" name="username" value="{{ login_identifier|default:'' }}" autofocus autocapitalize="none" autocomplete="username" required id="id_username">
         </div>
         <div class="jh-field">
           <label for="id_password">{{ employer_t.login_password }}</label>

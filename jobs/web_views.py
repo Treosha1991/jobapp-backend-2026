@@ -2,7 +2,7 @@ import json
 import secrets
 
 from django.contrib import messages
-from django.contrib.auth import login as auth_login
+from django.contrib.auth import authenticate, login as auth_login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView, LogoutView
 from django.db import IntegrityError
@@ -26,6 +26,7 @@ from .auth_api import (
     _phone_code_too_frequent,
     _phone_country_allowed,
     _record_phone_verification_attempt,
+    _login_candidates,
     _twilio_verify_check,
     _twilio_verify_start,
 )
@@ -48,6 +49,26 @@ class EmployerLoginView(LoginView):
 
     def get_success_url(self):
         return reverse_lazy("employer:vacancy_list")
+
+    def post(self, request, *args, **kwargs):
+        """Use the same email/nickname lookup as the mobile login endpoint."""
+        identifier = (request.POST.get("username") or "").strip()
+        password = request.POST.get("password") or ""
+        authenticated_users = []
+        seen_ids = set()
+
+        for candidate in _login_candidates(identifier):
+            user = authenticate(request, username=candidate.username, password=password)
+            if user and user.id not in seen_ids:
+                authenticated_users.append(user)
+                seen_ids.add(user.id)
+
+        if len(authenticated_users) == 1:
+            auth_login(request, authenticated_users[0])
+            return _login_redirect(request)
+
+        messages.error(request, tr(request, "login_failed"))
+        return render(request, self.template_name, {"login_identifier": identifier}, status=400)
 
 
 class EmployerLogoutView(LogoutView):

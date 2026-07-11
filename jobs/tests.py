@@ -154,6 +154,15 @@ class EmployerPortalPhoneLoginTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.id)
 
+    def test_portal_email_login_uses_the_same_account_as_mobile(self):
+        response = self.client.post(
+            "/employer/login/",
+            {"username": "phone-login@example.com", "password": "unneeded-password"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.id)
+
 
 class ChatAPITests(TestCase):
     def setUp(self):

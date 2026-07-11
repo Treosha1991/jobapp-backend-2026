@@ -192,6 +192,14 @@ def _login_candidates(identifier):
         users.append(user)
         seen_ids.add(user.id)
 
+    # Some accounts created through a provider keep a technical username while
+    # their verified email remains the user's normal sign-in identifier.
+    for user in User.objects.filter(email__iexact=value):
+        if user.id in seen_ids:
+            continue
+        users.append(user)
+        seen_ids.add(user.id)
+
     nickname_matches = UserProfile.objects.filter(
         nickname__iexact=value
     ).select_related("user")
