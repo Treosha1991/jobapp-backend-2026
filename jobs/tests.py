@@ -157,7 +157,7 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
         notify.assert_called_once_with(vacancy)
 
 
-class EmployerPortalPhoneLoginTests(TestCase):
+class EmployerPortalPasswordResetTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
             username="phone-login-user",
@@ -170,22 +170,38 @@ class EmployerPortalPhoneLoginTests(TestCase):
             phone_verified=True,
         )
 
-    @patch("jobs.web_views._twilio_verify_check", return_value=(True, None, 200))
     @patch("jobs.web_views._twilio_verify_start", return_value=(True, None, 200))
-    def test_existing_mobile_account_can_log_in_by_verified_phone(self, _start, _check):
-        response = self.client.post(
-            "/employer/login/phone/request-code/",
-            {"phone": "+48123456789"},
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.client.session["employer_login_phone"], "+48123456789")
+    def test_login_only_offers_password_recovery_by_phone(self, _start):
+        response = self.client.get("/employer/login/")
+        self.assertContains(response, 'href="/employer/password-reset/"')
+        self.assertNotContains(response, "phone_login_request_code")
 
         response = self.client.post(
-            "/employer/login/phone/verify-code/",
-            {"code": "123456"},
+            "/employer/password-reset/",
+            {"action": "request_code", "phone": "+48123456789"},
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.id)
+        self.assertEqual(self.client.session["employer_password_reset_phone"], "+48123456789")
+
+    @patch("jobs.web_views._twilio_verify_check", return_value=(True, None, 200))
+    @patch("jobs.web_views._twilio_verify_start", return_value=(True, None, 200))
+    def test_verified_phone_can_reset_password(self, _start, _check):
+        self.client.post(
+            "/employer/password-reset/",
+            {"action": "request_code", "phone": "+48123456789"},
+        )
+        response = self.client.post(
+            "/employer/password-reset/",
+            {
+                "action": "confirm",
+                "code": "123456",
+                "password": "New-password-123",
+                "confirm_password": "New-password-123",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("New-password-123"))
 
     def test_portal_email_login_uses_the_same_account_as_mobile(self):
         response = self.client.post(

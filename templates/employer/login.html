@@ -15,11 +15,8 @@
     .jh-password-toggle .eye-off { display: none; }
     .jh-password-toggle.is-visible .eye-on { display: none; }
     .jh-password-toggle.is-visible .eye-off { display: block; }
-    .jh-login-divider { display:flex; align-items:center; gap:12px; margin:24px 0 18px; color:var(--muted); font-size:.9rem; }
-    .jh-login-divider::before, .jh-login-divider::after { content:""; height:1px; flex:1; background:rgba(180, 212, 240, .2); }
-    .jh-phone-login { border-top:1px solid rgba(180, 212, 240, .14); padding-top:18px; }
-    .jh-phone-login h2 { margin:0 0 6px; font-size:1.05rem; }
-    .jh-phone-login p { margin:0 0 14px; color:var(--muted); font-size:.9rem; line-height:1.45; }
+    .jh-forgot-password { display:inline-block; margin-top:12px; color:var(--green); font-weight:700; text-decoration:none; }
+    .jh-forgot-password:hover { text-decoration:underline; }
   </style>
 {% endblock %}
 {% block content %}
@@ -46,37 +43,8 @@
         </div>
       </div>
       <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.login_submit }}</button></div>
+      <a class="jh-forgot-password" href="{% url 'employer:password_reset' %}">{{ employer_t.forgot_password }}</a>
     </form>
-    <div class="jh-login-divider"><span>{{ employer_t.login_or }}</span></div>
-    <section class="jh-phone-login" aria-labelledby="phone-login-title">
-      <h2 id="phone-login-title">{{ employer_t.phone_login_title }}</h2>
-      <p>{{ employer_t.phone_login_text }}</p>
-      <form method="post" action="{% url 'employer:phone_login_request_code' %}" autocomplete="off">
-        {% csrf_token %}
-        <input type="hidden" name="next" value="{{ request.GET.next }}">
-        <div class="jh-field">
-          <label for="employer_login_phone">{{ employer_t.phone_login_phone_label }}</label>
-          <div class="jh-verify-row">
-            <input class="jh-input" id="employer_login_phone" name="phone" type="tel" inputmode="tel" placeholder="+48700111222" value="{{ request.session.employer_login_phone|default:'' }}" required>
-            <button class="jh-btn" type="submit">{{ employer_t.phone_login_send }}</button>
-          </div>
-        </div>
-      </form>
-      {% if request.session.employer_login_phone %}
-        <form method="post" action="{% url 'employer:phone_login_verify_code' %}" autocomplete="off">
-          {% csrf_token %}
-          <input type="hidden" name="next" value="{{ request.GET.next }}">
-          <input type="hidden" name="phone" value="{{ request.session.employer_login_phone }}">
-          <div class="jh-field">
-            <label for="employer_login_code">{{ employer_t.phone_login_code_label }}</label>
-            <div class="jh-verify-row compact">
-              <input class="jh-input" id="employer_login_code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" required>
-              <button class="jh-btn primary" type="submit">{{ employer_t.phone_login_confirm }}</button>
-            </div>
-          </div>
-        </form>
-      {% endif %}
-    </section>
   </section>
 {% endblock %}
 {% block extra_body %}

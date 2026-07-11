@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView, LogoutView
 from django.db import IntegrityError
 from django.db import transaction
+from django.db.models import F
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
 from django.utils.safestring import mark_safe
@@ -25,6 +26,9 @@ from .auth_api import (
     _normalize_phone,
     _phone_code_too_frequent,
     _phone_country_allowed,
+    _phone_reset_request_blocked,
+    _phone_reset_verify_blocked,
+    _is_password_policy_valid,
     _record_phone_verification_attempt,
     _login_candidates,
     _twilio_verify_check,
@@ -90,93 +94,93 @@ def _login_redirect(request):
     return redirect(next_url)
 
 
-@require_POST
-def phone_login_request_code(request):
-    """Send a one-time SMS code for the already verified JobHub account."""
-    phone = _normalize_phone(request.POST.get("phone"))
-    if not phone:
-        messages.error(request, tr(request, "phone_login_invalid"))
-        return _login_redirect(request)
-    if not _phone_country_allowed(phone):
-        messages.error(request, tr(request, "phone_login_country"))
-        return _login_redirect(request)
+def password_reset(request):
+    """Recover a web password through a phone already verified in JobHub."""
+    phone = request.session.get("employer_password_reset_phone", "")
 
-    profile = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
-    if not profile:
-        messages.error(request, tr(request, "phone_login_not_found"))
-        return _login_redirect(request)
-    if _phone_code_too_frequent(phone, "login"):
-        messages.error(request, tr(request, "phone_login_too_many"))
-        return _login_redirect(request)
+    if request.method == "GET":
+        return render(request, "employer/password_reset.html", {"reset_phone": phone})
 
-    _create_phone_code(phone, "login", user=profile.user)
-    ok, message, http_status = _twilio_verify_start(phone, channel="sms")
-    if not ok:
+    action = request.POST.get("action")
+    if action == "request_code":
+        phone = _normalize_phone(request.POST.get("phone"))
+        if not phone:
+            messages.error(request, tr(request, "password_reset_invalid_phone"))
+            return redirect("employer:password_reset")
+        if not _phone_country_allowed(phone):
+            messages.error(request, tr(request, "password_reset_country"))
+            return redirect("employer:password_reset")
+
+        profile = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+        if not profile:
+            messages.error(request, tr(request, "password_reset_not_found"))
+            return redirect("employer:password_reset")
+        if _phone_reset_request_blocked(phone):
+            messages.error(request, tr(request, "password_reset_too_many"))
+            return redirect("employer:password_reset")
+
+        _create_phone_code(phone, "reset", user=profile.user)
+        ok, message, http_status = _twilio_verify_start(phone, channel="sms")
+        if not ok:
+            _record_phone_verification_attempt(
+                request, phone_e164=phone, purpose="reset", channel="sms",
+                status_code="delivery_failed", message=message or "verification_not_sent",
+                http_status=http_status, user=profile.user,
+            )
+            messages.error(request, tr(request, "password_reset_send_failed"))
+            return redirect("employer:password_reset")
+
         _record_phone_verification_attempt(
-            request,
-            phone_e164=phone,
-            purpose="login",
-            channel="sms",
-            status_code="delivery_failed",
-            message=message or "verification_not_sent",
-            http_status=http_status,
-            user=profile.user,
+            request, phone_e164=phone, purpose="reset", channel="sms",
+            status_code="sent", http_status=200, user=profile.user,
         )
-        messages.error(request, tr(request, "phone_login_send_failed"))
-        return _login_redirect(request)
+        request.session["employer_password_reset_phone"] = phone
+        messages.success(request, tr(request, "password_reset_code_sent"))
+        return redirect("employer:password_reset")
 
-    _record_phone_verification_attempt(
-        request,
-        phone_e164=phone,
-        purpose="login",
-        channel="sms",
-        status_code="sent",
-        http_status=200,
-        user=profile.user,
-    )
-    request.session["employer_login_phone"] = phone
-    messages.success(request, tr(request, "phone_login_code_sent"))
-    return _login_redirect(request)
+    if action == "confirm":
+        code = (request.POST.get("code") or "").strip()
+        password = request.POST.get("password") or ""
+        confirm_password = request.POST.get("confirm_password") or ""
+        profile = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+        if not phone or not code or not profile:
+            messages.error(request, tr(request, "password_reset_code_invalid"))
+            return redirect("employer:password_reset")
+        if password != confirm_password:
+            messages.error(request, tr(request, "password_reset_password_mismatch"))
+            return redirect("employer:password_reset")
+        if not _is_password_policy_valid(password):
+            messages.error(request, tr(request, "password_reset_password_invalid"))
+            return redirect("employer:password_reset")
+        if _phone_reset_verify_blocked(phone):
+            messages.error(request, tr(request, "password_reset_too_many"))
+            return redirect("employer:password_reset")
 
+        approved, message, http_status = _twilio_verify_check(phone, code)
+        if not approved:
+            PhoneVerification.objects.filter(phone_e164=phone, purpose="reset", is_used=False).update(
+                attempts=F("attempts") + 1
+            )
+            _record_phone_verification_attempt(
+                request, phone_e164=phone, purpose="reset", channel="sms",
+                status_code="check_failed", message=message or "invalid_or_expired_code",
+                http_status=http_status, user=profile.user,
+            )
+            messages.error(request, tr(request, "password_reset_code_invalid"))
+            return redirect("employer:password_reset")
 
-@require_POST
-def phone_login_verify_code(request):
-    phone = _normalize_phone(request.POST.get("phone") or request.session.get("employer_login_phone"))
-    code = (request.POST.get("code") or "").strip()
-    profile = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
-    if not phone or not code or not profile:
-        messages.error(request, tr(request, "phone_login_code_invalid"))
-        return _login_redirect(request)
-
-    approved, message, http_status = _twilio_verify_check(phone, code)
-    if not approved:
+        PhoneVerification.objects.filter(phone_e164=phone, purpose="reset", is_used=False).update(is_used=True)
+        profile.user.set_password(password)
+        profile.user.save(update_fields=["password"])
         _record_phone_verification_attempt(
-            request,
-            phone_e164=phone,
-            purpose="login",
-            channel="sms",
-            status_code="check_failed",
-            message=message or "invalid_or_expired_code",
-            http_status=http_status,
-            user=profile.user,
+            request, phone_e164=phone, purpose="reset", channel="sms",
+            status_code="approved", http_status=200, user=profile.user,
         )
-        messages.error(request, tr(request, "phone_login_code_invalid"))
-        return _login_redirect(request)
+        request.session.pop("employer_password_reset_phone", None)
+        messages.success(request, tr(request, "password_reset_success"))
+        return redirect("employer:login")
 
-    PhoneVerification.objects.filter(phone_e164=phone, purpose="login", is_used=False).update(is_used=True)
-    _record_phone_verification_attempt(
-        request,
-        phone_e164=phone,
-        purpose="login",
-        channel="sms",
-        status_code="approved",
-        http_status=200,
-        user=profile.user,
-    )
-    request.session.pop("employer_login_phone", None)
-    auth_login(request, profile.user, backend="django.contrib.auth.backends.ModelBackend")
-    messages.success(request, tr(request, "phone_login_success"))
-    return _login_redirect(request)
+    return redirect("employer:password_reset")
 
 
 def set_language(request, lang):
