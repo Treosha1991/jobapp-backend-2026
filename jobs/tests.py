@@ -93,6 +93,10 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
         form = EmployerVacancyForm(instance=vacancy, user=self.employer, lang="ru")
         self.assertIn(("Oldtown", "Oldtown"), form.fields["city"].choices)
 
+        response = self.client.get(f"/employer/vacancies/{vacancy.pk}/edit/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'const initialCity = "Oldtown";')
+
     def test_description_up_to_1500_characters_is_accepted_everywhere(self):
         payload = self._valid_payload() | {"description": "x" * 1500}
         web_form = EmployerVacancyForm(data=payload, user=self.employer, lang="ru")

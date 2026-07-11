@@ -289,6 +289,15 @@ class EmployerVacancyForm(forms.ModelForm):
         self.fields["country"].choices = _sort_choices_for_display(localized_country_choices(VACANCY_COUNTRY_CHOICES, self.lang))
         self.fields["audience_countries"].choices = _sort_choices_for_display(localized_country_choices(VACANCY_COUNTRY_CHOICES, self.lang))
         self.fields["city"].choices = self._city_choices_for_selected_country()
+        if not self.is_bound:
+            # Normalize old imported values so the select can match its option.
+            stored_city = _strip(
+                self.initial.get("city")
+                or (self.instance.city if self.instance and self.instance.pk else "")
+            )
+            if stored_city:
+                self.initial["city"] = stored_city
+                self.fields["city"].initial = stored_city
         self.fields["category"].choices = localized_choices(Vacancy.CATEGORY_CHOICES, CATEGORY_LABELS, self.lang)
         self.fields["employment_type"].choices = localized_choices(Vacancy.EMPLOYMENT_TYPE_CHOICES, EMPLOYMENT_LABELS, self.lang)
         self.fields["experience_required"].choices = [("", "---------")] + localized_choices(Vacancy.EXPERIENCE_CHOICES, EXPERIENCE_LABELS, self.lang)

@@ -270,6 +270,15 @@ def _vacancy_form_context(request, form, *, mode, vacancy=None):
         "form": form,
         "mode": mode,
         "city_catalog_json": mark_safe(json.dumps(city_catalog, ensure_ascii=False)),
+        # Keep the stored city separate from the rendered select value. The
+        # browser rebuilds this select from the catalog, and legacy/imported
+        # cities may not be in that catalog yet.
+        "initial_city_json": mark_safe(
+            json.dumps(
+                (getattr(vacancy, "city", "") or form.initial.get("city", "")).strip(),
+                ensure_ascii=False,
+            )
+        ),
         "phone_verified_profile": _verified_phone_profile(request.user),
         "phone_verify_pending": request.session.get("employer_phone_verify_phone", ""),
     }

@@ -186,7 +186,7 @@
     const citySelect = document.getElementById("id_city");
     const cityPlaceholder = "{{ employer_t.city_placeholder|escapejs }}";
 
-    const initialCity = citySelect ? (citySelect.value || "") : "";
+    const initialCity = {{ initial_city_json|safe }};
 
     function refreshCities(preserveSelectedCity = false) {
       const cities = cityCatalog[countrySelect ? countrySelect.value : ""] || [];
@@ -200,7 +200,7 @@
       cities.forEach((city) => {
         citySelect.appendChild(new Option(city, city));
       });
-      citySelect.disabled = cities.length === 0;
+      citySelect.disabled = cities.length === 0 && !previousValue;
       if (previousValue) {
         citySelect.value = previousValue;
       }
