@@ -259,6 +259,7 @@ class UserProfileInline(admin.StackedInline):
         "phone_e164",
         "phone_verified",
         "phone_verified_at",
+        "employer_verified",
         "avatar_key",
         "avatar_updated_at",
     )
@@ -736,13 +737,15 @@ class UserProfileAdmin(admin.ModelAdmin):
         "nickname_display",
         "phone_e164",
         "phone_verified_badge",
+        "employer_verified_badge",
         "has_avatar_badge",
         "avatar_updated_at",
     )
     search_fields = ("user__username", "user__email", "nickname", "phone_e164")
-    list_filter = ("phone_verified",)
+    list_filter = ("phone_verified", "employer_verified")
     list_select_related = ("user",)
     ordering = ("user__username",)
+    actions = ("mark_employers_verified", "remove_employer_verification")
 
     @admin.display(description="Nickname", ordering="nickname")
     def nickname_display(self, obj):
@@ -751,6 +754,20 @@ class UserProfileAdmin(admin.ModelAdmin):
     @admin.display(description="Phone")
     def phone_verified_badge(self, obj):
         return _bool_badge(obj.phone_verified, "Verified", "Not verified")
+
+    @admin.display(description="Employer")
+    def employer_verified_badge(self, obj):
+        return _bool_badge(obj.employer_verified, "Verified", "Not verified")
+
+    @admin.action(description="Mark selected employers as verified")
+    def mark_employers_verified(self, request, queryset):
+        updated = queryset.update(employer_verified=True)
+        self.message_user(request, f"Employer verification enabled for {updated} profile(s).")
+
+    @admin.action(description="Remove employer verification from selected profiles")
+    def remove_employer_verification(self, request, queryset):
+        updated = queryset.update(employer_verified=False)
+        self.message_user(request, f"Employer verification removed from {updated} profile(s).")
 
     @admin.display(description="Avatar")
     def has_avatar_badge(self, obj):

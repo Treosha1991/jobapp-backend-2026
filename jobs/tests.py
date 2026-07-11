@@ -29,6 +29,51 @@ class CurrencyCatalogTests(TestCase):
             self.assertIn((code, code), Vacancy.SALARY_CURRENCY_CHOICES)
 
 
+class VerifiedEmployerApiTests(TestCase):
+    def setUp(self):
+        self.employer = User.objects.create_user(
+            username="verified-employer",
+            email="verified-employer@example.com",
+            password="password",
+        )
+        self.viewer = User.objects.create_user(
+            username="verified-viewer",
+            email="verified-viewer@example.com",
+            password="password",
+        )
+        UserProfile.objects.create(user=self.employer, employer_verified=True)
+        UserProfile.objects.create(user=self.viewer)
+        self.vacancy = Vacancy.objects.create(
+            created_by=self.employer,
+            title="Verified employer vacancy",
+            country="DE",
+            city="Berlin",
+            category="warehouse",
+            employment_type="full",
+            description="A vacancy published by a verified employer.",
+            housing_type="none",
+            source="direct",
+            is_approved=True,
+            published_at=timezone.now(),
+            expires_at=timezone.now() + timezone.timedelta(days=30),
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.viewer)
+
+    def test_verified_employer_flag_is_present_in_vacancy_and_profile_payloads(self):
+        vacancies = self.client.get("/api/vacancies/")
+        self.assertEqual(vacancies.status_code, 200)
+        self.assertTrue(vacancies.data["results"][0]["employer_verified"])
+
+        detail = self.client.get(f"/api/vacancies/{self.vacancy.id}/")
+        self.assertEqual(detail.status_code, 200)
+        self.assertTrue(detail.data["employer_verified"])
+
+        profile = self.client.get(f"/api/employers/{self.employer.id}/profile/")
+        self.assertEqual(profile.status_code, 200)
+        self.assertTrue(profile.data["employer"]["is_verified"])
+
+
 class EmployerPortalVacancyWorkflowTests(TestCase):
     """Keep the browser vacancy flow aligned with the mobile submission flow."""
 

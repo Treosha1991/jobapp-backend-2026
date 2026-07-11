@@ -240,6 +240,17 @@ def _creator_avatar_url(obj):
     return avatar_public_url(avatar_key)
 
 
+def _creator_is_verified_employer(obj):
+    creator = getattr(obj, "created_by", None)
+    if not creator:
+        return False
+    try:
+        profile = creator.profile
+    except Exception:
+        profile = None
+    return bool(getattr(profile, "employer_verified", False))
+
+
 def _service_board_meta(obj):
     creator = getattr(obj, "created_by", None)
     return service_board_meta_for_user(creator)
@@ -298,6 +309,7 @@ def _contact_payload(obj, *, public_only=False):
         "owner_user_id": getattr(getattr(obj, "created_by", None), "id", None),
         "owner_nickname": _creator_display_name(obj),
         "owner_avatar_url": _creator_avatar_url(obj),
+        "owner_employer_verified": _creator_is_verified_employer(obj),
         # compatibility with existing mobile fields
         "nickname": _creator_nickname(obj),
         "phone": public_phone if public_only else primary_phone,
@@ -338,6 +350,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
     is_resubmitted = serializers.SerializerMethodField()
     is_owner_subscribed = serializers.SerializerMethodField()
     show_employer_profile = serializers.SerializerMethodField()
+    employer_verified = serializers.SerializerMethodField()
     is_service_board = serializers.SerializerMethodField()
     service_board_kind = serializers.SerializerMethodField()
 
@@ -372,6 +385,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "is_resubmitted",
             "is_owner_subscribed",
             "show_employer_profile",
+            "employer_verified",
             "is_service_board",
             "service_board_kind",
         ]
@@ -409,6 +423,9 @@ class VacancyListSerializer(serializers.ModelSerializer):
 
     def get_show_employer_profile(self, obj):
         return is_employer_profile_visible_for_vacancy(obj)
+
+    def get_employer_verified(self, obj):
+        return _creator_is_verified_employer(obj)
 
     def get_is_service_board(self, obj):
         return _service_board_meta(obj)["is_service_board"]
@@ -527,6 +544,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
     employer_review_summary = serializers.SerializerMethodField()
     review_state = serializers.SerializerMethodField()
     moderator_review_summary = serializers.SerializerMethodField()
+    employer_verified = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -566,6 +584,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "employer_review_summary",
             "review_state",
             "moderator_review_summary",
+            "employer_verified",
         ]
 
     def get_contacts(self, obj):
@@ -617,6 +636,9 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
 
     def get_employer_review_summary(self, obj):
         return get_employer_review_summary(getattr(obj, "created_by", None))
+
+    def get_employer_verified(self, obj):
+        return _creator_is_verified_employer(obj)
 
     def get_review_state(self, obj):
         request = self.context.get("request")
@@ -1133,6 +1155,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
         min_selections=0,
     )
     driver_license_categories = DriverLicenseCategoriesField(read_only=True)
+    employer_verified = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -1174,6 +1197,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "status_label_key",
             "rejection_reason_code",
             "rejection_reason_comment",
+            "employer_verified",
         ]
 
     def get_contacts(self, obj):
@@ -1221,11 +1245,15 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             return ""
         return raw.split(":", 1)[1].strip()
 
+    def get_employer_verified(self, obj):
+        return _creator_is_verified_employer(obj)
+
 class VacancyContactSerializer(serializers.ModelSerializer):
     nickname = serializers.SerializerMethodField()
     owner_user_id = serializers.SerializerMethodField()
     owner_nickname = serializers.SerializerMethodField()
     owner_avatar_url = serializers.SerializerMethodField()
+    owner_employer_verified = serializers.SerializerMethodField()
     phone = serializers.SerializerMethodField()
     whatsapp = serializers.SerializerMethodField()
     viber = serializers.SerializerMethodField()
@@ -1244,6 +1272,7 @@ class VacancyContactSerializer(serializers.ModelSerializer):
             "owner_user_id",
             "owner_nickname",
             "owner_avatar_url",
+            "owner_employer_verified",
             "nickname",
             "phone",
             "additional_phone",
@@ -1267,6 +1296,9 @@ class VacancyContactSerializer(serializers.ModelSerializer):
 
     def get_owner_avatar_url(self, obj):
         return _creator_avatar_url(obj)
+
+    def get_owner_employer_verified(self, obj):
+        return _creator_is_verified_employer(obj)
 
     def get_nickname(self, obj):
         return _creator_display_name(obj)

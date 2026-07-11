@@ -2144,6 +2144,9 @@ class EmployerProfileAPIView(APIView):
         employer_payload = {
             "id": owner.id,
             "nickname": _owner_nickname_or_fallback(owner),
+            "is_verified": bool(
+                getattr(getattr(owner, "profile", None), "employer_verified", False)
+            ),
             "profile_description": (
                 (getattr(getattr(owner, "profile", None), "description", "") or "").strip()
             ),
