@@ -102,10 +102,15 @@
     const composer = composeForm?.querySelector('textarea');
     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
     composer?.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.ctrlKey) {
+      if (event.key !== 'Enter') return;
+      if (event.ctrlKey) {
         event.preventDefault();
-        if (composer.value.trim()) composeForm.requestSubmit();
+        composer.setRangeText('\n', composer.selectionStart, composer.selectionEnd, 'end');
+        composer.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
       }
+      event.preventDefault();
+      if (composer.value.trim()) composeForm.requestSubmit();
     });
     const postAction = (action, messageId, body = '') => {
       const form = document.createElement('form'); form.method = 'post';
