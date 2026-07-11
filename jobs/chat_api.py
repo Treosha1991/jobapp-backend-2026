@@ -38,6 +38,11 @@ def _user_avatar_url(user):
     return avatar_public_url(getattr(profile, "avatar_key", ""))
 
 
+def _user_is_verified_employer(user):
+    profile = _user_profile(user)
+    return bool(getattr(profile, "employer_verified", False))
+
+
 def _user_profile(user):
     if not user:
         return None
@@ -145,13 +150,21 @@ def _conversation_payload(conversation, viewer, *, unread_count=0, last_message=
         last_message = getattr(conversation, "_chat_last_message", None)
     employer = conversation.employer
     blocked_by_me, blocked_by_other = _block_state(viewer, other_user)
+    other_user_has_active_vacancies = bool(
+        other_user and _user_has_active_vacancies(other_user)
+    )
     return {
         "id": conversation.id,
         "other_user": {
             "id": other_user.id if other_user else None,
             "nickname": _user_display_name(other_user) if other_user else "",
             "avatar_url": _user_avatar_url(other_user) if other_user else "",
-            "has_active_vacancies": bool(other_user and _user_has_active_vacancies(other_user)),
+            "has_active_vacancies": other_user_has_active_vacancies,
+            "is_verified_employer": bool(
+                other_user
+                and other_user_has_active_vacancies
+                and _user_is_verified_employer(other_user)
+            ),
         },
         "initial_vacancy": {
             "id": conversation.initial_vacancy_id,
@@ -164,6 +177,7 @@ def _conversation_payload(conversation, viewer, *, unread_count=0, last_message=
                 "id": employer.id,
                 "nickname": _user_display_name(employer),
                 "avatar_url": _user_avatar_url(employer),
+                "is_verified_employer": _user_is_verified_employer(employer),
             },
             "vacancy": {
                 "id": conversation.initial_vacancy_id,

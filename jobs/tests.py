@@ -324,7 +324,11 @@ class ChatAPITests(TestCase):
             email="employer@example.com",
             password="password",
         )
-        UserProfile.objects.create(user=self.employer, nickname="Employer")
+        UserProfile.objects.create(
+            user=self.employer,
+            nickname="Employer",
+            employer_verified=True,
+        )
         self.vacancy = Vacancy.objects.create(
             created_by=self.employer,
             title="Warehouse worker",
@@ -367,7 +371,14 @@ class ChatAPITests(TestCase):
             "conversation"
         ]["initial_context"]
         self.assertEqual(initial["employer"]["nickname"], "Employer")
+        self.assertTrue(initial["employer"]["is_verified_employer"])
         self.assertEqual(initial["vacancy"]["title"], self.vacancy.title)
+
+        self.assertTrue(
+            self.client.get(f"/api/chats/{conversation_id}/").data["conversation"][
+                "other_user"
+            ]["is_verified_employer"]
+        )
 
         response = self.client.post(
             "/api/chats/start/",
