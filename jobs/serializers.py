@@ -38,6 +38,7 @@ from .reviews import (
 from .service_sources import service_board_meta_for_user
 from .economy import is_employer_profile_visible_for_vacancy
 from .text_filters import censor_minimal, contains_link
+from .telegram import is_telegram_username, normalize_telegram_username
 
 
 EXTERNAL_LINK_RE = re.compile(r"https?://[^\s<>{}\[\]|\\^`]+", re.IGNORECASE)
@@ -114,6 +115,7 @@ _MODERATION_COMPARISON_FIELDS = [
     "hide_primary_phone",
     "whatsapp",
     "viber",
+    "telegram_username",
     "telegram",
     "email",
     "source",
@@ -280,10 +282,11 @@ def _contact_payload(obj, *, public_only=False):
     public_phone = additional_phone if hide_primary_phone else primary_phone
     raw_whatsapp = (obj.whatsapp or "").strip()
     raw_viber = (obj.viber or "").strip()
-    raw_telegram = (obj.telegram or "").strip()
+    # Legacy values in `telegram` were phone numbers. Never expose those as
+    # Telegram contacts; only the dedicated username is public.
+    raw_telegram = (getattr(obj, "telegram_username", "") or "").strip()
     public_whatsapp = additional_phone if hide_primary_phone and raw_whatsapp else raw_whatsapp
     public_viber = additional_phone if hide_primary_phone and raw_viber else raw_viber
-    public_telegram = additional_phone if hide_primary_phone and raw_telegram else raw_telegram
     payload = {
         "owner_user_id": getattr(getattr(obj, "created_by", None), "id", None),
         "owner_nickname": _creator_display_name(obj),
@@ -297,11 +300,14 @@ def _contact_payload(obj, *, public_only=False):
         "additional_phones": additional_phones if not public_only else [],
         "hide_primary_phone": hide_primary_phone,
         "public_phone": public_phone,
-        "telegram": public_telegram if public_only else raw_telegram,
+        # Compatibility alias for older mobile clients.
+        "telegram": raw_telegram,
+        "telegram_username": raw_telegram,
         "whatsapp": public_whatsapp if public_only else raw_whatsapp,
         "email": "" if public_only else (obj.email or ""),
         "viber": public_viber if public_only else raw_viber,
-        "public_telegram": public_telegram,
+        "public_telegram": raw_telegram,
+        "public_telegram_username": raw_telegram,
         "public_whatsapp": public_whatsapp,
         "public_viber": public_viber,
     }
@@ -659,6 +665,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "hide_primary_phone",
             "whatsapp",
             "viber",
+            "telegram_username",
             "telegram",
             "email",
             "source",
@@ -716,6 +723,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
                 "additional_phone",
                 "additional_phone_2",
                 "additional_phone_3",
+                "telegram_username",
                 "telegram",
                 "whatsapp",
                 "viber",
@@ -745,7 +753,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
         _check_len("additional_phone", 15)
         _check_len("additional_phone_2", 15)
         _check_len("additional_phone_3", 15)
-        _check_len("telegram", 15)
+        _check_len("telegram_username", 32)
         _check_len("whatsapp", 15)
         _check_len("viber", 15)
         _check_len("email", 30)
@@ -776,7 +784,6 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "additional_phone",
             "additional_phone_2",
             "additional_phone_3",
-            "telegram",
             "whatsapp",
             "viber",
         ):
@@ -784,6 +791,13 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             if val:
                 if not contact_pattern.match(val):
                     errors[field] = "only digits and symbols"
+
+        try:
+            attrs["telegram_username"] = normalize_telegram_username(
+                attrs.get("telegram_username")
+            )
+        except ValueError:
+            errors["telegram_username"] = "invalid Telegram username"
 
         primary_phone = (attrs.get("phone") or "").strip()
         additional_phones = [
@@ -923,6 +937,7 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
             "hide_primary_phone",
             "whatsapp",
             "viber",
+            "telegram_username",
             "telegram",
             "email",
             "source",
@@ -946,6 +961,7 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
             "hide_primary_phone": {"required": False},
             "whatsapp": {"required": False, "allow_blank": True},
             "viber": {"required": False, "allow_blank": True},
+            "telegram_username": {"required": False, "allow_blank": True},
             "telegram": {"required": False, "allow_blank": True},
             "email": {"required": False, "allow_blank": True},
         }
@@ -976,7 +992,7 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
         _check_len("additional_phone", 30)
         _check_len("additional_phone_2", 30)
         _check_len("additional_phone_3", 30)
-        _check_len("telegram", 100)
+        _check_len("telegram_username", 32)
         _check_len("whatsapp", 100)
         _check_len("viber", 100)
         _check_len("email", 254)
@@ -998,13 +1014,24 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
             "additional_phone",
             "additional_phone_2",
             "additional_phone_3",
-            "telegram",
             "whatsapp",
             "viber",
         ):
             val = attrs.get(field)
             if val and not contact_pattern.match(val):
                 errors[field] = "only digits and symbols"
+
+        # Accept the explicit field from JobHub Board. Existing import payloads
+        # with @username are also upgraded without exposing phone values.
+        legacy_telegram = (attrs.get("telegram") or "").strip()
+        if not attrs.get("telegram_username") and is_telegram_username(legacy_telegram):
+            attrs["telegram_username"] = legacy_telegram
+        try:
+            attrs["telegram_username"] = normalize_telegram_username(
+                attrs.get("telegram_username")
+            )
+        except ValueError:
+            errors["telegram_username"] = "invalid Telegram username"
 
         primary_phone = (attrs.get("phone") or "").strip()
         additional_phones = [
@@ -1167,6 +1194,7 @@ class VacancyContactSerializer(serializers.ModelSerializer):
     whatsapp = serializers.SerializerMethodField()
     viber = serializers.SerializerMethodField()
     telegram = serializers.SerializerMethodField()
+    telegram_username = serializers.SerializerMethodField()
     additional_phone = serializers.SerializerMethodField()
     additional_phone_2 = serializers.SerializerMethodField()
     additional_phone_3 = serializers.SerializerMethodField()
@@ -1189,6 +1217,7 @@ class VacancyContactSerializer(serializers.ModelSerializer):
             "whatsapp",
             "viber",
             "telegram",
+            "telegram_username",
             "email",
         ]
 
@@ -1251,7 +1280,10 @@ class VacancyContactSerializer(serializers.ModelSerializer):
         return self._public_messenger(obj, obj.viber)
 
     def get_telegram(self, obj):
-        return self._public_messenger(obj, obj.telegram)
+        return (getattr(obj, "telegram_username", "") or "").strip()
+
+    def get_telegram_username(self, obj):
+        return self.get_telegram(obj)
 
 
 class PushDeviceRegisterSerializer(serializers.Serializer):

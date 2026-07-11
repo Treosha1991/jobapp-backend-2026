@@ -369,7 +369,7 @@ class InternalVacancyImportAPITest(TestCase):
             "phone": "+48661590180",
             "whatsapp": "+48661590180",
             "viber": "+48661590180",
-            "telegram": "+48661590180",
+            "telegram_username": "jobhub_test",
             "source": "agency",
             "source_text": "Original external vacancy text",
             "extraction_notes": "Schedule is not specified.",
@@ -401,7 +401,23 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertIsNotNone(vacancy.approved_at)
         self.assertNotIn("+48661590180", vacancy.description)
         self.assertIn("Important details stay visible.", vacancy.description)
+        self.assertEqual(vacancy.telegram_username, "jobhub_test")
         self.assertFalse(VacancyModerationAttempt.objects.filter(vacancy=vacancy).exists())
+
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    def test_legacy_telegram_phone_is_not_promoted_to_public_username(self):
+        payload = {**self.payload, "telegram_username": "", "telegram": "+48661590180"}
+        response = self.client.post(
+            self.url,
+            payload,
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        vacancy = Vacancy.objects.get(id=response.data["vacancy_id"])
+        self.assertEqual(vacancy.telegram, "+48661590180")
+        self.assertEqual(vacancy.telegram_username, "")
 
         service_user = User.objects.get(username=SERVICE_BOARD_USERNAME)
         self.assertFalse(service_user.has_usable_password())

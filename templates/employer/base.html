@@ -109,6 +109,10 @@
     .jh-messengers input[type="checkbox"]:checked { background: var(--green); border-color: var(--green); }
     .jh-messengers input[type="checkbox"]:checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #052012; border-width: 0 2px 2px 0; transform: rotate(45deg); }
     .jh-email-field { margin-top: 12px; max-width: 500px; }
+    .jh-telegram-field { margin-top: 12px; max-width: 500px; }
+    .jh-telegram-input { position: relative; }
+    .jh-telegram-input > span { position: absolute; z-index: 1; left: 13px; top: 50%; transform: translateY(-50%); color: var(--green); font-weight: 900; }
+    .jh-telegram-input .jh-input { padding-left: 29px; }
     .jh-table-wrap { overflow-x: auto; }
     .jh-table { width: 100%; border-collapse: collapse; min-width: 780px; }
     .jh-table th, .jh-table td { padding: 14px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }

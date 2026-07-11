@@ -126,7 +126,6 @@
             <div class="jh-messengers">
               <label>{{ form.phone_viber }} Viber</label>
               <label>{{ form.phone_whatsapp }} WhatsApp</label>
-              <label>{{ form.phone_telegram }} Telegram</label>
             </div>
             {% if form.hide_primary_phone.errors %}<div class="jh-errorlist">{{ form.hide_primary_phone.errors }}</div>{% endif %}
           </div>
@@ -135,7 +134,6 @@
             <div class="jh-messengers">
               <label>{{ form.additional_phone_viber }} Viber</label>
               <label>{{ form.additional_phone_whatsapp }} WhatsApp</label>
-              <label>{{ form.additional_phone_telegram }} Telegram</label>
             </div>
           </div>
           <div class="jh-phone-card">
@@ -143,7 +141,6 @@
             <div class="jh-messengers">
               <label>{{ form.additional_phone_2_viber }} Viber</label>
               <label>{{ form.additional_phone_2_whatsapp }} WhatsApp</label>
-              <label>{{ form.additional_phone_2_telegram }} Telegram</label>
             </div>
           </div>
           <div class="jh-phone-card">
@@ -151,9 +148,13 @@
             <div class="jh-messengers">
               <label>{{ form.additional_phone_3_viber }} Viber</label>
               <label>{{ form.additional_phone_3_whatsapp }} WhatsApp</label>
-              <label>{{ form.additional_phone_3_telegram }} Telegram</label>
             </div>
           </div>
+        </div>
+        <div class="jh-field jh-telegram-field">
+          {{ form.telegram_username.label_tag }}
+          <div class="jh-telegram-input"><span aria-hidden="true">@</span>{{ form.telegram_username }}</div>
+          {% if form.telegram_username.errors %}<div class="jh-errorlist">{{ form.telegram_username.errors }}</div>{% endif %}
         </div>
         <div class="jh-field jh-email-field">{{ form.email.label_tag }}{{ form.email }}{% if form.email.errors %}<div class="jh-errorlist">{{ form.email.errors }}</div>{% endif %}</div>
       </section>

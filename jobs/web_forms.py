@@ -19,6 +19,7 @@ from .driver_licenses import (
 )
 from .models import UserProfile, Vacancy
 from .text_filters import censor_minimal, contains_link
+from .telegram import normalize_telegram_username
 from .web_choice_labels import (
     CATEGORY_LABELS,
     EMPLOYMENT_LABELS,
@@ -34,7 +35,7 @@ from .web_i18n import FIELD_LABELS, normalize_lang
 PHONE_RE = re.compile(r"^[0-9+()\-\s]+$")
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 PHONE_FIELDS = ("phone", "additional_phone", "additional_phone_2", "additional_phone_3")
-MESSENGERS = ("whatsapp", "viber", "telegram")
+MESSENGERS = ("whatsapp", "viber")
 DEFAULT_SALARY_HOURS_MONTH = 168
 HOUSING_COST_RE = re.compile(r"^\s*(\d{1,4})\s+([A-Za-z]{3})\s*/\s*([A-Za-z]+)\s*$")
 HOUSING_CURRENCY_CODES = CURRENCY_CODES
@@ -67,7 +68,8 @@ ERRORS = {'ru': {'title_required': 'Введите название ваканс
         'email_format': 'Введите корректный email.',
         'audience_min': 'Выберите хотя бы одну страну гражданства.',
         'audience_max': 'Можно выбрать не больше 20 стран.',
-        'driver_max': 'Можно выбрать не больше 3 категорий прав.'},
+        'driver_max': 'Можно выбрать не больше 3 категорий прав.',
+        'telegram_invalid': 'Введите Telegram-никнейм: 5-32 латинских букв, цифр или _. Без @.'},
  'en': {'title_required': 'Enter the vacancy title.',
         'title_length': 'The title must be 50 characters or shorter.',
         'city_required': 'Enter the city.',
@@ -89,7 +91,8 @@ ERRORS = {'ru': {'title_required': 'Введите название ваканс
         'email_format': 'Enter a valid email.',
         'audience_min': 'Select at least one citizenship country.',
         'audience_max': 'You can select up to 20 countries.',
-        'driver_max': 'You can select up to 3 license categories.'},
+        'driver_max': 'You can select up to 3 license categories.',
+        'telegram_invalid': 'Enter a Telegram username: 5-32 Latin letters, digits, or _. Do not include @.'},
  'pl': {'title_required': 'Podaj nazwę oferty.',
         'title_length': 'Nazwa oferty może mieć maksymalnie 50 znaków.',
         'city_required': 'Podaj miasto.',
@@ -111,7 +114,8 @@ ERRORS = {'ru': {'title_required': 'Введите название ваканс
         'email_format': 'Podaj poprawny email.',
         'audience_min': 'Wybierz co najmniej jeden kraj obywatelstwa.',
         'audience_max': 'Można wybrać maksymalnie 20 krajów.',
-        'driver_max': 'Można wybrać maksymalnie 3 kategorie prawa jazdy.'},
+        'driver_max': 'Można wybrać maksymalnie 3 kategorie prawa jazdy.',
+        'telegram_invalid': 'Wpisz nazwę użytkownika Telegram: 5-32 liter łacińskich, cyfr lub _. Bez @.'},
  'uk': {'title_required': 'Введіть назву вакансії.',
         'title_length': 'Назва вакансії має бути не довше 50 символів.',
         'city_required': 'Введіть місто.',
@@ -133,7 +137,8 @@ ERRORS = {'ru': {'title_required': 'Введите название ваканс
         'email_format': 'Введіть коректний email.',
         'audience_min': 'Виберіть хоча б одну країну громадянства.',
         'audience_max': 'Можна вибрати не більше 20 країн.',
-        'driver_max': 'Можна вибрати не більше 3 категорій прав.'}}
+        'driver_max': 'Можна вибрати не більше 3 категорій прав.',
+        'telegram_invalid': 'Введіть Telegram-нікнейм: 5-32 латинських літер, цифр або _. Без @.'}}
 
 def _err(lang, key):
     return ERRORS.get(lang, ERRORS["ru"]).get(key, key)
@@ -168,16 +173,19 @@ class EmployerVacancyForm(forms.ModelForm):
 
     phone_whatsapp = forms.BooleanField(required=False)
     phone_viber = forms.BooleanField(required=False)
-    phone_telegram = forms.BooleanField(required=False)
     additional_phone_whatsapp = forms.BooleanField(required=False)
     additional_phone_viber = forms.BooleanField(required=False)
-    additional_phone_telegram = forms.BooleanField(required=False)
     additional_phone_2_whatsapp = forms.BooleanField(required=False)
     additional_phone_2_viber = forms.BooleanField(required=False)
-    additional_phone_2_telegram = forms.BooleanField(required=False)
     additional_phone_3_whatsapp = forms.BooleanField(required=False)
     additional_phone_3_viber = forms.BooleanField(required=False)
-    additional_phone_3_telegram = forms.BooleanField(required=False)
+    telegram_username = forms.CharField(
+        required=False,
+        max_length=32,
+        widget=forms.TextInput(
+            attrs={"class": "jh-input", "maxlength": "32", "autocomplete": "off"}
+        ),
+    )
     housing_cost = forms.IntegerField(
         required=False,
         min_value=1,
@@ -221,6 +229,7 @@ class EmployerVacancyForm(forms.ModelForm):
             "additional_phone_2",
             "additional_phone_3",
             "hide_primary_phone",
+            "telegram_username",
             "email",
             "source",
         ]
@@ -289,6 +298,7 @@ class EmployerVacancyForm(forms.ModelForm):
             "additional_phone",
             "additional_phone_2",
             "additional_phone_3",
+            "telegram_username",
             "email",
         ]
         for field_name in optional_fields:
@@ -299,6 +309,7 @@ class EmployerVacancyForm(forms.ModelForm):
             self.initial["driver_license_categories"] = decode_driver_license_categories(self.instance.driver_license_categories)
             self._init_housing_cost_fields_from_instance()
             self._init_messenger_checks_from_instance()
+            self.initial["telegram_username"] = getattr(self.instance, "telegram_username", "")
         elif not self.is_bound:
             self._init_primary_phone_from_profile()
         self.initial.setdefault("source", "direct")
@@ -513,6 +524,13 @@ class EmployerVacancyForm(forms.ModelForm):
             if not EMAIL_RE.match(email):
                 self.add_error("email", _err(self.lang, "email_format"))
 
+        try:
+            cleaned["telegram_username"] = normalize_telegram_username(
+                cleaned.get("telegram_username")
+            )
+        except ValueError:
+            self.add_error("telegram_username", _err(self.lang, "telegram_invalid"))
+
         visible_phone = "" if cleaned.get("hide_primary_phone") else cleaned.get("phone")
         additional_visible = any(cleaned.get(name) for name in PHONE_FIELDS[1:])
         if cleaned.get("hide_primary_phone") and not additional_visible and not email and not self.draft_mode:
@@ -536,7 +554,7 @@ class EmployerVacancyForm(forms.ModelForm):
         instance.salary = self.cleaned_data.get("salary", "")
         instance.whatsapp = self.cleaned_data.get("whatsapp", "")
         instance.viber = self.cleaned_data.get("viber", "")
-        instance.telegram = self.cleaned_data.get("telegram", "")
+        instance.telegram_username = self.cleaned_data.get("telegram_username", "")
         if commit:
             instance.save()
             self.save_m2m()

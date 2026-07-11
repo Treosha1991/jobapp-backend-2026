@@ -125,6 +125,10 @@ class Vacancy(models.Model):
     hide_primary_phone = models.BooleanField(default=False)
     whatsapp = models.CharField(max_length=100, blank=True)
     viber = models.CharField(max_length=100, blank=True)
+    # Canonical Telegram public handle without the leading @.
+    telegram_username = models.CharField(max_length=32, blank=True)
+    # Legacy phone-backed Telegram field. Keep it for existing records, but do
+    # not expose it as a Telegram contact anymore.
     telegram = models.CharField(max_length=100, blank=True)
     email = models.EmailField(blank=True)
 
