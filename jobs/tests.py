@@ -236,7 +236,7 @@ class ChatAPITests(TestCase):
             password="password",
         )
         profile = UserProfile.objects.create(user=anonymous)
-        self.assertEqual(profile.nickname, f"JobHub User {anonymous.id}")
+        self.assertEqual(profile.nickname, f"User {1000 + anonymous.id}")
 
     def test_report_is_available_for_the_other_participant_message(self):
         conversation_id = self._start_chat()

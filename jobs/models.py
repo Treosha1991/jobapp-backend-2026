@@ -705,7 +705,7 @@ class UserProfile(models.Model):
     @staticmethod
     def generated_nickname(user_id):
         """Provide a stable public label when a user skips the nickname field."""
-        return f"JobHub User {user_id}"
+        return f"User {1000 + int(user_id)}"
 
     def save(self, *args, **kwargs):
         self.nickname = (self.nickname or "").strip()
