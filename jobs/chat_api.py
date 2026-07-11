@@ -14,6 +14,7 @@ from .models import ChatConversation, ChatMessage, ChatReport, UserBlock, UserPr
 from .serializers import (
     ChatMessageCreateSerializer,
     ChatMessageSerializer,
+    ChatMessageUpdateSerializer,
     ChatReportCreateSerializer,
     chat_message_has_external_links,
 )
@@ -28,7 +29,8 @@ CHAT_PAGE_SIZE = 50
 def _user_display_name(user):
     profile = _user_profile(user)
     nickname = (getattr(profile, "nickname", "") or "").strip()
-    return nickname or (user.username or "").strip() or f"User {user.id}"
+    # Email is an account credential, not a public chat identity.
+    return nickname or UserProfile.generated_nickname(user.id)
 
 
 def _user_avatar_url(user):
@@ -88,6 +90,30 @@ def _vacancy_can_start_chat(vacancy):
     )
 
 
+def _user_has_active_vacancies(user):
+    return Vacancy.objects.filter(
+        created_by=user,
+        is_approved=True,
+        is_paused_by_owner=False,
+        is_deleted_by_moderator=False,
+        expires_at__gt=timezone.now(),
+    ).exists()
+
+
+def _block_state(viewer, other_user):
+    if not other_user:
+        return False, False
+    blocked_by_me = UserBlock.objects.filter(
+        blocker=viewer,
+        blocked_user=other_user,
+    ).exists()
+    blocked_by_other = UserBlock.objects.filter(
+        blocker=other_user,
+        blocked_user=viewer,
+    ).exists()
+    return blocked_by_me, blocked_by_other
+
+
 def _unread_counts(conversations, viewer):
     if not conversations:
         return {}
@@ -118,12 +144,14 @@ def _conversation_payload(conversation, viewer, *, unread_count=0, last_message=
     if last_message is None:
         last_message = getattr(conversation, "_chat_last_message", None)
     employer = conversation.employer
+    blocked_by_me, blocked_by_other = _block_state(viewer, other_user)
     return {
         "id": conversation.id,
         "other_user": {
             "id": other_user.id if other_user else None,
             "nickname": _user_display_name(other_user) if other_user else "",
             "avatar_url": _user_avatar_url(other_user) if other_user else "",
+            "has_active_vacancies": bool(other_user and _user_has_active_vacancies(other_user)),
         },
         "initial_vacancy": {
             "id": conversation.initial_vacancy_id,
@@ -150,12 +178,15 @@ def _conversation_payload(conversation, viewer, *, unread_count=0, last_message=
                 "created_at": last_message.created_at,
                 "sender_id": last_message.sender_id,
                 "is_mine": last_message.sender_id == viewer.id,
+                "is_deleted": bool(last_message.deleted_at),
             }
             if last_message is not None
             else None
         ),
         "unread_count": unread_count,
-        "can_send": not _chat_users_are_blocked(viewer, other_user),
+        "can_send": not blocked_by_me and not blocked_by_other,
+        "blocked_by_me": blocked_by_me,
+        "blocked_by_other": blocked_by_other,
         "created_at": conversation.created_at,
         "last_message_at": conversation.last_message_at,
     }
@@ -253,15 +284,11 @@ class ChatConversationListAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        hidden_user_ids = UserBlock.objects.filter(blocker=request.user).values_list(
-            "blocked_user_id", flat=True
-        )
         conversations = list(
             ChatConversation.objects.filter(
                 Q(candidate=request.user) | Q(employer=request.user),
                 last_message_at__isnull=False,
             )
-            .exclude(Q(candidate_id__in=hidden_user_ids) | Q(employer_id__in=hidden_user_ids))
             .select_related(
                 "candidate",
                 "candidate__profile",
@@ -307,14 +334,6 @@ class ChatUnreadCountAPIView(APIView):
                 "employer_last_read_at",
             )
         )
-        hidden_user_ids = set(
-            UserBlock.objects.filter(blocker=request.user).values_list("blocked_user_id", flat=True)
-        )
-        conversations = [
-            conversation
-            for conversation in conversations
-            if conversation.other_user_for(request.user).id not in hidden_user_ids
-        ]
         return Response(
             {"unread_count": sum(_unread_counts(conversations, request.user).values())},
             status=status.HTTP_200_OK,
@@ -326,11 +345,13 @@ class ChatConversationDetailAPIView(APIView):
 
     def get(self, request, conversation_id):
         conversation = _conversation_for_user(request.user, conversation_id)
-        if not conversation or _viewer_hides_conversation(request.user, conversation):
+        if not conversation:
             return Response({"error": "conversation_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         before_message_id = request.query_params.get("before_message_id")
-        messages_query = ChatMessage.objects.filter(conversation=conversation).select_related("sender")
+        messages_query = ChatMessage.objects.filter(conversation=conversation).select_related(
+            "sender", "conversation", "reply_to"
+        )
         if before_message_id:
             try:
                 before_message_id = int(before_message_id)
@@ -366,7 +387,7 @@ class ChatMessageAPIView(APIView):
 
     def post(self, request, conversation_id):
         conversation = _conversation_for_user(request.user, conversation_id)
-        if not conversation or _viewer_hides_conversation(request.user, conversation):
+        if not conversation:
             return Response({"error": "conversation_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         recipient = conversation.other_user_for(request.user)
@@ -384,6 +405,15 @@ class ChatMessageAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         body = serializer.validated_data["body"]
         client_message_id = serializer.validated_data.get("client_message_id") or None
+        reply_to = None
+        reply_to_message_id = serializer.validated_data.get("reply_to_message_id")
+        if reply_to_message_id:
+            reply_to = ChatMessage.objects.filter(
+                id=reply_to_message_id,
+                conversation=conversation,
+            ).first()
+            if not reply_to:
+                return Response({"error": "reply_message_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         with transaction.atomic():
             if client_message_id:
@@ -394,6 +424,7 @@ class ChatMessageAPIView(APIView):
                         "sender": request.user,
                         "body": body,
                         "has_external_links": chat_message_has_external_links(body),
+                        "reply_to": reply_to,
                     },
                 )
             else:
@@ -402,6 +433,7 @@ class ChatMessageAPIView(APIView):
                     sender=request.user,
                     body=body,
                     has_external_links=chat_message_has_external_links(body),
+                    reply_to=reply_to,
                 )
                 created = True
 
@@ -447,7 +479,7 @@ class ChatConversationReadAPIView(APIView):
 
     def post(self, request, conversation_id):
         conversation = _conversation_for_user(request.user, conversation_id)
-        if not conversation or _viewer_hides_conversation(request.user, conversation):
+        if not conversation:
             return Response({"error": "conversation_not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         message_id = request.data.get("last_message_id")
@@ -482,6 +514,73 @@ class ChatConversationBlockAPIView(APIView):
             blocked_user=other_user,
         )
         return Response({"status": "blocked", "created": created}, status=status.HTTP_200_OK)
+
+
+class ChatConversationUnblockAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, conversation_id):
+        conversation = _conversation_for_user(request.user, conversation_id)
+        if not conversation:
+            return Response({"error": "conversation_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        other_user = conversation.other_user_for(request.user)
+        deleted, _ = UserBlock.objects.filter(
+            blocker=request.user,
+            blocked_user=other_user,
+        ).delete()
+        return Response({"status": "unblocked", "deleted": bool(deleted)}, status=status.HTTP_200_OK)
+
+
+class ChatMessageMutationAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _message_for_request(self, request, conversation_id, message_id):
+        conversation = _conversation_for_user(request.user, conversation_id)
+        if not conversation:
+            return None, None
+        message = ChatMessage.objects.select_related("conversation", "reply_to").filter(
+            id=message_id,
+            conversation=conversation,
+        ).first()
+        return conversation, message
+
+    def _can_modify(self, request, message):
+        if not message or message.sender_id != request.user.id or message.deleted_at:
+            return False
+        conversation = message.conversation
+        recipient_read_at = (
+            conversation.employer_last_read_at
+            if message.sender_id == conversation.candidate_id
+            else conversation.candidate_last_read_at
+        )
+        return not recipient_read_at or recipient_read_at < message.created_at
+
+    def patch(self, request, conversation_id, message_id):
+        _, message = self._message_for_request(request, conversation_id, message_id)
+        if not message:
+            return Response({"error": "message_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if not self._can_modify(request, message):
+            return Response({"error": "message_already_read"}, status=status.HTTP_409_CONFLICT)
+        serializer = ChatMessageUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        body = serializer.validated_data["body"]
+        message.body = body
+        message.has_external_links = chat_message_has_external_links(body)
+        message.edited_at = timezone.now()
+        message.save(update_fields=["body", "has_external_links", "edited_at"])
+        return Response({"message": ChatMessageSerializer(message, context={"request": request}).data})
+
+    def delete(self, request, conversation_id, message_id):
+        _, message = self._message_for_request(request, conversation_id, message_id)
+        if not message:
+            return Response({"error": "message_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if not self._can_modify(request, message):
+            return Response({"error": "message_already_read"}, status=status.HTTP_409_CONFLICT)
+        message.body = ""
+        message.has_external_links = False
+        message.deleted_at = timezone.now()
+        message.save(update_fields=["body", "has_external_links", "deleted_at"])
+        return Response({"status": "deleted", "message_id": message.id})
 
 
 class ChatReportAPIView(APIView):

@@ -148,7 +148,8 @@ def _normalize_phone(raw_phone):
 
 
 def _auth_payload(user, token):
-    profile = UserProfile.objects.filter(user=user).first()
+    # Every account gets a safe public name even if the person skipped nickname.
+    profile, _ = UserProfile.objects.get_or_create(user=user)
     wallet = get_or_create_wallet(user)
     monetization_profile = get_or_create_monetization_profile(user)
     avatar_key = (profile.avatar_key if profile else "") or ""

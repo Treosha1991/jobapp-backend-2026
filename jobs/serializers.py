@@ -1286,6 +1286,7 @@ class ChatMessageCreateSerializer(serializers.Serializer):
         max_length=64,
         default="",
     )
+    reply_to_message_id = serializers.IntegerField(required=False, min_value=1)
 
     def validate_body(self, value):
         text = (value or "").strip()
@@ -1297,6 +1298,18 @@ class ChatMessageCreateSerializer(serializers.Serializer):
 
     def validate_client_message_id(self, value):
         return (value or "").strip()
+
+
+class ChatMessageUpdateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=1500, trim_whitespace=True)
+
+    def validate_body(self, value):
+        text = (value or "").strip()
+        if not text:
+            raise serializers.ValidationError("message_required")
+        if "\x00" in text:
+            raise serializers.ValidationError("invalid_message")
+        return text
 
 
 class ChatReportCreateSerializer(serializers.Serializer):
@@ -1320,6 +1333,11 @@ def chat_message_has_external_links(text):
 class ChatMessageSerializer(serializers.ModelSerializer):
     sender_id = serializers.IntegerField(read_only=True)
     is_mine = serializers.SerializerMethodField()
+    body = serializers.SerializerMethodField()
+    is_deleted = serializers.SerializerMethodField()
+    is_read = serializers.SerializerMethodField()
+    can_modify = serializers.SerializerMethodField()
+    reply_to = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatMessage
@@ -1328,6 +1346,11 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "sender_id",
             "body",
             "has_external_links",
+            "reply_to",
+            "edited_at",
+            "is_deleted",
+            "is_read",
+            "can_modify",
             "created_at",
             "is_mine",
         ]
@@ -1335,6 +1358,39 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     def get_is_mine(self, obj):
         request = self.context.get("request")
         return bool(request and obj.sender_id == request.user.id)
+
+    def get_body(self, obj):
+        return "" if obj.deleted_at else obj.body
+
+    def get_is_deleted(self, obj):
+        return bool(obj.deleted_at)
+
+    def _recipient_read_at(self, obj):
+        conversation = obj.conversation
+        if obj.sender_id == conversation.candidate_id:
+            return conversation.employer_last_read_at
+        return conversation.candidate_last_read_at
+
+    def get_is_read(self, obj):
+        read_at = self._recipient_read_at(obj)
+        return bool(read_at and read_at >= obj.created_at)
+
+    def get_can_modify(self, obj):
+        request = self.context.get("request")
+        if not request or obj.sender_id != request.user.id or obj.deleted_at:
+            return False
+        return not self.get_is_read(obj)
+
+    def get_reply_to(self, obj):
+        reply = obj.reply_to
+        if not reply:
+            return None
+        return {
+            "id": reply.id,
+            "sender_id": reply.sender_id,
+            "body": "" if reply.deleted_at else reply.body,
+            "is_deleted": bool(reply.deleted_at),
+        }
 
 
 class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):

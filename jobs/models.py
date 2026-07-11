@@ -702,6 +702,20 @@ class UserProfile(models.Model):
     avatar_key = models.CharField(max_length=500, blank=True, default="")
     avatar_updated_at = models.DateTimeField(blank=True, null=True)
 
+    @staticmethod
+    def generated_nickname(user_id):
+        """Provide a stable public label when a user skips the nickname field."""
+        return f"JobHub User {user_id}"
+
+    def save(self, *args, **kwargs):
+        self.nickname = (self.nickname or "").strip()
+        if not self.nickname and self.user_id:
+            self.nickname = self.generated_nickname(self.user_id)
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | {"nickname"}
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"UserProfile {self.user.username}"
 
@@ -941,6 +955,15 @@ class ChatMessage(models.Model):
     body = models.TextField(max_length=1500)
     has_external_links = models.BooleanField(default=False)
     client_message_id = models.CharField(max_length=64, blank=True, null=True)
+    reply_to = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="replies",
+    )
+    edited_at = models.DateTimeField(blank=True, null=True)
+    deleted_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

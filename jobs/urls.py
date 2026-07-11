@@ -69,7 +69,9 @@ from .chat_api import (
     ChatConversationReadAPIView,
     ChatConversationStartAPIView,
     ChatMessageAPIView,
+    ChatMessageMutationAPIView,
     ChatReportAPIView,
+    ChatConversationUnblockAPIView,
     ChatUnreadCountAPIView,
 )
 
@@ -102,8 +104,10 @@ urlpatterns = [
     path("chats/start/", ChatConversationStartAPIView.as_view(), name="chat-start"),
     path("chats/<int:conversation_id>/", ChatConversationDetailAPIView.as_view(), name="chat-detail"),
     path("chats/<int:conversation_id>/messages/", ChatMessageAPIView.as_view(), name="chat-message"),
+    path("chats/<int:conversation_id>/messages/<int:message_id>/", ChatMessageMutationAPIView.as_view(), name="chat-message-mutation"),
     path("chats/<int:conversation_id>/read/", ChatConversationReadAPIView.as_view(), name="chat-read"),
     path("chats/<int:conversation_id>/block/", ChatConversationBlockAPIView.as_view(), name="chat-block"),
+    path("chats/<int:conversation_id>/unblock/", ChatConversationUnblockAPIView.as_view(), name="chat-unblock"),
     path("chats/<int:conversation_id>/report/", ChatReportAPIView.as_view(), name="chat-report"),
     path("economy/overview/", EconomyOverviewAPIView.as_view(), name="economy-overview"),
     path("economy/history/", WalletTransactionListAPIView.as_view(), name="economy-history"),

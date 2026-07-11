@@ -148,7 +148,7 @@ class ChatAPITests(TestCase):
         self.assertFalse(second.data["created"])
         self.assertEqual(ChatMessage.objects.filter(conversation_id=conversation_id).count(), 1)
 
-    def test_block_hides_chat_and_prevents_new_messages(self):
+    def test_block_keeps_chat_visible_and_can_be_reversed(self):
         conversation_id = self._start_chat()
         self.client.post(
             f"/api/chats/{conversation_id}/messages/",
@@ -157,7 +157,9 @@ class ChatAPITests(TestCase):
         )
         response = self.client.post(f"/api/chats/{conversation_id}/block/", format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.client.get("/api/chats/").data["count"], 0)
+        chat = self.client.get("/api/chats/").data["results"][0]
+        self.assertTrue(chat["blocked_by_me"])
+        self.assertFalse(chat["can_send"])
 
         self.client.force_authenticate(user=self.employer)
         response = self.client.post(
@@ -166,6 +168,75 @@ class ChatAPITests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
+
+        self.client.force_authenticate(user=self.candidate)
+        response = self.client.post(f"/api/chats/{conversation_id}/unblock/", format="json")
+        self.assertEqual(response.status_code, 200)
+
+        self.client.force_authenticate(user=self.employer)
+        response = self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            {"body": "Reply after unblock"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+
+    def test_list_does_not_mark_messages_as_read(self):
+        conversation_id = self._start_chat()
+        self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            {"body": "Unread until the conversation opens"},
+            format="json",
+        )
+        self.client.force_authenticate(user=self.employer)
+
+        first_list = self.client.get("/api/chats/")
+        second_list = self.client.get("/api/chats/")
+        self.assertEqual(first_list.data["unread_count"], 1)
+        self.assertEqual(second_list.data["unread_count"], 1)
+        self.assertEqual(self.client.get("/api/chats/unread-count/").data["unread_count"], 1)
+
+    def test_unread_message_can_be_edited_deleted_and_replied_to(self):
+        conversation_id = self._start_chat()
+        created = self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            {"body": "Initial message"},
+            format="json",
+        )
+        message_id = created.data["message"]["id"]
+
+        edited = self.client.patch(
+            f"/api/chats/{conversation_id}/messages/{message_id}/",
+            {"body": "Edited before it is read"},
+            format="json",
+        )
+        self.assertEqual(edited.status_code, 200)
+        self.assertTrue(edited.data["message"]["can_modify"])
+
+        reply = self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            {"body": "Replying to the message", "reply_to_message_id": message_id},
+            format="json",
+        )
+        self.assertEqual(reply.status_code, 201)
+        self.assertEqual(reply.data["message"]["reply_to"]["id"], message_id)
+
+        deleted = self.client.delete(f"/api/chats/{conversation_id}/messages/{message_id}/")
+        self.assertEqual(deleted.status_code, 200)
+
+        detail = self.client.get(f"/api/chats/{conversation_id}/")
+        first_message = detail.data["messages"][0]
+        self.assertTrue(first_message["is_deleted"])
+        self.assertEqual(first_message["body"], "")
+
+    def test_generated_public_nickname_never_uses_email(self):
+        anonymous = User.objects.create_user(
+            username="anonymous@example.com",
+            email="anonymous@example.com",
+            password="password",
+        )
+        profile = UserProfile.objects.create(user=anonymous)
+        self.assertEqual(profile.nickname, f"JobHub User {anonymous.id}")
 
     def test_report_is_available_for_the_other_participant_message(self):
         conversation_id = self._start_chat()
