@@ -63,7 +63,7 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
             "housing_cost_period": "month",
             "phone": "+48111111111",
             "source": "direct",
-            "telegram_username": "jobhub_employer",
+            "telegram_username_1": "jobhub_employer",
         }
 
     def test_empty_draft_can_be_saved_from_browser(self):
@@ -76,7 +76,7 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
         self.assertFalse(vacancy.moderation_attempts.exists())
 
     @patch("jobs.web_views._notify_moderators_about_pending_vacancy_safe")
-    @patch("jobs.web_views.apply_vacancy_submission_action")
+    @patch("jobs.web_views._apply_web_submission_action")
     def test_submit_creates_pending_moderation_attempt(self, apply_submission, notify):
         payload = self._valid_payload() | {"submit": "1"}
 
@@ -95,7 +95,7 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
         notify.assert_called_once_with(vacancy)
 
     @patch("jobs.web_views._notify_moderators_about_pending_vacancy_safe")
-    @patch("jobs.web_views.apply_vacancy_submission_action")
+    @patch("jobs.web_views._apply_web_submission_action")
     def test_draft_can_be_edited_and_submitted(self, apply_submission, notify):
         draft = self.client.post("/employer/vacancies/new/", {"save_draft": "1"})
         self.assertEqual(draft.status_code, 302)

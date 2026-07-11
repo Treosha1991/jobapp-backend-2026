@@ -151,10 +151,14 @@
             </div>
           </div>
         </div>
-        <div class="jh-field jh-telegram-field">
-          {{ form.telegram_username.label_tag }}
-          <div class="jh-telegram-input"><span aria-hidden="true">@</span>{{ form.telegram_username }}</div>
-          {% if form.telegram_username.errors %}<div class="jh-errorlist">{{ form.telegram_username.errors }}</div>{% endif %}
+        <div class="jh-telegram-grid">
+          {% for field in form.telegram_username_1 form.telegram_username_2 form.telegram_username_3 %}
+            <div class="jh-field jh-telegram-field">
+              {{ field.label_tag }}
+              <div class="jh-telegram-input"><span aria-hidden="true">@</span>{{ field }}</div>
+              {% if field.errors %}<div class="jh-errorlist">{{ field.errors }}</div>{% endif %}
+            </div>
+          {% endfor %}
         </div>
         <div class="jh-field jh-email-field">{{ form.email.label_tag }}{{ form.email }}{% if form.email.errors %}<div class="jh-errorlist">{{ form.email.errors }}</div>{% endif %}</div>
       </section>

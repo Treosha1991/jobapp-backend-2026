@@ -19,7 +19,7 @@ from .driver_licenses import (
 )
 from .models import UserProfile, Vacancy
 from .text_filters import censor_minimal, contains_link
-from .telegram import normalize_telegram_username
+from .telegram import normalize_telegram_usernames, vacancy_telegram_usernames
 from .web_choice_labels import (
     CATEGORY_LABELS,
     EMPLOYMENT_LABELS,
@@ -179,12 +179,22 @@ class EmployerVacancyForm(forms.ModelForm):
     additional_phone_2_viber = forms.BooleanField(required=False)
     additional_phone_3_whatsapp = forms.BooleanField(required=False)
     additional_phone_3_viber = forms.BooleanField(required=False)
-    telegram_username = forms.CharField(
+    telegram_username_1 = forms.CharField(
         required=False,
         max_length=32,
         widget=forms.TextInput(
             attrs={"class": "jh-input", "maxlength": "32", "autocomplete": "off"}
         ),
+    )
+    telegram_username_2 = forms.CharField(
+        required=False,
+        max_length=32,
+        widget=forms.TextInput(attrs={"class": "jh-input", "maxlength": "32", "autocomplete": "off"}),
+    )
+    telegram_username_3 = forms.CharField(
+        required=False,
+        max_length=32,
+        widget=forms.TextInput(attrs={"class": "jh-input", "maxlength": "32", "autocomplete": "off"}),
     )
     housing_cost = forms.IntegerField(
         required=False,
@@ -229,7 +239,9 @@ class EmployerVacancyForm(forms.ModelForm):
             "additional_phone_2",
             "additional_phone_3",
             "hide_primary_phone",
-            "telegram_username",
+            "telegram_username_1",
+            "telegram_username_2",
+            "telegram_username_3",
             "email",
             "source",
         ]
@@ -268,6 +280,9 @@ class EmployerVacancyForm(forms.ModelForm):
                 continue
             if field_name in self.fields:
                 self.fields[field_name].label = label
+        telegram_label = labels.get("telegram_username", "Telegram")
+        for index in range(1, 4):
+            self.fields[f"telegram_username_{index}"].label = f"{telegram_label} {index}"
         self.fields["audience_countries"].help_text = labels.get("audience_help", "")
 
         self.fields["country"].choices = _sort_choices_for_display(localized_country_choices(VACANCY_COUNTRY_CHOICES, self.lang))
@@ -298,7 +313,9 @@ class EmployerVacancyForm(forms.ModelForm):
             "additional_phone",
             "additional_phone_2",
             "additional_phone_3",
-            "telegram_username",
+            "telegram_username_1",
+            "telegram_username_2",
+            "telegram_username_3",
             "email",
         ]
         for field_name in optional_fields:
@@ -316,7 +333,9 @@ class EmployerVacancyForm(forms.ModelForm):
             self.initial["driver_license_categories"] = decode_driver_license_categories(self.instance.driver_license_categories)
             self._init_housing_cost_fields_from_instance()
             self._init_messenger_checks_from_instance()
-            self.initial["telegram_username"] = getattr(self.instance, "telegram_username", "")
+            telegram_usernames = vacancy_telegram_usernames(self.instance)
+            for index, username in enumerate(telegram_usernames, start=1):
+                self.initial[f"telegram_username_{index}"] = username
         elif not self.is_bound:
             self._init_primary_phone_from_profile()
         self.initial.setdefault("source", "direct")
@@ -532,11 +551,11 @@ class EmployerVacancyForm(forms.ModelForm):
                 self.add_error("email", _err(self.lang, "email_format"))
 
         try:
-            cleaned["telegram_username"] = normalize_telegram_username(
-                cleaned.get("telegram_username")
+            cleaned["telegram_usernames"] = normalize_telegram_usernames(
+                [cleaned.get(f"telegram_username_{index}") for index in range(1, 4)]
             )
         except ValueError:
-            self.add_error("telegram_username", _err(self.lang, "telegram_invalid"))
+            self.add_error("telegram_username_1", _err(self.lang, "telegram_invalid"))
 
         visible_phone = "" if cleaned.get("hide_primary_phone") else cleaned.get("phone")
         additional_visible = any(cleaned.get(name) for name in PHONE_FIELDS[1:])
@@ -561,7 +580,9 @@ class EmployerVacancyForm(forms.ModelForm):
         instance.salary = self.cleaned_data.get("salary", "")
         instance.whatsapp = self.cleaned_data.get("whatsapp", "")
         instance.viber = self.cleaned_data.get("viber", "")
-        instance.telegram_username = self.cleaned_data.get("telegram_username", "")
+        telegram_usernames = self.cleaned_data.get("telegram_usernames", [])
+        instance.telegram_usernames = telegram_usernames
+        instance.telegram_username = telegram_usernames[0] if telegram_usernames else ""
         if commit:
             instance.save()
             self.save_m2m()

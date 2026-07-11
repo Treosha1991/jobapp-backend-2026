@@ -127,6 +127,9 @@ class Vacancy(models.Model):
     viber = models.CharField(max_length=100, blank=True)
     # Canonical Telegram public handle without the leading @.
     telegram_username = models.CharField(max_length=32, blank=True)
+    # Up to three canonical public handles without @. Keep telegram_username
+    # as the primary compatibility field for older app versions.
+    telegram_usernames = models.JSONField(default=list, blank=True)
     # Legacy phone-backed Telegram field. Keep it for existing records, but do
     # not expose it as a Telegram contact anymore.
     telegram = models.CharField(max_length=100, blank=True)

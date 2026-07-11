@@ -39,6 +39,8 @@
     .jh-logo { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 13px; background: linear-gradient(145deg, #0e3757, #09243a); border: 1px solid var(--line); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
     .jh-logo img { width: 100%; height: 100%; display: block; object-fit: cover; }
     .jh-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .jh-wallet { display: inline-flex; align-items: baseline; gap: 5px; padding: 8px 11px; border-radius: 13px; border: 1px solid rgba(24,223,103,.35); background: rgba(24,223,103,.08); color: #bafbd2; font-size: 12px; font-weight: 800; }
+    .jh-wallet strong { color: var(--green); font-size: 15px; }
     .jh-btn, button.jh-btn { border: 1px solid var(--line); background: rgba(20, 63, 97, .7); color: var(--text); padding: 9px 14px; border-radius: 13px; text-decoration: none; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
     .jh-btn.primary { background: linear-gradient(135deg, var(--green), var(--green-2)); color: #052012; border-color: rgba(24,223,103,.7); }
     .jh-btn.danger { color: var(--red); }
@@ -110,9 +112,11 @@
     .jh-messengers input[type="checkbox"]:checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #052012; border-width: 0 2px 2px 0; transform: rotate(45deg); }
     .jh-email-field { margin-top: 12px; max-width: 500px; }
     .jh-telegram-field { margin-top: 12px; max-width: 500px; }
+    .jh-telegram-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
     .jh-telegram-input { position: relative; }
     .jh-telegram-input > span { position: absolute; z-index: 1; left: 13px; top: 50%; transform: translateY(-50%); color: var(--green); font-weight: 900; }
     .jh-telegram-input .jh-input { padding-left: 29px; }
+    @media (max-width: 760px) { .jh-telegram-grid { grid-template-columns: 1fr; } }
     .jh-table-wrap { overflow-x: auto; }
     .jh-table { width: 100%; border-collapse: collapse; min-width: 780px; }
     .jh-table th, .jh-table td { padding: 14px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
@@ -145,6 +149,7 @@
           {% endfor %}
         </div>
         {% if request.user.is_authenticated %}
+          <span class="jh-wallet"><span>{{ employer_t.wallet_balance }}</span><strong>{{ employer_wallet_total|default:0 }}</strong><span>{{ employer_t.credits }}</span></span>
           <a class="jh-btn" href="{% url 'employer:vacancy_list' %}">{{ employer_t.my_vacancies }}</a>
           <a class="jh-btn primary" href="{% url 'employer:vacancy_create' %}">{{ employer_t.add_vacancy }}</a>
           <form method="post" action="{% url 'employer:logout' %}" style="margin:0">{% csrf_token %}<button class="jh-btn" type="submit">{{ employer_t.logout }}</button></form>

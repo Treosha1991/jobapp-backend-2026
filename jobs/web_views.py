@@ -112,13 +112,34 @@ def _vacancy_status(vacancy):
 def _handle_submission_error(request, exc, *, flow):
     if isinstance(exc, EconomyActionRequiredError):
         state = exc.state or build_vacancy_submission_state(request.user, flow=flow)
-        message = state.get("message") or tr(request, "msg_store_action")
+        if state.get("current_action") == "paid":
+            price = state.get("effective_price_credits", 0)
+            message = tr(request, "submission_paid_hint").format(price=price)
+        elif state.get("current_action") == "ad":
+            message = tr(request, "submission_ad_hint")
+        else:
+            message = state.get("message") or tr(request, "msg_store_action")
         messages.error(request, message)
         return
     if isinstance(exc, InsufficientCreditsError):
         messages.error(request, tr(request, "msg_insufficient_credits"))
         return
     raise exc
+
+
+def _apply_web_submission_action(user, *, flow, related_vacancy, now):
+    """Use credits/subscription on web; rewarded ads remain app-only."""
+    state = build_vacancy_submission_state(user, flow=flow, now=now)
+    method = state.get("expected_method")
+    if method == "ad":
+        raise EconomyActionRequiredError("submission_action_required", state)
+    return apply_vacancy_submission_action(
+        user,
+        flow=flow,
+        method=method,
+        related_vacancy=related_vacancy,
+        now=now,
+    )
 
 
 def _vacancy_form_context(request, form, *, mode, vacancy=None):
@@ -356,10 +377,9 @@ def vacancy_create(request):
                         submitted_by=request.user,
                         submitted_at=now,
                     )
-                    apply_vacancy_submission_action(
+                    _apply_web_submission_action(
                         request.user,
                         flow="create",
-                        method="web",
                         related_vacancy=vacancy,
                         now=now,
                     )
@@ -415,10 +435,9 @@ def vacancy_edit(request, pk):
                         submitted_by=request.user,
                         submitted_at=now,
                     )
-                    apply_vacancy_submission_action(
+                    _apply_web_submission_action(
                         request.user,
                         flow=flow,
-                        method="web",
                         related_vacancy=vacancy,
                         now=now,
                     )

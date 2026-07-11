@@ -555,7 +555,7 @@ class VacancyAdmin(admin.ModelAdmin):
                         "additional_phone_3",
                         "hide_primary_phone",
                     ),
-                    ("whatsapp", "viber", "telegram_username"),
+                    ("whatsapp", "viber", "telegram_username", "telegram_usernames"),
                     ("telegram",),
                     "email",
                 ),

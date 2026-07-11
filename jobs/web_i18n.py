@@ -57,6 +57,10 @@ RU = {
     "msg_verify_phone": "Перед отправкой вакансии на модерацию нужно подтвердить номер телефона в приложении JobHub.",
     "msg_insufficient_credits": "Недостаточно кредитов для отправки вакансии на модерацию.",
     "msg_store_action": "Для отправки вакансии требуется действие в магазине JobHub.",
+    "wallet_balance": "Баланс",
+    "credits": "кредитов",
+    "submission_paid_hint": "Для отправки потребуется {price} кредитов. Пополните баланс в приложении JobHub.",
+    "submission_ad_hint": "Для отправки нужно выполнить действие в приложении JobHub.",
     "msg_only_published_pause": "На паузу можно поставить только опубликованную вакансию.",
     "msg_pause_before_delete": "Сначала поставьте опубликованную вакансию на паузу, затем удалите ее.",
     "section_basic": "Основная информация",
@@ -126,6 +130,10 @@ EN = {
     "msg_verify_phone": "Before sending a vacancy to moderation, verify your phone number in the JobHub app.",
     "msg_insufficient_credits": "Not enough credits to send the vacancy to moderation.",
     "msg_store_action": "A JobHub Store action is required to submit this vacancy.",
+    "wallet_balance": "Balance",
+    "credits": "credits",
+    "submission_paid_hint": "Submission requires {price} credits. Top up your balance in the JobHub app.",
+    "submission_ad_hint": "Complete the required action in the JobHub app to submit the vacancy.",
     "msg_only_published_pause": "Only a published vacancy can be paused.",
     "msg_pause_before_delete": "Pause the published vacancy first, then delete it.",
     "section_basic": "Basic information",
@@ -195,6 +203,10 @@ PL = {
     "msg_verify_phone": "Przed wysłaniem oferty do moderacji potwierdź numer telefonu w aplikacji JobHub.",
     "msg_insufficient_credits": "Za mało kredytów, aby wysłać ofertę do moderacji.",
     "msg_store_action": "Do wysłania oferty wymagane jest działanie w sklepie JobHub.",
+    "wallet_balance": "Saldo",
+    "credits": "kredytów",
+    "submission_paid_hint": "Wysłanie wymaga {price} kredytów. Doładuj saldo w aplikacji JobHub.",
+    "submission_ad_hint": "Aby wysłać ofertę, wykonaj wymagane działanie w aplikacji JobHub.",
     "msg_only_published_pause": "Tylko opublikowaną ofertę można wstrzymać.",
     "msg_pause_before_delete": "Najpierw wstrzymaj opublikowaną ofertę, potem ją usuń.",
     "section_basic": "Podstawowe informacje",
@@ -264,6 +276,10 @@ UK = {
     "msg_verify_phone": "Перед надсиланням вакансії на модерацію підтвердьте номер телефону в застосунку JobHub.",
     "msg_insufficient_credits": "Недостатньо кредитів для надсилання вакансії на модерацію.",
     "msg_store_action": "Для надсилання вакансії потрібна дія в магазині JobHub.",
+    "wallet_balance": "Баланс",
+    "credits": "кредитів",
+    "submission_paid_hint": "Для надсилання потрібно {price} кредитів. Поповніть баланс у застосунку JobHub.",
+    "submission_ad_hint": "Щоб надіслати вакансію, виконайте потрібну дію в застосунку JobHub.",
     "msg_only_published_pause": "На паузу можна поставити лише опубліковану вакансію.",
     "msg_pause_before_delete": "Спочатку поставте опубліковану вакансію на паузу, потім видаліть її.",
     "section_basic": "Основна інформація",
@@ -558,8 +574,15 @@ TRANSLATIONS["uk"].update({
 
 def employer_i18n(request):
     lang = get_lang(request)
+    wallet_total = None
+    if getattr(request.user, "is_authenticated", False):
+        # Import locally so this lightweight template context stays usable at startup.
+        from .economy import get_or_create_wallet
+
+        wallet_total = get_or_create_wallet(request.user).total_credits
     return {
         "employer_t": t(lang),
+        "employer_wallet_total": wallet_total,
         "employer_languages": [
             {
                 "code": code,
