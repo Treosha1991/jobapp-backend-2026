@@ -2,6 +2,7 @@ import json
 import secrets
 
 from django.contrib import messages
+from django.contrib.auth import login as auth_login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView, LogoutView
 from django.db import IntegrityError
@@ -58,6 +59,103 @@ class EmployerLogoutView(LogoutView):
 
     def get_next_page(self):
         return f"{reverse_lazy(self.next_page)}?lang={self.lang}"
+
+
+def _login_redirect(request):
+    next_url = request.POST.get("next") or request.GET.get("next") or str(reverse_lazy("employer:vacancy_list"))
+    # Employer login only ever redirects within this site.
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        next_url = str(reverse_lazy("employer:vacancy_list"))
+    return redirect(next_url)
+
+
+@require_POST
+def phone_login_request_code(request):
+    """Send a one-time SMS code for the already verified JobHub account."""
+    phone = _normalize_phone(request.POST.get("phone"))
+    if not phone:
+        messages.error(request, tr(request, "phone_login_invalid"))
+        return _login_redirect(request)
+    if not _phone_country_allowed(phone):
+        messages.error(request, tr(request, "phone_login_country"))
+        return _login_redirect(request)
+
+    profile = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+    if not profile:
+        messages.error(request, tr(request, "phone_login_not_found"))
+        return _login_redirect(request)
+    if _phone_code_too_frequent(phone, "login"):
+        messages.error(request, tr(request, "phone_login_too_many"))
+        return _login_redirect(request)
+
+    _create_phone_code(phone, "login", user=profile.user)
+    ok, message, http_status = _twilio_verify_start(phone, channel="sms")
+    if not ok:
+        _record_phone_verification_attempt(
+            request,
+            phone_e164=phone,
+            purpose="login",
+            channel="sms",
+            status_code="delivery_failed",
+            message=message or "verification_not_sent",
+            http_status=http_status,
+            user=profile.user,
+        )
+        messages.error(request, tr(request, "phone_login_send_failed"))
+        return _login_redirect(request)
+
+    _record_phone_verification_attempt(
+        request,
+        phone_e164=phone,
+        purpose="login",
+        channel="sms",
+        status_code="sent",
+        http_status=200,
+        user=profile.user,
+    )
+    request.session["employer_login_phone"] = phone
+    messages.success(request, tr(request, "phone_login_code_sent"))
+    return _login_redirect(request)
+
+
+@require_POST
+def phone_login_verify_code(request):
+    phone = _normalize_phone(request.POST.get("phone") or request.session.get("employer_login_phone"))
+    code = (request.POST.get("code") or "").strip()
+    profile = UserProfile.objects.filter(phone_e164=phone, phone_verified=True).select_related("user").first()
+    if not phone or not code or not profile:
+        messages.error(request, tr(request, "phone_login_code_invalid"))
+        return _login_redirect(request)
+
+    approved, message, http_status = _twilio_verify_check(phone, code)
+    if not approved:
+        _record_phone_verification_attempt(
+            request,
+            phone_e164=phone,
+            purpose="login",
+            channel="sms",
+            status_code="check_failed",
+            message=message or "invalid_or_expired_code",
+            http_status=http_status,
+            user=profile.user,
+        )
+        messages.error(request, tr(request, "phone_login_code_invalid"))
+        return _login_redirect(request)
+
+    PhoneVerification.objects.filter(phone_e164=phone, purpose="login", is_used=False).update(is_used=True)
+    _record_phone_verification_attempt(
+        request,
+        phone_e164=phone,
+        purpose="login",
+        channel="sms",
+        status_code="approved",
+        http_status=200,
+        user=profile.user,
+    )
+    request.session.pop("employer_login_phone", None)
+    auth_login(request, profile.user, backend="django.contrib.auth.backends.ModelBackend")
+    messages.success(request, tr(request, "phone_login_success"))
+    return _login_redirect(request)
 
 
 def set_language(request, lang):

@@ -124,6 +124,37 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
         notify.assert_called_once_with(vacancy)
 
 
+class EmployerPortalPhoneLoginTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="phone-login-user",
+            email="phone-login@example.com",
+            password="unneeded-password",
+        )
+        UserProfile.objects.create(
+            user=self.user,
+            phone_e164="+48123456789",
+            phone_verified=True,
+        )
+
+    @patch("jobs.web_views._twilio_verify_check", return_value=(True, None, 200))
+    @patch("jobs.web_views._twilio_verify_start", return_value=(True, None, 200))
+    def test_existing_mobile_account_can_log_in_by_verified_phone(self, _start, _check):
+        response = self.client.post(
+            "/employer/login/phone/request-code/",
+            {"phone": "+48123456789"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["employer_login_phone"], "+48123456789")
+
+        response = self.client.post(
+            "/employer/login/phone/verify-code/",
+            {"code": "123456"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.id)
+
+
 class ChatAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
