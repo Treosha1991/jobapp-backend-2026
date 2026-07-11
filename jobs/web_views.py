@@ -8,6 +8,7 @@ from django.contrib.auth.views import LoginView, LogoutView
 from django.db import IntegrityError
 from django.db import transaction
 from django.db.models import F
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
 from django.utils.safestring import mark_safe
@@ -20,6 +21,15 @@ from .api import (
     _is_moderator,
     _notify_moderators_about_pending_vacancy_safe,
     _submission_flow_for_vacancy,
+)
+from .chat_api import (
+    CHAT_MESSAGE_RATE_LIMIT,
+    CHAT_MESSAGE_RATE_WINDOW,
+    _chat_users_are_blocked,
+    _send_chat_push_safe,
+    _unread_counts,
+    _user_avatar_url,
+    _user_display_name,
 )
 from .auth_api import (
     _create_phone_code,
@@ -41,7 +51,8 @@ from .economy import (
     build_vacancy_submission_state,
     ensure_free_contact_policy,
 )
-from .models import PhoneVerification, UserProfile, Vacancy
+from .models import ChatConversation, ChatMessage, ChatReport, PhoneVerification, UserBlock, UserProfile, Vacancy
+from .serializers import chat_message_has_external_links
 from .city_catalog import CITY_CATALOG
 from .web_forms import EmployerVacancyForm
 from .web_i18n import apply_language_cookie, get_lang, normalize_lang, tr
@@ -181,6 +192,173 @@ def password_reset(request):
         return redirect("employer:login")
 
     return redirect("employer:password_reset")
+
+
+def _employer_chat_queryset(user):
+    return (
+        ChatConversation.objects.filter(employer=user, last_message_at__isnull=False)
+        .select_related(
+            "candidate",
+            "candidate__profile",
+            "employer",
+            "employer__profile",
+            "initial_vacancy",
+        )
+        .order_by("-last_message_at", "-id")
+    )
+
+
+def _chat_block_state(conversation, viewer):
+    other_user = conversation.other_user_for(viewer)
+    return (
+        UserBlock.objects.filter(blocker=viewer, blocked_user=other_user).exists(),
+        UserBlock.objects.filter(blocker=other_user, blocked_user=viewer).exists(),
+    )
+
+
+@login_required(login_url="employer:login")
+def chat_list(request):
+    conversations = list(_employer_chat_queryset(request.user)[:50])
+    unread_by_id = _unread_counts(conversations, request.user)
+    latest_messages = {}
+    for message in ChatMessage.objects.filter(conversation__in=conversations).order_by("conversation_id", "-id"):
+        latest_messages.setdefault(message.conversation_id, message)
+
+    rows = []
+    for conversation in conversations:
+        candidate = conversation.candidate
+        latest = latest_messages.get(conversation.id)
+        rows.append(
+            {
+                "conversation": conversation,
+                "candidate_name": _user_display_name(candidate),
+                "candidate_avatar_url": _user_avatar_url(candidate),
+                "unread_count": unread_by_id.get(conversation.id, 0),
+                "last_message": latest,
+            }
+        )
+    return render(request, "employer/chat_list.html", {"rows": rows, "unread_count": sum(unread_by_id.values())})
+
+
+@login_required(login_url="employer:login")
+def chat_detail(request, conversation_id):
+    conversation = get_object_or_404(
+        ChatConversation.objects.select_related(
+            "candidate", "candidate__profile", "employer", "employer__profile", "initial_vacancy"
+        ),
+        id=conversation_id,
+        employer=request.user,
+    )
+    candidate = conversation.candidate
+    blocked_by_me, blocked_by_other = _chat_block_state(conversation, request.user)
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "block":
+            UserBlock.objects.get_or_create(blocker=request.user, blocked_user=candidate)
+            messages.success(request, tr(request, "chat_blocked_success"))
+        elif action == "unblock":
+            UserBlock.objects.filter(blocker=request.user, blocked_user=candidate).delete()
+            messages.success(request, tr(request, "chat_unblocked_success"))
+        elif action == "send":
+            body = (request.POST.get("body") or "").strip()
+            reply_to_id = request.POST.get("reply_to_id")
+            if blocked_by_me or blocked_by_other or _chat_users_are_blocked(request.user, candidate):
+                messages.error(request, tr(request, "chat_unavailable"))
+            elif not body or len(body) > 1500 or "\x00" in body:
+                messages.error(request, tr(request, "chat_message_invalid"))
+            elif ChatMessage.objects.filter(
+                sender=request.user,
+                created_at__gte=timezone.now() - CHAT_MESSAGE_RATE_WINDOW,
+            ).count() >= CHAT_MESSAGE_RATE_LIMIT:
+                messages.error(request, tr(request, "chat_rate_limited"))
+            else:
+                reply_to = None
+                if reply_to_id:
+                    reply_to = ChatMessage.objects.filter(id=reply_to_id, conversation=conversation).first()
+                    if reply_to is None:
+                        messages.error(request, tr(request, "chat_reply_missing"))
+                        return redirect("employer:chat_detail", conversation_id=conversation.id)
+                with transaction.atomic():
+                    message = ChatMessage.objects.create(
+                        conversation=conversation,
+                        sender=request.user,
+                        body=body,
+                        reply_to=reply_to,
+                        has_external_links=chat_message_has_external_links(body),
+                    )
+                    conversation.last_message_at = message.created_at
+                    conversation.employer_last_read_at = message.created_at
+                    conversation.save(update_fields=["last_message_at", "employer_last_read_at", "updated_at"])
+                    sender_name = _user_display_name(request.user)
+                    transaction.on_commit(lambda: _send_chat_push_safe(message, candidate, sender_name))
+        elif action in {"edit", "delete"}:
+            try:
+                message_id = int(request.POST.get("message_id"))
+            except (TypeError, ValueError):
+                message_id = None
+            message = ChatMessage.objects.filter(id=message_id, conversation=conversation).first()
+            recipient_read_at = conversation.candidate_last_read_at
+            can_modify = bool(
+                message
+                and message.sender_id == request.user.id
+                and not message.deleted_at
+                and (not recipient_read_at or recipient_read_at < message.created_at)
+            )
+            if not can_modify:
+                messages.error(request, tr(request, "chat_message_already_read"))
+            elif action == "delete":
+                message.body = ""
+                message.has_external_links = False
+                message.deleted_at = timezone.now()
+                message.save(update_fields=["body", "has_external_links", "deleted_at"])
+            else:
+                body = (request.POST.get("body") or "").strip()
+                if not body or len(body) > 1500 or "\x00" in body:
+                    messages.error(request, tr(request, "chat_message_invalid"))
+                else:
+                    message.body = body
+                    message.has_external_links = chat_message_has_external_links(body)
+                    message.edited_at = timezone.now()
+                    message.save(update_fields=["body", "has_external_links", "edited_at"])
+        elif action == "report":
+            reason = (request.POST.get("reason") or "").strip()
+            allowed_reasons = {item[0] for item in ChatReport.REASON_CHOICES}
+            if reason not in allowed_reasons:
+                messages.error(request, tr(request, "chat_report_reason_required"))
+            else:
+                ChatReport.objects.create(
+                    conversation=conversation,
+                    reporter=request.user,
+                    reported_user=candidate,
+                    reason=reason,
+                    message=(request.POST.get("message") or "").strip()[:1000],
+                )
+                messages.success(request, tr(request, "chat_report_sent"))
+        return redirect("employer:chat_detail", conversation_id=conversation.id)
+
+    chat_messages = list(
+        ChatMessage.objects.filter(conversation=conversation)
+        .select_related("sender", "reply_to", "reply_to__sender")
+        .order_by("id")
+    )
+    if chat_messages:
+        conversation.employer_last_read_at = chat_messages[-1].created_at
+        conversation.save(update_fields=["employer_last_read_at", "updated_at"])
+    return render(
+        request,
+        "employer/chat_detail.html",
+        {
+            "conversation": conversation,
+            "candidate": candidate,
+            "candidate_name": _user_display_name(candidate),
+            "candidate_avatar_url": _user_avatar_url(candidate),
+            "chat_messages": chat_messages,
+            "blocked_by_me": blocked_by_me,
+            "blocked_by_other": blocked_by_other,
+            "report_reasons": ChatReport.REASON_CHOICES,
+        },
+    )
 
 
 def set_language(request, lang):

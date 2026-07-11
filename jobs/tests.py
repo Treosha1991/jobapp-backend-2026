@@ -213,6 +213,58 @@ class EmployerPortalPasswordResetTests(TestCase):
         self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.id)
 
 
+class EmployerPortalChatTests(TestCase):
+    def setUp(self):
+        self.employer = User.objects.create_user(
+            username="web-chat-employer",
+            email="web-chat-employer@example.com",
+            password="password",
+        )
+        self.candidate = User.objects.create_user(
+            username="web-chat-candidate",
+            email="web-chat-candidate@example.com",
+            password="password",
+        )
+        UserProfile.objects.create(user=self.employer, nickname="Web Employer")
+        UserProfile.objects.create(user=self.candidate, nickname="Web Candidate")
+        self.conversation = ChatConversation.objects.create(
+            candidate=self.candidate,
+            employer=self.employer,
+            initial_vacancy_title="Warehouse worker",
+        )
+        self.incoming = ChatMessage.objects.create(
+            conversation=self.conversation,
+            sender=self.candidate,
+            body="Hello from the app",
+        )
+        self.conversation.last_message_at = self.incoming.created_at
+        self.conversation.save(update_fields=["last_message_at"])
+        self.client.login(username="web-chat-employer", password="password")
+
+    def test_employer_can_see_shared_chat_and_read_it(self):
+        response = self.client.get("/employer/chats/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Web Candidate")
+        self.assertContains(response, "Hello from the app")
+
+        response = self.client.get(f"/employer/chats/{self.conversation.id}/")
+        self.assertEqual(response.status_code, 200)
+        self.conversation.refresh_from_db()
+        self.assertEqual(self.conversation.employer_last_read_at, self.incoming.created_at)
+
+    @patch("jobs.web_views._send_chat_push_safe")
+    def test_employer_can_reply_from_web_into_shared_conversation(self, notify):
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f"/employer/chats/{self.conversation.id}/",
+                {"action": "send", "body": "Reply from browser"},
+            )
+        self.assertEqual(response.status_code, 302)
+        sent = ChatMessage.objects.get(conversation=self.conversation, sender=self.employer)
+        self.assertEqual(sent.body, "Reply from browser")
+        notify.assert_called_once()
+
+
 class ChatAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()

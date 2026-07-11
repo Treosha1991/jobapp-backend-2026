@@ -1,0 +1,116 @@
+{% extends "employer/base.html" %}
+{% block title %}{{ candidate_name }} - {{ employer_t.chats }}{% endblock %}
+{% block extra_head %}
+  <style>
+    .jh-chat-head { display:flex; gap:12px; align-items:center; margin-bottom:16px; }
+    .jh-chat-head-avatar { width:48px; height:48px; display:grid; place-items:center; overflow:hidden; flex:0 0 auto; border-radius:50%; background:rgba(24,223,103,.14); color:var(--green); font-weight:900; }
+    .jh-chat-head-avatar img { width:100%; height:100%; object-fit:cover; }
+    .jh-chat-head h1 { margin:0; font-size:22px; }
+    .jh-chat-context { margin:0 0 15px; padding:11px 13px; border:1px solid var(--line); border-radius:15px; background:rgba(110,199,255,.08); color:var(--muted); line-height:1.4; }
+    .jh-chat-context strong { color:#dff4ff; }
+    .jh-chat-thread { display:grid; gap:9px; min-height:360px; max-height:calc(100vh - 330px); overflow-y:auto; padding:4px 2px 12px; }
+    .jh-chat-message { width:fit-content; max-width:min(78%, 650px); padding:10px 12px 8px; border:1px solid var(--line); border-radius:16px 16px 16px 5px; background:rgba(69,132,183,.24); }
+    .jh-chat-message.mine { justify-self:end; border-color:rgba(24,223,103,.42); border-radius:16px 16px 5px 16px; background:linear-gradient(135deg, rgba(24,223,103,.87), rgba(15,182,83,.9)); color:#062415; }
+    .jh-chat-message.deleted { opacity:.7; font-style:italic; }
+    .jh-chat-message-body { overflow-wrap:anywhere; white-space:pre-wrap; line-height:1.45; }
+    .jh-chat-message-body a { color:var(--blue); text-decoration:underline; }
+    .jh-chat-message.mine .jh-chat-message-body a { color:#063d28; font-weight:800; }
+    .jh-chat-message-meta { display:flex; justify-content:flex-end; gap:7px; margin-top:5px; color:rgba(223,244,255,.7); font-size:10px; }
+    .jh-chat-message.mine .jh-chat-message-meta { color:rgba(6,36,21,.72); }
+    .jh-chat-reply-preview { margin:0 0 7px; padding:6px 8px; border-left:3px solid var(--blue); border-radius:7px; background:rgba(5,22,36,.2); color:rgba(223,244,255,.82); font-size:11px; line-height:1.35; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .jh-chat-message.mine .jh-chat-reply-preview { border-left-color:#063d28; background:rgba(6,36,21,.12); color:rgba(6,36,21,.78); }
+    .jh-chat-message-actions { display:none; gap:6px; margin-top:7px; }
+    .jh-chat-message:hover .jh-chat-message-actions, .jh-chat-message:focus-within .jh-chat-message-actions { display:flex; }
+    .jh-chat-message-action { border:0; padding:0; background:none; color:var(--blue); font:inherit; font-size:11px; font-weight:800; cursor:pointer; }
+    .jh-chat-message.mine .jh-chat-message-action { color:#063d28; }
+    .jh-chat-compose { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; margin-top:10px; }
+    .jh-chat-compose textarea { min-height:70px; }
+    .jh-chat-blocked { margin-top:12px; padding:13px; border:1px solid rgba(255,211,106,.4); border-radius:14px; color:#ffe29b; background:rgba(255,211,106,.08); }
+    .jh-chat-tools { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+    .jh-chat-report { margin:12px 0; padding:11px; border:1px solid rgba(255,125,139,.32); border-radius:14px; background:rgba(255,125,139,.06); }
+    .jh-chat-report summary { cursor:pointer; color:#ffd1d7; font-weight:800; }
+    .jh-chat-report form { display:grid; grid-template-columns:minmax(150px,.55fr) minmax(0,1fr) auto; gap:8px; margin-top:10px; }
+    @media (max-width:760px) { .jh-chat-thread { max-height:none; min-height:280px; } .jh-chat-message { max-width:90%; } .jh-chat-compose, .jh-chat-report form { grid-template-columns:1fr; } }
+  </style>
+{% endblock %}
+{% block content %}
+  <section class="jh-card">
+    <div class="jh-chat-tools"><a class="jh-btn" href="{% url 'employer:chat_list' %}">← {{ employer_t.chats }}</a>
+      {% if blocked_by_me %}
+        <form method="post">{% csrf_token %}<input type="hidden" name="action" value="unblock"><button class="jh-btn" type="submit">{{ employer_t.chat_unblock }}</button></form>
+      {% else %}
+        <form method="post" onsubmit="return confirm('{{ employer_t.chat_block_confirm|escapejs }}');">{% csrf_token %}<input type="hidden" name="action" value="block"><button class="jh-btn danger" type="submit">{{ employer_t.chat_block }}</button></form>
+      {% endif %}
+    </div>
+    <div class="jh-chat-head">
+      <span class="jh-chat-head-avatar">{% if candidate_avatar_url %}<img src="{{ candidate_avatar_url }}" alt="">{% else %}{{ candidate_name|first|upper }}{% endif %}</span>
+      <div><h1>{{ candidate_name }}</h1><span class="jh-muted">{{ employer_t.chat_candidate }}</span></div>
+    </div>
+    {% if conversation.initial_vacancy_title %}<div class="jh-chat-context"><strong>{{ employer_t.chat_started_from }}:</strong> {{ conversation.initial_vacancy_title }}</div>{% endif %}
+    <details class="jh-chat-report">
+      <summary>{{ employer_t.chat_report }}</summary>
+      <form method="post">{% csrf_token %}<input type="hidden" name="action" value="report">
+        <select class="jh-input" name="reason" required><option value="">{{ employer_t.chat_report_reason }}</option>{% for code, label in report_reasons %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select>
+        <input class="jh-input" name="message" maxlength="1000" placeholder="{{ employer_t.chat_report_comment }}">
+        <button class="jh-btn danger" type="submit">{{ employer_t.chat_report_send }}</button>
+      </form>
+    </details>
+    <div class="jh-chat-thread" id="chatThread">
+      {% for message in chat_messages %}
+        <article class="jh-chat-message{% if message.sender_id == request.user.id %} mine{% endif %}{% if message.deleted_at %} deleted{% endif %}" tabindex="0" data-message-id="{{ message.id }}" data-message-body="{{ message.body|escapejs }}">
+          {% if message.reply_to %}<div class="jh-chat-reply-preview">{% if message.reply_to.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ message.reply_to.body|truncatechars:180 }}{% endif %}</div>{% endif %}
+          <div class="jh-chat-message-body">{% if message.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ message.body|urlize }}{% endif %}</div>
+          <div class="jh-chat-message-meta"><time>{{ message.created_at|date:"H:i" }}</time>{% if message.edited_at %}<span>{{ employer_t.chat_edited }}</span>{% endif %}</div>
+          {% if not message.deleted_at %}<div class="jh-chat-message-actions">
+            <button class="jh-chat-message-action" type="button" data-chat-action="reply">{{ employer_t.chat_reply }}</button>
+            <button class="jh-chat-message-action" type="button" data-chat-action="copy">{{ employer_t.chat_copy }}</button>
+            <button class="jh-chat-message-action" type="button" data-chat-action="share">{{ employer_t.chat_share }}</button>
+            {% if message.sender_id == request.user.id %}<button class="jh-chat-message-action" type="button" data-chat-action="edit">{{ employer_t.chat_edit }}</button><button class="jh-chat-message-action" type="button" data-chat-action="delete">{{ employer_t.chat_delete }}</button>{% endif %}
+          </div>{% endif %}
+        </article>
+      {% empty %}
+        <div class="jh-empty">{{ employer_t.chats_empty_text }}</div>
+      {% endfor %}
+    </div>
+    {% if blocked_by_me or blocked_by_other %}
+      <div class="jh-chat-blocked">{% if blocked_by_me %}{{ employer_t.chat_blocked_by_me }}{% else %}{{ employer_t.chat_blocked_by_other }}{% endif %}</div>
+    {% else %}
+      <form method="post" class="jh-chat-compose" autocomplete="off">
+        {% csrf_token %}<input type="hidden" name="action" value="send"><input type="hidden" name="reply_to_id" value="">
+        <textarea class="jh-input" name="body" maxlength="1500" placeholder="{{ employer_t.chat_message_placeholder }}" required></textarea>
+        <button class="jh-btn primary" type="submit">{{ employer_t.chat_send }}</button>
+      </form>
+    {% endif %}
+  </section>
+{% endblock %}
+{% block extra_body %}
+  <script>
+    const thread = document.getElementById('chatThread');
+    if (thread) thread.scrollTop = thread.scrollHeight;
+    document.querySelectorAll('.jh-chat-message-body a').forEach((link) => link.addEventListener('click', (event) => {
+      if (!confirm('{{ employer_t.chat_external_link_confirm|escapejs }}')) event.preventDefault();
+    }));
+    const composeForm = document.querySelector('.jh-chat-compose');
+    const replyInput = composeForm?.querySelector('[name="reply_to_id"]');
+    const composer = composeForm?.querySelector('textarea');
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+    const postAction = (action, messageId, body = '') => {
+      const form = document.createElement('form'); form.method = 'post';
+      form.innerHTML = `<input type="hidden" name="csrfmiddlewaretoken" value="${csrfToken}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="message_id" value="${messageId}"><input type="hidden" name="body" value="">`;
+      form.querySelector('[name=body]').value = body; document.body.appendChild(form); form.submit();
+    };
+    document.querySelectorAll('[data-chat-action]').forEach((button) => button.addEventListener('click', async () => {
+      const bubble = button.closest('[data-message-id]'); const action = button.dataset.chatAction;
+      const messageId = bubble.dataset.messageId; const body = bubble.dataset.messageBody || '';
+      if (action === 'reply' && composer && replyInput) { replyInput.value = messageId; composer.placeholder = '{{ employer_t.chat_replying_to|escapejs }}'; composer.focus(); }
+      if (action === 'copy') await navigator.clipboard?.writeText(body);
+      if (action === 'share') { if (navigator.share) await navigator.share({ text: body }); else await navigator.clipboard?.writeText(body); }
+      if (action === 'edit') { const updated = prompt('{{ employer_t.chat_edit_prompt|escapejs }}', body); if (updated !== null) postAction('edit', messageId, updated); }
+      if (action === 'delete' && confirm('{{ employer_t.chat_delete_confirm|escapejs }}')) postAction('delete', messageId);
+    }));
+    setInterval(() => {
+      const composer = document.querySelector('.jh-chat-compose textarea');
+      if (!document.hidden && (!composer || !composer.value.trim())) window.location.reload();
+    }, 15000);
+  </script>
+{% endblock %}

@@ -1,0 +1,45 @@
+{% extends "employer/base.html" %}
+{% block title %}{{ employer_t.chats }} - JobHub{% endblock %}
+{% block extra_head %}
+  <style>
+    .jh-chat-list { display:grid; gap:10px; }
+    .jh-chat-row { display:grid; grid-template-columns:48px minmax(0,1fr) auto; gap:12px; align-items:center; padding:13px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); text-decoration:none; }
+    .jh-chat-row:hover { border-color:rgba(24,223,103,.52); background:rgba(24,223,103,.07); }
+    .jh-chat-avatar { width:48px; height:48px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:rgba(24,223,103,.14); color:var(--green); font-weight:900; }
+    .jh-chat-avatar img { width:100%; height:100%; object-fit:cover; }
+    .jh-chat-row-main { min-width:0; }
+    .jh-chat-name { display:flex; align-items:center; gap:8px; font-weight:900; }
+    .jh-chat-preview, .jh-chat-vacancy { overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+    .jh-chat-vacancy { margin-top:3px; color:#d7edf9; }
+    .jh-chat-meta { display:grid; justify-items:end; gap:6px; color:var(--muted); font-size:11px; }
+    .jh-chat-unread { min-width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:0 6px; background:var(--green); color:#052012; font-size:11px; font-weight:900; }
+  </style>
+{% endblock %}
+{% block extra_body %}
+  <script>
+    setInterval(() => { if (!document.hidden) window.location.reload(); }, 15000);
+  </script>
+{% endblock %}
+{% block content %}
+  <section class="jh-card">
+    <h1 class="jh-title">{{ employer_t.chats }}</h1>
+    <p class="jh-subtitle">{{ employer_t.chats_subtitle }}</p>
+    {% if rows %}
+      <div class="jh-chat-list">
+        {% for row in rows %}
+          <a class="jh-chat-row" href="{% url 'employer:chat_detail' row.conversation.id %}">
+            <span class="jh-chat-avatar">{% if row.candidate_avatar_url %}<img src="{{ row.candidate_avatar_url }}" alt="">{% else %}{{ row.candidate_name|first|upper }}{% endif %}</span>
+            <span class="jh-chat-row-main">
+              <span class="jh-chat-name">{{ row.candidate_name }}</span>
+              {% if row.conversation.initial_vacancy_title %}<span class="jh-chat-vacancy">{{ row.conversation.initial_vacancy_title }}</span>{% endif %}
+              <span class="jh-chat-preview">{% if row.last_message.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ row.last_message.body }}{% endif %}</span>
+            </span>
+            <span class="jh-chat-meta"><span>{{ row.last_message.created_at|date:"d.m H:i" }}</span>{% if row.unread_count %}<span class="jh-chat-unread">{{ row.unread_count }}</span>{% endif %}</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="jh-empty"><h2>{{ employer_t.chats_empty_title }}</h2><p>{{ employer_t.chats_empty_text }}</p></div>
+    {% endif %}
+  </section>
+{% endblock %}
