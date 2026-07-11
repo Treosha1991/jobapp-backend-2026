@@ -15,6 +15,8 @@ from .driver_licenses import (
     MAX_DRIVER_LICENSE_SELECTIONS,
 )
 from .models import (
+    ChatMessage,
+    ChatReport,
     Complaint,
     EconomyConfig,
     EmployerSubscription,
@@ -36,6 +38,9 @@ from .reviews import (
 from .service_sources import service_board_meta_for_user
 from .economy import is_employer_profile_visible_for_vacancy
 from .text_filters import censor_minimal, contains_link
+
+
+EXTERNAL_LINK_RE = re.compile(r"https?://[^\s<>{}\[\]|\\^`]+", re.IGNORECASE)
 
 
 def _to_int_or_none(value):
@@ -1271,6 +1276,65 @@ class PushDeviceRegisterSerializer(serializers.Serializer):
         if len(lang) > 10:
             raise serializers.ValidationError("invalid_app_language")
         return lang
+
+
+class ChatMessageCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=1500, trim_whitespace=True)
+    client_message_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=64,
+        default="",
+    )
+
+    def validate_body(self, value):
+        text = (value or "").strip()
+        if not text:
+            raise serializers.ValidationError("message_required")
+        if "\x00" in text:
+            raise serializers.ValidationError("invalid_message")
+        return text
+
+    def validate_client_message_id(self, value):
+        return (value or "").strip()
+
+
+class ChatReportCreateSerializer(serializers.Serializer):
+    reason = serializers.ChoiceField(choices=ChatReport.REASON_CHOICES)
+    message = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+        trim_whitespace=True,
+    )
+    reported_message_id = serializers.IntegerField(required=False, min_value=1)
+
+    def validate_message(self, value):
+        return (value or "").strip()
+
+
+def chat_message_has_external_links(text):
+    return bool(EXTERNAL_LINK_RE.search(text or ""))
+
+
+class ChatMessageSerializer(serializers.ModelSerializer):
+    sender_id = serializers.IntegerField(read_only=True)
+    is_mine = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatMessage
+        fields = [
+            "id",
+            "sender_id",
+            "body",
+            "has_external_links",
+            "created_at",
+            "is_mine",
+        ]
+
+    def get_is_mine(self, obj):
+        request = self.context.get("request")
+        return bool(request and obj.sender_id == request.user.id)
 
 
 class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):

@@ -2,11 +2,13 @@ from decimal import Decimal
 
 from django.db import models
 from django.contrib.auth.models import User
+from django.db.models import Q
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 
 from .country_choices import VACANCY_COUNTRY_CHOICES
+from .currency_catalog import CURRENCY_CHOICES
 from .driver_licenses import DRIVER_LICENSE_CHOICES as DRIVER_LICENSE_CATEGORY_CHOICES
 from .monetization import (
     CONTACT_ACCESS_DURATION_MINUTES_DEFAULT,
@@ -76,22 +78,7 @@ class Vacancy(models.Model):
         ("none", "None"),
     ]
 
-    SALARY_CURRENCY_CHOICES = [
-        ("EUR", "EUR"),
-        ("PLN", "PLN"),
-        ("USD", "USD"),
-        ("CAD", "CAD"),
-        ("CHF", "CHF"),
-        ("GBP", "GBP"),
-        ("UAH", "UAH"),
-        ("BYN", "BYN"),
-        ("CZK", "CZK"),
-        ("HUF", "HUF"),
-        ("RON", "RON"),
-        ("BGN", "BGN"),
-        ("SEK", "SEK"),
-        ("DKK", "DKK"),
-    ]
+    SALARY_CURRENCY_CHOICES = CURRENCY_CHOICES
 
     SALARY_TAX_TYPE_CHOICES = [
         ("brutto", "Brutto"),
@@ -876,6 +863,165 @@ class UserBlock(models.Model):
 
     def __str__(self):
         return f"UserBlock blocker={self.blocker_id} blocked={self.blocked_user_id}"
+
+
+class ChatConversation(models.Model):
+    """One private conversation between a candidate and a vacancy owner."""
+
+    candidate = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="candidate_chat_conversations",
+    )
+    employer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="employer_chat_conversations",
+    )
+    initial_vacancy = models.ForeignKey(
+        Vacancy,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="initial_chat_conversations",
+    )
+    initial_vacancy_title = models.CharField(max_length=120, blank=True, default="")
+    candidate_last_read_at = models.DateTimeField(blank=True, null=True)
+    employer_last_read_at = models.DateTimeField(blank=True, null=True)
+    last_message_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-last_message_at", "-updated_at", "-id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("candidate", "employer"),
+                name="jobs_unique_candidate_employer_chat",
+            ),
+            models.CheckConstraint(
+                condition=~Q(candidate=models.F("employer")),
+                name="jobs_chat_candidate_and_employer_differ",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("candidate", "last_message_at")),
+            models.Index(fields=("employer", "last_message_at")),
+        ]
+
+    def participant_for(self, user):
+        if user.id == self.candidate_id:
+            return "candidate"
+        if user.id == self.employer_id:
+            return "employer"
+        return ""
+
+    def other_user_for(self, user):
+        if user.id == self.candidate_id:
+            return self.employer
+        if user.id == self.employer_id:
+            return self.candidate
+        return None
+
+    def __str__(self):
+        return f"ChatConversation #{self.id} candidate={self.candidate_id} employer={self.employer_id}"
+
+
+class ChatMessage(models.Model):
+    conversation = models.ForeignKey(
+        ChatConversation,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="sent_chat_messages",
+    )
+    body = models.TextField(max_length=1500)
+    has_external_links = models.BooleanField(default=False)
+    client_message_id = models.CharField(max_length=64, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("conversation", "client_message_id"),
+                name="jobs_unique_chat_client_message",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("conversation", "created_at")),
+            models.Index(fields=("sender", "created_at")),
+        ]
+
+    def __str__(self):
+        return f"ChatMessage #{self.id} conversation={self.conversation_id} sender={self.sender_id}"
+
+
+class ChatReport(models.Model):
+    REASON_CHOICES = [
+        ("spam", "Spam or advertising"),
+        ("scam", "Scam or fraud"),
+        ("abuse", "Abuse or harassment"),
+        ("inappropriate", "Inappropriate content"),
+        ("other", "Other"),
+    ]
+    STATUS_CHOICES = [
+        ("new", "New"),
+        ("in_review", "In review"),
+        ("resolved", "Resolved"),
+        ("rejected", "Rejected"),
+    ]
+
+    conversation = models.ForeignKey(
+        ChatConversation,
+        on_delete=models.CASCADE,
+        related_name="reports",
+    )
+    reporter = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="filed_chat_reports",
+    )
+    reported_user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="received_chat_reports",
+    )
+    reported_message = models.ForeignKey(
+        ChatMessage,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="reports",
+    )
+    reason = models.CharField(max_length=20, choices=REASON_CHOICES)
+    message = models.TextField(blank=True, max_length=1000)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="new")
+    handled_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="handled_chat_reports",
+    )
+    handled_at = models.DateTimeField(blank=True, null=True)
+    resolution_note = models.TextField(blank=True, max_length=2000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+        indexes = [
+            models.Index(fields=("status", "created_at")),
+            models.Index(fields=("reported_user", "created_at")),
+            models.Index(fields=("conversation", "created_at")),
+        ]
+
+    def __str__(self):
+        return f"ChatReport #{self.id} conversation={self.conversation_id} reason={self.reason}"
 
 
 class EmployerSubscription(models.Model):

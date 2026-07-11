@@ -4,14 +4,203 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .economy import build_contact_access_state, ensure_free_contact_policy
+from .currency_catalog import CURRENCY_CODES
 from .models import (
+    ChatConversation,
+    ChatMessage,
+    ChatReport,
     ModeratorNotificationDelivery,
     PushDevice,
+    UserProfile,
     Vacancy,
     VacancyContactAccessPolicy,
     VacancyModerationAttempt,
 )
 from .service_sources import SERVICE_BOARD_USERNAME
+
+
+class CurrencyCatalogTests(TestCase):
+    def test_catalog_includes_currencies_for_supported_work_destinations(self):
+        for code in ("NOK", "ISK", "RSD", "BAM", "MKD", "ALL", "MDL", "TRY"):
+            self.assertIn(code, CURRENCY_CODES)
+            self.assertIn((code, code), Vacancy.SALARY_CURRENCY_CHOICES)
+
+
+class ChatAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.candidate = User.objects.create_user(
+            username="candidate",
+            email="candidate@example.com",
+            password="password",
+        )
+        UserProfile.objects.create(user=self.candidate, nickname="Candidate")
+        self.employer = User.objects.create_user(
+            username="employer",
+            email="employer@example.com",
+            password="password",
+        )
+        UserProfile.objects.create(user=self.employer, nickname="Employer")
+        self.vacancy = Vacancy.objects.create(
+            created_by=self.employer,
+            title="Warehouse worker",
+            country="PL",
+            city="Poznan",
+            city_code="poznan",
+            category="warehouse",
+            audience_country_codes="UA",
+            employment_type="shift",
+            experience_required="without",
+            salary="27 PLN netto",
+            salary_from=27,
+            salary_to=27,
+            salary_currency="PLN",
+            salary_tax_type="netto",
+            salary_hours_month=168,
+            description="Visible description",
+            housing_type="none",
+            phone="+48111111111",
+            source="direct",
+            creator_token="chat-api-test",
+            is_approved=True,
+            expires_at=timezone.now() + timezone.timedelta(days=30),
+        )
+
+    def _start_chat(self):
+        self.client.force_authenticate(user=self.candidate)
+        response = self.client.post(
+            "/api/chats/start/",
+            {"vacancy_id": self.vacancy.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        return response.data["conversation"]["id"]
+
+    def test_one_chat_is_reused_from_vacancy_and_employer_profile(self):
+        conversation_id = self._start_chat()
+
+        initial = self.client.get(f"/api/chats/{conversation_id}/").data[
+            "conversation"
+        ]["initial_context"]
+        self.assertEqual(initial["employer"]["nickname"], "Employer")
+        self.assertEqual(initial["vacancy"]["title"], self.vacancy.title)
+
+        response = self.client.post(
+            "/api/chats/start/",
+            {"vacancy_id": self.vacancy.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["created"])
+        self.assertEqual(response.data["conversation"]["id"], conversation_id)
+
+        response = self.client.post(
+            "/api/chats/start/",
+            {"employer_user_id": self.employer.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["conversation"]["id"], conversation_id)
+        self.assertEqual(ChatConversation.objects.count(), 1)
+
+    def test_message_unread_read_and_external_link_flag(self):
+        conversation_id = self._start_chat()
+        response = self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            {
+                "body": "Please see https://example.com/job",
+                "client_message_id": "candidate-1",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        message_id = response.data["message"]["id"]
+        self.assertTrue(response.data["message"]["has_external_links"])
+
+        self.client.force_authenticate(user=self.employer)
+        response = self.client.get("/api/chats/unread-count/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["unread_count"], 1)
+
+        response = self.client.post(
+            f"/api/chats/{conversation_id}/read/",
+            {"last_message_id": message_id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get("/api/chats/unread-count/").data["unread_count"], 0)
+
+    def test_retry_with_same_client_message_id_does_not_duplicate_message(self):
+        conversation_id = self._start_chat()
+        payload = {"body": "Connection retry safe", "client_message_id": "candidate-retry-1"}
+        first = self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            payload,
+            format="json",
+        )
+        second = self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 200)
+        self.assertFalse(second.data["created"])
+        self.assertEqual(ChatMessage.objects.filter(conversation_id=conversation_id).count(), 1)
+
+    def test_block_hides_chat_and_prevents_new_messages(self):
+        conversation_id = self._start_chat()
+        self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            {"body": "Hello"},
+            format="json",
+        )
+        response = self.client.post(f"/api/chats/{conversation_id}/block/", format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get("/api/chats/").data["count"], 0)
+
+        self.client.force_authenticate(user=self.employer)
+        response = self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            {"body": "Reply"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_report_is_available_for_the_other_participant_message(self):
+        conversation_id = self._start_chat()
+        self.client.post(
+            f"/api/chats/{conversation_id}/messages/",
+            {"body": "Suspicious message"},
+            format="json",
+        )
+        message = ChatMessage.objects.get(conversation_id=conversation_id)
+
+        self.client.force_authenticate(user=self.employer)
+        response = self.client.post(
+            f"/api/chats/{conversation_id}/report/",
+            {"reason": "spam", "reported_message_id": message.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            ChatReport.objects.filter(
+                conversation_id=conversation_id,
+                reporter=self.employer,
+                reported_user=self.candidate,
+            ).exists()
+        )
+
+    def test_cannot_start_chat_for_expired_vacancy(self):
+        self.vacancy.expires_at = timezone.now() - timezone.timedelta(seconds=1)
+        self.vacancy.save(update_fields=["expires_at"])
+        self.client.force_authenticate(user=self.candidate)
+        response = self.client.post(
+            "/api/chats/start/",
+            {"vacancy_id": self.vacancy.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 404)
 
 
 class ContactAccessPolicyTests(TestCase):

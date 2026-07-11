@@ -1,0 +1,66 @@
+{% extends "employer/base.html" %}
+{% block title %}{{ employer_t.login_page_title }}{% endblock %}
+{% block extra_head %}
+  <style>
+    .jh-password-wrap { position: relative; display: flex; align-items: center; }
+    .jh-password-wrap .jh-input { padding-right: 54px; }
+    .jh-password-toggle {
+      position: absolute; right: 8px; width: 40px; height: 40px; border: 0; border-radius: 12px;
+      background: rgba(255, 255, 255, .08); color: var(--muted); cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background .15s ease, color .15s ease, transform .15s ease;
+    }
+    .jh-password-toggle:hover, .jh-password-toggle:focus-visible { background: rgba(24, 223, 103, .15); color: var(--green); outline: none; transform: translateY(-1px); }
+    .jh-password-toggle svg { width: 22px; height: 22px; display: block; }
+    .jh-password-toggle .eye-off { display: none; }
+    .jh-password-toggle.is-visible .eye-on { display: none; }
+    .jh-password-toggle.is-visible .eye-off { display: block; }
+  </style>
+{% endblock %}
+{% block content %}
+  <section class="jh-card" style="max-width:520px;margin:40px auto;">
+    <h1 class="jh-title">{{ employer_t.login_title }}</h1>
+    <p class="jh-subtitle">{{ employer_t.login_subtitle }}</p>
+    <form method="post">
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="jh-message error">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="jh-grid full">
+        <div class="jh-field">
+          <label for="id_username">{{ employer_t.login_username }}</label>
+          <input class="jh-input" type="text" name="username" autofocus autocapitalize="none" autocomplete="username" required id="id_username">
+        </div>
+        <div class="jh-field">
+          <label for="id_password">{{ employer_t.login_password }}</label>
+          <div class="jh-password-wrap">
+            <input class="jh-input" type="password" name="password" autocomplete="current-password" required id="id_password">
+            <button class="jh-password-toggle" type="button" aria-label="{{ employer_t.show_password }}" aria-pressed="false" data-password-toggle="id_password">
+              <svg class="eye-on" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/></svg>
+              <svg class="eye-off" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 3l18 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M10.6 6.2A10.2 10.2 0 0 1 12 6c6 0 9.5 6 9.5 6a17.6 17.6 0 0 1-2.1 2.7M7.3 7.4C4.2 9.2 2.5 12 2.5 12s3.5 6 9.5 6c1.7 0 3.2-.5 4.4-1.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.9 9.9A3 3 0 0 0 14.1 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.login_submit }}</button></div>
+    </form>
+  </section>
+{% endblock %}
+{% block extra_body %}
+  <script>
+    const employerPasswordLabels = {
+      show: "{{ employer_t.show_password|escapejs }}",
+      hide: "{{ employer_t.hide_password|escapejs }}",
+    };
+    document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+      const input = document.getElementById(button.dataset.passwordToggle);
+      if (!input) return;
+      button.addEventListener('click', () => {
+        const visible = input.type === 'text';
+        input.type = visible ? 'password' : 'text';
+        button.classList.toggle('is-visible', !visible);
+        button.setAttribute('aria-pressed', !visible ? 'true' : 'false');
+        button.setAttribute('aria-label', !visible ? employerPasswordLabels.hide : employerPasswordLabels.show);
+        input.focus({ preventScroll: true });
+      });
+    });
+  </script>
+{% endblock %}

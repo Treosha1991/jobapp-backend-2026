@@ -1,0 +1,37 @@
+{% extends "employer/base.html" %}
+{% block title %}{{ employer_t.vacancy_list_title }} - JobHub{% endblock %}
+{% block content %}
+  <section class="jh-card">
+    <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+      <div>
+        <h1 class="jh-title">{{ employer_t.vacancy_list_title }}</h1>
+        <p class="jh-subtitle">{{ employer_t.vacancy_list_subtitle }}</p>
+      </div>
+      <a class="jh-btn primary" href="{% url 'employer:vacancy_create' %}">+ {{ employer_t.new_vacancy }}</a>
+    </div>
+    {% if rows %}
+      <div class="jh-table-wrap">
+        <table class="jh-table">
+          <thead><tr><th>{{ employer_t.table_vacancy }}</th><th>{{ employer_t.table_location }}</th><th>{{ employer_t.table_status }}</th><th>{{ employer_t.table_updated }}</th><th>{{ employer_t.table_actions }}</th></tr></thead>
+          <tbody>
+            {% for row in rows %}{% with vacancy=row.vacancy %}
+              <tr>
+                <td><strong>{{ vacancy.title }}</strong><br><span class="jh-muted">{{ vacancy.get_category_display }}</span></td>
+                <td>{{ vacancy.get_country_display }}<br><span class="jh-muted">{{ vacancy.city }}</span></td>
+                <td><span class="jh-status {{ row.status_kind }}">{{ row.status_label }}</span></td>
+                <td>{{ vacancy.published_at|date:"d.m.Y H:i" }}</td>
+                <td><div class="jh-actions" style="margin:0;">
+                  <a class="jh-btn" href="{% url 'employer:vacancy_edit' vacancy.id %}">{{ employer_t.edit }}</a>
+                  {% if vacancy.is_approved %}<form method="post" action="{% url 'employer:vacancy_pause' vacancy.id %}">{% csrf_token %}<button class="jh-btn" type="submit">{% if vacancy.is_paused_by_owner %}{{ employer_t.resume }}{% else %}{{ employer_t.pause }}{% endif %}</button></form>{% endif %}
+                  {% if not vacancy.is_approved or vacancy.is_paused_by_owner %}<form method="post" action="{% url 'employer:vacancy_delete' vacancy.id %}" onsubmit="return confirm('{{ employer_t.delete_confirm|escapejs }}');">{% csrf_token %}<button class="jh-btn danger" type="submit">{{ employer_t.delete }}</button></form>{% endif %}
+                </div></td>
+              </tr>
+            {% endwith %}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="jh-empty"><h2>{{ employer_t.empty_title }}</h2><p>{{ employer_t.empty_text }}</p><a class="jh-btn primary" href="{% url 'employer:vacancy_create' %}">{{ employer_t.create_vacancy }}</a></div>
+    {% endif %}
+  </section>
+{% endblock %}
