@@ -15,6 +15,8 @@ from .driver_licenses import (
     MAX_DRIVER_LICENSE_SELECTIONS,
 )
 from .models import (
+    ChatMessage,
+    ChatReport,
     Complaint,
     EconomyConfig,
     EmployerSubscription,
@@ -36,6 +38,15 @@ from .reviews import (
 from .service_sources import service_board_meta_for_user
 from .economy import is_employer_profile_visible_for_vacancy
 from .text_filters import censor_minimal, contains_link
+from .telegram import (
+    is_telegram_username,
+    normalize_telegram_username,
+    normalize_telegram_usernames,
+    vacancy_telegram_usernames,
+)
+
+
+EXTERNAL_LINK_RE = re.compile(r"https?://[^\s<>{}\[\]|\\^`]+", re.IGNORECASE)
 
 
 def _to_int_or_none(value):
@@ -109,6 +120,8 @@ _MODERATION_COMPARISON_FIELDS = [
     "hide_primary_phone",
     "whatsapp",
     "viber",
+    "telegram_username",
+    "telegram_usernames",
     "telegram",
     "email",
     "source",
@@ -275,10 +288,12 @@ def _contact_payload(obj, *, public_only=False):
     public_phone = additional_phone if hide_primary_phone else primary_phone
     raw_whatsapp = (obj.whatsapp or "").strip()
     raw_viber = (obj.viber or "").strip()
-    raw_telegram = (obj.telegram or "").strip()
+    # Legacy values in `telegram` were phone numbers. Never expose those as
+    # Telegram contacts; only the dedicated username is public.
+    telegram_usernames = vacancy_telegram_usernames(obj)
+    raw_telegram = telegram_usernames[0] if telegram_usernames else ""
     public_whatsapp = additional_phone if hide_primary_phone and raw_whatsapp else raw_whatsapp
     public_viber = additional_phone if hide_primary_phone and raw_viber else raw_viber
-    public_telegram = additional_phone if hide_primary_phone and raw_telegram else raw_telegram
     payload = {
         "owner_user_id": getattr(getattr(obj, "created_by", None), "id", None),
         "owner_nickname": _creator_display_name(obj),
@@ -292,11 +307,16 @@ def _contact_payload(obj, *, public_only=False):
         "additional_phones": additional_phones if not public_only else [],
         "hide_primary_phone": hide_primary_phone,
         "public_phone": public_phone,
-        "telegram": public_telegram if public_only else raw_telegram,
+        # Compatibility alias for older mobile clients.
+        "telegram": raw_telegram,
+        "telegram_username": raw_telegram,
+        "telegram_usernames": telegram_usernames,
         "whatsapp": public_whatsapp if public_only else raw_whatsapp,
         "email": "" if public_only else (obj.email or ""),
         "viber": public_viber if public_only else raw_viber,
-        "public_telegram": public_telegram,
+        "public_telegram": raw_telegram,
+        "public_telegram_username": raw_telegram,
+        "public_telegram_usernames": telegram_usernames,
         "public_whatsapp": public_whatsapp,
         "public_viber": public_viber,
     }
@@ -654,6 +674,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "hide_primary_phone",
             "whatsapp",
             "viber",
+            "telegram_username",
             "telegram",
             "email",
             "source",
@@ -711,6 +732,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
                 "additional_phone",
                 "additional_phone_2",
                 "additional_phone_3",
+                "telegram_username",
                 "telegram",
                 "whatsapp",
                 "viber",
@@ -740,7 +762,7 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
         _check_len("additional_phone", 15)
         _check_len("additional_phone_2", 15)
         _check_len("additional_phone_3", 15)
-        _check_len("telegram", 15)
+        _check_len("telegram_username", 32)
         _check_len("whatsapp", 15)
         _check_len("viber", 15)
         _check_len("email", 30)
@@ -771,7 +793,6 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             "additional_phone",
             "additional_phone_2",
             "additional_phone_3",
-            "telegram",
             "whatsapp",
             "viber",
         ):
@@ -779,6 +800,23 @@ class VacancyCreateSerializer(serializers.ModelSerializer):
             if val:
                 if not contact_pattern.match(val):
                     errors[field] = "only digits and symbols"
+
+        try:
+            attrs["telegram_username"] = normalize_telegram_username(
+                attrs.get("telegram_username")
+            )
+        except ValueError:
+            errors["telegram_username"] = "invalid Telegram username"
+        try:
+            telegram_usernames = normalize_telegram_usernames(
+                attrs.get("telegram_usernames")
+            )
+            if not telegram_usernames and attrs.get("telegram_username"):
+                telegram_usernames = [attrs["telegram_username"]]
+            attrs["telegram_usernames"] = telegram_usernames
+            attrs["telegram_username"] = telegram_usernames[0] if telegram_usernames else ""
+        except ValueError:
+            errors["telegram_usernames"] = "invalid Telegram usernames"
 
         primary_phone = (attrs.get("phone") or "").strip()
         additional_phones = [
@@ -871,6 +909,12 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
         required=False,
         max_selections=MAX_DRIVER_LICENSE_SELECTIONS,
     )
+    telegram_usernames = serializers.ListField(
+        child=serializers.CharField(allow_blank=True, max_length=32),
+        required=False,
+        allow_empty=True,
+        max_length=3,
+    )
     source_url = serializers.URLField(
         required=False,
         allow_blank=True,
@@ -918,6 +962,8 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
             "hide_primary_phone",
             "whatsapp",
             "viber",
+            "telegram_username",
+            "telegram_usernames",
             "telegram",
             "email",
             "source",
@@ -941,6 +987,7 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
             "hide_primary_phone": {"required": False},
             "whatsapp": {"required": False, "allow_blank": True},
             "viber": {"required": False, "allow_blank": True},
+            "telegram_username": {"required": False, "allow_blank": True},
             "telegram": {"required": False, "allow_blank": True},
             "email": {"required": False, "allow_blank": True},
         }
@@ -971,7 +1018,7 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
         _check_len("additional_phone", 30)
         _check_len("additional_phone_2", 30)
         _check_len("additional_phone_3", 30)
-        _check_len("telegram", 100)
+        _check_len("telegram_username", 32)
         _check_len("whatsapp", 100)
         _check_len("viber", 100)
         _check_len("email", 254)
@@ -993,13 +1040,34 @@ class InternalVacancyImportSerializer(serializers.ModelSerializer):
             "additional_phone",
             "additional_phone_2",
             "additional_phone_3",
-            "telegram",
             "whatsapp",
             "viber",
         ):
             val = attrs.get(field)
             if val and not contact_pattern.match(val):
                 errors[field] = "only digits and symbols"
+
+        # Accept the explicit field from JobHub Board. Existing import payloads
+        # with @username are also upgraded without exposing phone values.
+        legacy_telegram = (attrs.get("telegram") or "").strip()
+        if not attrs.get("telegram_username") and is_telegram_username(legacy_telegram):
+            attrs["telegram_username"] = legacy_telegram
+        try:
+            attrs["telegram_username"] = normalize_telegram_username(
+                attrs.get("telegram_username")
+            )
+        except ValueError:
+            errors["telegram_username"] = "invalid Telegram username"
+        try:
+            telegram_usernames = normalize_telegram_usernames(
+                attrs.get("telegram_usernames")
+            )
+            if not telegram_usernames and attrs.get("telegram_username"):
+                telegram_usernames = [attrs["telegram_username"]]
+            attrs["telegram_usernames"] = telegram_usernames
+            attrs["telegram_username"] = telegram_usernames[0] if telegram_usernames else ""
+        except ValueError:
+            errors["telegram_usernames"] = "invalid Telegram usernames"
 
         primary_phone = (attrs.get("phone") or "").strip()
         additional_phones = [
@@ -1162,6 +1230,8 @@ class VacancyContactSerializer(serializers.ModelSerializer):
     whatsapp = serializers.SerializerMethodField()
     viber = serializers.SerializerMethodField()
     telegram = serializers.SerializerMethodField()
+    telegram_username = serializers.SerializerMethodField()
+    telegram_usernames = serializers.SerializerMethodField()
     additional_phone = serializers.SerializerMethodField()
     additional_phone_2 = serializers.SerializerMethodField()
     additional_phone_3 = serializers.SerializerMethodField()
@@ -1184,6 +1254,8 @@ class VacancyContactSerializer(serializers.ModelSerializer):
             "whatsapp",
             "viber",
             "telegram",
+            "telegram_username",
+            "telegram_usernames",
             "email",
         ]
 
@@ -1246,7 +1318,14 @@ class VacancyContactSerializer(serializers.ModelSerializer):
         return self._public_messenger(obj, obj.viber)
 
     def get_telegram(self, obj):
-        return self._public_messenger(obj, obj.telegram)
+        values = vacancy_telegram_usernames(obj)
+        return values[0] if values else ""
+
+    def get_telegram_username(self, obj):
+        return self.get_telegram(obj)
+
+    def get_telegram_usernames(self, obj):
+        return vacancy_telegram_usernames(obj)
 
 
 class PushDeviceRegisterSerializer(serializers.Serializer):
@@ -1271,6 +1350,121 @@ class PushDeviceRegisterSerializer(serializers.Serializer):
         if len(lang) > 10:
             raise serializers.ValidationError("invalid_app_language")
         return lang
+
+
+class ChatMessageCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=1500, trim_whitespace=True)
+    client_message_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=64,
+        default="",
+    )
+    reply_to_message_id = serializers.IntegerField(required=False, min_value=1)
+
+    def validate_body(self, value):
+        text = (value or "").strip()
+        if not text:
+            raise serializers.ValidationError("message_required")
+        if "\x00" in text:
+            raise serializers.ValidationError("invalid_message")
+        return text
+
+    def validate_client_message_id(self, value):
+        return (value or "").strip()
+
+
+class ChatMessageUpdateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=1500, trim_whitespace=True)
+
+    def validate_body(self, value):
+        text = (value or "").strip()
+        if not text:
+            raise serializers.ValidationError("message_required")
+        if "\x00" in text:
+            raise serializers.ValidationError("invalid_message")
+        return text
+
+
+class ChatReportCreateSerializer(serializers.Serializer):
+    reason = serializers.ChoiceField(choices=ChatReport.REASON_CHOICES)
+    message = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+        trim_whitespace=True,
+    )
+    reported_message_id = serializers.IntegerField(required=False, min_value=1)
+
+    def validate_message(self, value):
+        return (value or "").strip()
+
+
+def chat_message_has_external_links(text):
+    return bool(EXTERNAL_LINK_RE.search(text or ""))
+
+
+class ChatMessageSerializer(serializers.ModelSerializer):
+    sender_id = serializers.IntegerField(read_only=True)
+    is_mine = serializers.SerializerMethodField()
+    body = serializers.SerializerMethodField()
+    is_deleted = serializers.SerializerMethodField()
+    is_read = serializers.SerializerMethodField()
+    can_modify = serializers.SerializerMethodField()
+    reply_to = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatMessage
+        fields = [
+            "id",
+            "sender_id",
+            "body",
+            "has_external_links",
+            "reply_to",
+            "edited_at",
+            "is_deleted",
+            "is_read",
+            "can_modify",
+            "created_at",
+            "is_mine",
+        ]
+
+    def get_is_mine(self, obj):
+        request = self.context.get("request")
+        return bool(request and obj.sender_id == request.user.id)
+
+    def get_body(self, obj):
+        return "" if obj.deleted_at else obj.body
+
+    def get_is_deleted(self, obj):
+        return bool(obj.deleted_at)
+
+    def _recipient_read_at(self, obj):
+        conversation = obj.conversation
+        if obj.sender_id == conversation.candidate_id:
+            return conversation.employer_last_read_at
+        return conversation.candidate_last_read_at
+
+    def get_is_read(self, obj):
+        read_at = self._recipient_read_at(obj)
+        return bool(read_at and read_at >= obj.created_at)
+
+    def get_can_modify(self, obj):
+        request = self.context.get("request")
+        if not request or obj.sender_id != request.user.id or obj.deleted_at:
+            return False
+        return not self.get_is_read(obj)
+
+    def get_reply_to(self, obj):
+        reply = obj.reply_to
+        if not reply:
+            return None
+        return {
+            "id": reply.id,
+            "sender_id": reply.sender_id,
+            "body": "" if reply.deleted_at else reply.body,
+            "is_deleted": bool(reply.deleted_at),
+        }
 
 
 class VacancyAlertSubscriptionSerializer(serializers.ModelSerializer):

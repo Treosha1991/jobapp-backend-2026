@@ -1,0 +1,265 @@
+{% extends "employer/base.html" %}
+{% block title %}{% if mode == 'edit' %}{{ employer_t.edit_short }}{% else %}{{ employer_t.form_title_new }}{% endif %} - JobHub{% endblock %}
+{% block content %}
+  <section class="jh-card">
+    <h1 class="jh-title">{% if mode == 'edit' %}{{ employer_t.edit_title }}{% else %}{{ employer_t.form_title_new }}{% endif %}</h1>
+    <p class="jh-subtitle">{{ employer_t.form_subtitle }}</p>
+    {% if not phone_verified_profile %}
+      <section id="phone-verification" class="jh-verify-card">
+        <div class="jh-verify-copy">
+          <div class="jh-verify-kicker">{{ employer_t.phone_verify_kicker }}</div>
+          <h2>{{ employer_t.phone_verify_title }}</h2>
+          <p>{{ employer_t.phone_verify_text }}</p>
+        </div>
+        <div class="jh-verify-forms">
+          <form class="jh-verify-form" method="post" action="{% url 'employer:phone_request_code' %}#phone-verification" autocomplete="off">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <input type="hidden" name="channel" value="sms">
+            <label for="phone_verify_phone">{{ employer_t.phone_verify_phone_label }}</label>
+            <div class="jh-verify-row">
+              <input class="jh-input" id="phone_verify_phone" name="phone" type="tel" placeholder="+48700111222" value="{{ phone_verify_pending }}" required>
+              <button class="jh-btn primary" type="submit">{{ employer_t.phone_verify_send }}</button>
+            </div>
+          </form>
+          {% if phone_verify_pending %}
+            <form class="jh-verify-form" method="post" action="{% url 'employer:phone_verify_code' %}#phone-verification" autocomplete="off">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <input type="hidden" name="phone" value="{{ phone_verify_pending }}">
+              <label for="phone_verify_code">{{ employer_t.phone_verify_code_label }}</label>
+              <div class="jh-verify-row compact">
+                <input class="jh-input" id="phone_verify_code" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" required>
+                <button class="jh-btn" type="submit">{{ employer_t.phone_verify_confirm }}</button>
+              </div>
+            </form>
+          {% endif %}
+        </div>
+      </section>
+    {% endif %}
+    <form method="post" novalidate autocomplete="off">
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="jh-message error">{{ form.non_field_errors }}</div>{% endif %}
+
+      <section class="jh-form-section">
+        <h2>{{ employer_t.section_basic }}</h2>
+        <div class="jh-grid">
+          <div class="jh-field jh-required">{{ form.title.label_tag }}{{ form.title }}{% if form.title.errors %}<div class="jh-errorlist">{{ form.title.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-required">{{ form.country.label_tag }}{{ form.country }}{% if form.country.errors %}<div class="jh-errorlist">{{ form.country.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-required">
+            {{ form.city.label_tag }}{{ form.city }}
+            {% if form.city.errors %}<div class="jh-errorlist">{{ form.city.errors }}</div>{% endif %}
+          </div>
+          <div class="jh-field jh-required">{{ form.category.label_tag }}{{ form.category }}{% if form.category.errors %}<div class="jh-errorlist">{{ form.category.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-required">{{ form.employment_type.label_tag }}{{ form.employment_type }}{% if form.employment_type.errors %}<div class="jh-errorlist">{{ form.employment_type.errors }}</div>{% endif %}</div>
+          <div class="jh-field">{{ form.experience_required.label_tag }}{{ form.experience_required }}{% if form.experience_required.errors %}<div class="jh-errorlist">{{ form.experience_required.errors }}</div>{% endif %}</div>
+        </div>
+        <details class="jh-picker" data-picker>
+          <summary>
+            <span class="jh-picker-label">{{ employer_t.pick_audience }} <span class="jh-required-star" title="{{ employer_t.required_field }}">*</span></span>
+            <span class="jh-picker-count" data-picker-count>0</span>
+          </summary>
+          <div class="jh-picker-panel">
+            <button class="jh-picker-close" type="button" data-close-picker>{{ employer_t.collapse_picker }}</button>
+            <div class="jh-help">{{ form.audience_countries.help_text }}</div>
+            {{ form.audience_countries }}
+            {% if form.audience_countries.errors %}<div class="jh-errorlist">{{ form.audience_countries.errors }}</div>{% endif %}
+            <button class="jh-picker-close" type="button" data-close-picker>{{ employer_t.collapse_picker }}</button>
+          </div>
+        </details>
+        <details class="jh-picker" data-picker>
+          <summary>
+            <span class="jh-picker-label">{{ employer_t.pick_driver }}</span>
+            <span class="jh-picker-count" data-picker-count>0</span>
+          </summary>
+          <div class="jh-picker-panel">
+            <button class="jh-picker-close" type="button" data-close-picker>{{ employer_t.collapse_picker }}</button>
+            <div class="jh-help">{{ employer_t.driver_limit }}</div>
+            {{ form.driver_license_categories }}
+            {% if form.driver_license_categories.errors %}<div class="jh-errorlist">{{ form.driver_license_categories.errors }}</div>{% endif %}
+            <button class="jh-picker-close" type="button" data-close-picker>{{ employer_t.collapse_picker }}</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="jh-form-section">
+        <h2>{{ employer_t.section_salary }}</h2>
+        <div class="jh-grid">
+          <div class="jh-field jh-required">{{ form.salary_from.label_tag }}{{ form.salary_from }}{% if form.salary_from.errors %}<div class="jh-errorlist">{{ form.salary_from.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-required">{{ form.salary_to.label_tag }}{{ form.salary_to }}{% if form.salary_to.errors %}<div class="jh-errorlist">{{ form.salary_to.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-required">{{ form.salary_currency.label_tag }}{{ form.salary_currency }}{% if form.salary_currency.errors %}<div class="jh-errorlist">{{ form.salary_currency.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-required">{{ form.salary_tax_type.label_tag }}{{ form.salary_tax_type }}{% if form.salary_tax_type.errors %}<div class="jh-errorlist">{{ form.salary_tax_type.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-required">
+            <label for="{{ form.salary_hours_month.id_for_label }}">{{ form.salary_hours_month.label }} <span class="jh-label-note">{{ employer_t.hours_limit }}</span></label>
+            {{ form.salary_hours_month }}
+            {% if form.salary_hours_month.errors %}<div class="jh-errorlist">{{ form.salary_hours_month.errors }}</div>{% endif %}
+          </div>
+        </div>
+      </section>
+
+      <section class="jh-form-section">
+        <h2>{{ employer_t.section_details }}</h2>
+        <div class="jh-grid">
+          <div class="jh-field jh-span-all jh-required">{{ form.description.label_tag }}{{ form.description }}{% if form.description.errors %}<div class="jh-errorlist">{{ form.description.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-required">{{ form.housing_type.label_tag }}{{ form.housing_type }}{% if form.housing_type.errors %}<div class="jh-errorlist">{{ form.housing_type.errors }}</div>{% endif %}</div>
+          <div class="jh-field jh-span-all" id="housing-cost-row">
+            <label for="{{ form.housing_cost.id_for_label }}">{{ form.housing_cost.label }}</label>
+            <div class="jh-housing-cost-grid">
+              {{ form.housing_cost }}
+              {{ form.housing_cost_currency }}
+              {{ form.housing_cost_period }}
+            </div>
+            {% if form.housing_cost.errors %}<div class="jh-errorlist">{{ form.housing_cost.errors }}</div>{% endif %}
+            {% if form.housing_cost_currency.errors %}<div class="jh-errorlist">{{ form.housing_cost_currency.errors }}</div>{% endif %}
+            {% if form.housing_cost_period.errors %}<div class="jh-errorlist">{{ form.housing_cost_period.errors }}</div>{% endif %}
+          </div>
+          <div class="jh-field jh-required">{{ form.source.label_tag }}{{ form.source }}{% if form.source.errors %}<div class="jh-errorlist">{{ form.source.errors }}</div>{% endif %}</div>
+        </div>
+      </section>
+
+      <section class="jh-form-section">
+        <h2>{{ employer_t.section_contacts }}</h2>
+        <div class="jh-phone-grid">
+          <div class="jh-phone-card">
+            <div class="jh-field">{{ form.phone.label_tag }}{{ form.phone }}{% if form.phone.errors %}<div class="jh-errorlist">{{ form.phone.errors }}</div>{% endif %}</div>
+            <label class="jh-inline-check">{{ form.hide_primary_phone }}<span>{{ form.hide_primary_phone.label }}</span></label>
+            <div class="jh-messengers">
+              <label>{{ form.phone_viber }} Viber</label>
+              <label>{{ form.phone_whatsapp }} WhatsApp</label>
+            </div>
+            {% if form.hide_primary_phone.errors %}<div class="jh-errorlist">{{ form.hide_primary_phone.errors }}</div>{% endif %}
+          </div>
+          <div class="jh-phone-card">
+            <div class="jh-field">{{ form.additional_phone.label_tag }}{{ form.additional_phone }}{% if form.additional_phone.errors %}<div class="jh-errorlist">{{ form.additional_phone.errors }}</div>{% endif %}</div>
+            <div class="jh-messengers">
+              <label>{{ form.additional_phone_viber }} Viber</label>
+              <label>{{ form.additional_phone_whatsapp }} WhatsApp</label>
+            </div>
+          </div>
+          <div class="jh-phone-card">
+            <div class="jh-field">{{ form.additional_phone_2.label_tag }}{{ form.additional_phone_2 }}{% if form.additional_phone_2.errors %}<div class="jh-errorlist">{{ form.additional_phone_2.errors }}</div>{% endif %}</div>
+            <div class="jh-messengers">
+              <label>{{ form.additional_phone_2_viber }} Viber</label>
+              <label>{{ form.additional_phone_2_whatsapp }} WhatsApp</label>
+            </div>
+          </div>
+          <div class="jh-phone-card">
+            <div class="jh-field">{{ form.additional_phone_3.label_tag }}{{ form.additional_phone_3 }}{% if form.additional_phone_3.errors %}<div class="jh-errorlist">{{ form.additional_phone_3.errors }}</div>{% endif %}</div>
+            <div class="jh-messengers">
+              <label>{{ form.additional_phone_3_viber }} Viber</label>
+              <label>{{ form.additional_phone_3_whatsapp }} WhatsApp</label>
+            </div>
+          </div>
+        </div>
+        <div class="jh-telegram-grid">
+          <div class="jh-field jh-telegram-field">
+            {{ form.telegram_username_1.label_tag }}
+            <div class="jh-telegram-input"><span aria-hidden="true">@</span>{{ form.telegram_username_1 }}</div>
+            {% if form.telegram_username_1.errors %}<div class="jh-errorlist">{{ form.telegram_username_1.errors }}</div>{% endif %}
+          </div>
+          <div class="jh-field jh-telegram-field">
+            {{ form.telegram_username_2.label_tag }}
+            <div class="jh-telegram-input"><span aria-hidden="true">@</span>{{ form.telegram_username_2 }}</div>
+            {% if form.telegram_username_2.errors %}<div class="jh-errorlist">{{ form.telegram_username_2.errors }}</div>{% endif %}
+          </div>
+          <div class="jh-field jh-telegram-field">
+            {{ form.telegram_username_3.label_tag }}
+            <div class="jh-telegram-input"><span aria-hidden="true">@</span>{{ form.telegram_username_3 }}</div>
+            {% if form.telegram_username_3.errors %}<div class="jh-errorlist">{{ form.telegram_username_3.errors }}</div>{% endif %}
+          </div>
+        </div>
+        <div class="jh-field jh-email-field">{{ form.email.label_tag }}{{ form.email }}{% if form.email.errors %}<div class="jh-errorlist">{{ form.email.errors }}</div>{% endif %}</div>
+      </section>
+
+      <div class="jh-actions">
+        <button class="jh-btn" type="submit" name="save_draft" value="1">{{ employer_t.save_draft }}</button>
+        <button class="jh-btn primary" type="submit" name="submit" value="1">{{ employer_t.submit_moderation }}</button>
+        <a class="jh-btn" href="{% url 'employer:vacancy_list' %}">{{ employer_t.back }}</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}
+{% block extra_body %}
+  <script>
+    const cityCatalog = {{ city_catalog_json|safe }};
+    const countrySelect = document.getElementById("id_country");
+    const citySelect = document.getElementById("id_city");
+    const cityPlaceholder = "{{ employer_t.city_placeholder|escapejs }}";
+
+    function refreshCities() {
+      const cities = cityCatalog[countrySelect ? countrySelect.value : ""] || [];
+      const previousValue = citySelect ? citySelect.value : "";
+      if (!citySelect) return;
+      citySelect.innerHTML = "";
+      citySelect.appendChild(new Option(cityPlaceholder, ""));
+      cities.forEach((city) => {
+        citySelect.appendChild(new Option(city, city));
+      });
+      citySelect.disabled = cities.length === 0;
+      if (cities.includes(previousValue)) {
+        citySelect.value = previousValue;
+      }
+    }
+
+    if (countrySelect && citySelect) {
+      countrySelect.addEventListener("change", refreshCities);
+      refreshCities();
+    }
+
+    const housingTypeSelect = document.getElementById("id_housing_type");
+    const housingCostRow = document.getElementById("housing-cost-row");
+    const housingCostInput = document.getElementById("id_housing_cost");
+    const housingCurrencySelect = document.getElementById("id_housing_cost_currency");
+    const housingPeriodSelect = document.getElementById("id_housing_cost_period");
+
+    function refreshHousingCost() {
+      const isPaid = housingTypeSelect && housingTypeSelect.value === "paid";
+      [housingCostInput, housingCurrencySelect, housingPeriodSelect].forEach((field) => {
+        if (!field) return;
+        field.disabled = !isPaid;
+        if (!isPaid && field === housingCostInput) field.value = "";
+      });
+      if (housingCostRow) housingCostRow.classList.toggle("jh-disabled", !isPaid);
+      if (housingCostRow) housingCostRow.classList.toggle("jh-required", isPaid);
+    }
+
+    if (housingTypeSelect) {
+      housingTypeSelect.addEventListener("change", refreshHousingCost);
+      refreshHousingCost();
+    }
+
+    function updatePickerCounts() {
+      document.querySelectorAll("[data-picker]").forEach((picker) => {
+        const countEl = picker.querySelector("[data-picker-count]");
+        if (!countEl) return;
+        const checked = picker.querySelectorAll('input[type="checkbox"]:checked').length;
+        countEl.textContent = checked;
+      });
+    }
+
+    document.querySelectorAll("[data-picker]").forEach((picker) => {
+      picker.addEventListener("toggle", () => {
+        if (!picker.open) return;
+        document.querySelectorAll("[data-picker][open]").forEach((otherPicker) => {
+          if (otherPicker !== picker) otherPicker.open = false;
+        });
+      });
+      picker.addEventListener("change", updatePickerCounts);
+    });
+
+    document.addEventListener("click", (event) => {
+      document.querySelectorAll("[data-picker][open]").forEach((picker) => {
+        if (!picker.contains(event.target)) picker.open = false;
+      });
+    });
+
+    document.querySelectorAll("[data-close-picker]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const picker = button.closest("details");
+        if (picker) picker.open = false;
+      });
+    });
+
+    updatePickerCounts();
+  </script>
+{% endblock %}

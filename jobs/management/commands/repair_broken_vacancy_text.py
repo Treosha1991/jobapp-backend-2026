@@ -38,6 +38,7 @@ EDITABLE_BASELINE_FIELDS = (
     "hide_primary_phone",
     "whatsapp",
     "viber",
+    "telegram_username",
     "telegram",
     "email",
     "source",

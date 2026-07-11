@@ -26,6 +26,9 @@ from .driver_licenses import (
 from .economy import get_vacancy_contact_unlock_stats, set_wallet_balances
 from .models import (
     AccountDeletionRequest,
+    ChatConversation,
+    ChatMessage,
+    ChatReport,
     Complaint,
     ComplaintActionLog,
     EconomyConfig,
@@ -552,7 +555,8 @@ class VacancyAdmin(admin.ModelAdmin):
                         "additional_phone_3",
                         "hide_primary_phone",
                     ),
-                    ("whatsapp", "viber", "telegram"),
+                    ("whatsapp", "viber", "telegram_username", "telegram_usernames"),
+                    ("telegram",),
                     "email",
                 ),
             },
@@ -990,6 +994,142 @@ class UserBlockAdmin(admin.ModelAdmin):
     search_fields = ("blocker__username", "blocker__email", "blocked_user__username", "blocked_user__email")
     list_filter = ("created_at",)
     ordering = ("-created_at",)
+
+
+class ChatMessageInline(admin.TabularInline):
+    model = ChatMessage
+    extra = 0
+    can_delete = False
+    fields = ("sender", "body", "has_external_links", "created_at")
+    readonly_fields = fields
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ChatConversation)
+class ChatConversationAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "candidate",
+        "employer",
+        "initial_vacancy",
+        "last_message_at",
+        "created_at",
+    )
+    search_fields = (
+        "candidate__username",
+        "candidate__email",
+        "candidate__profile__nickname",
+        "employer__username",
+        "employer__email",
+        "employer__profile__nickname",
+        "initial_vacancy_title",
+    )
+    list_filter = ("created_at", "last_message_at")
+    ordering = ("-last_message_at", "-id")
+    list_select_related = ("candidate", "employer", "initial_vacancy")
+    raw_id_fields = ("candidate", "employer", "initial_vacancy")
+    readonly_fields = (
+        "initial_vacancy_title",
+        "candidate_last_read_at",
+        "employer_last_read_at",
+        "last_message_at",
+        "created_at",
+        "updated_at",
+    )
+    inlines = (ChatMessageInline,)
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(ChatMessage)
+class ChatMessageAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "conversation",
+        "sender",
+        "body_preview",
+        "has_external_links",
+        "created_at",
+    )
+    search_fields = (
+        "conversation__candidate__username",
+        "conversation__candidate__email",
+        "conversation__employer__username",
+        "conversation__employer__email",
+        "body",
+    )
+    list_filter = ("has_external_links", "created_at")
+    ordering = ("-created_at", "-id")
+    list_select_related = ("conversation", "sender")
+    raw_id_fields = ("conversation", "sender")
+    readonly_fields = ("conversation", "sender", "body", "has_external_links", "client_message_id", "created_at")
+
+    @admin.display(description="Message")
+    def body_preview(self, obj):
+        text = " ".join((obj.body or "").split())
+        return text if len(text) <= 90 else f"{text[:89]}…"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ChatReport)
+class ChatReportAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "status_badge",
+        "reason",
+        "conversation",
+        "reporter",
+        "reported_user",
+        "created_at",
+    )
+    search_fields = (
+        "conversation__candidate__username",
+        "conversation__candidate__email",
+        "conversation__employer__username",
+        "conversation__employer__email",
+        "reporter__username",
+        "reporter__email",
+        "reported_user__username",
+        "reported_user__email",
+        "message",
+    )
+    list_filter = ("status", "reason", "created_at")
+    ordering = ("-created_at", "-id")
+    list_select_related = ("conversation", "reporter", "reported_user", "reported_message", "handled_by")
+    raw_id_fields = ("conversation", "reporter", "reported_user", "reported_message", "handled_by")
+    readonly_fields = ("created_at", "updated_at")
+    actions = ("mark_in_review", "mark_resolved", "mark_rejected")
+
+    @admin.display(description="Status", ordering="status")
+    def status_badge(self, obj):
+        meta = {
+            "new": ("New", "#B54708"),
+            "in_review": ("In review", "#175CD3"),
+            "resolved": ("Resolved", "#198754"),
+            "rejected": ("Rejected", "#667085"),
+        }.get(obj.status, ("Unknown", "#667085"))
+        return _badge(meta[0], bg=meta[1])
+
+    @admin.action(description="Mark selected reports as In review")
+    def mark_in_review(self, request, queryset):
+        queryset.update(status="in_review", handled_by=request.user, handled_at=timezone.now())
+
+    @admin.action(description="Mark selected reports as Resolved")
+    def mark_resolved(self, request, queryset):
+        queryset.update(status="resolved", handled_by=request.user, handled_at=timezone.now())
+
+    @admin.action(description="Mark selected reports as Rejected")
+    def mark_rejected(self, request, queryset):
+        queryset.update(status="rejected", handled_by=request.user, handled_at=timezone.now())
 
 
 @admin.register(EmployerSubscription)

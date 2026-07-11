@@ -1287,7 +1287,10 @@ def _vacancy_editable_snapshot(vacancy):
         "hide_primary_phone": bool(vacancy.hide_primary_phone),
         "whatsapp": vacancy.whatsapp or "",
         "viber": vacancy.viber or "",
-        "telegram": vacancy.telegram or "",
+        # Do not expose the legacy phone-backed Telegram field.
+        "telegram": vacancy.telegram_username or "",
+        "telegram_username": vacancy.telegram_username or "",
+        "telegram_usernames": vacancy.telegram_usernames or [],
         "email": vacancy.email or "",
         "source": vacancy.source or "",
     }
