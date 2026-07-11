@@ -66,6 +66,14 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
             "telegram_username_1": "jobhub_employer",
         }
 
+    def test_vacancy_form_renders_all_telegram_username_fields(self):
+        response = self.client.get("/employer/vacancies/new/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="telegram_username_1"')
+        self.assertContains(response, 'name="telegram_username_2"')
+        self.assertContains(response, 'name="telegram_username_3"')
+
     def test_empty_draft_can_be_saved_from_browser(self):
         response = self.client.post("/employer/vacancies/new/", {"save_draft": "1"})
 
