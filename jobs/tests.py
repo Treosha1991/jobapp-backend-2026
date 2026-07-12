@@ -972,3 +972,47 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertFalse(service_vacancy.is_approved)
         self.assertTrue(service_vacancy.is_rejected)
         self.assertFalse(other_vacancy.is_deleted_by_moderator)
+
+
+class EmployerBoardPublishingAPITests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="board-api-employer",
+            email="board-api@example.com",
+            password="password",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.request_factory = RequestFactory()
+        self.url = "/api/employer/board-publishing/"
+
+    def test_returns_no_request_for_employer_without_authorization(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {"status": "none", "has_pending_request": False})
+
+    def test_accepts_pending_request_and_returns_private_code(self):
+        request_authorization(self.user)
+
+        response = self.client.post(
+            self.url,
+            {"action": "accept", "confirm_terms": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "active")
+        self.assertTrue(response.data["board_code"].startswith("N-"))
+        self.assertIn("authorization_text", response.data)
+
+    def test_revoke_blocks_code_but_keeps_authorization_archive(self):
+        authorization = request_authorization(self.user)
+        accept_authorization(authorization, request=self.request_factory.get("/"))
+
+        response = self.client.post(self.url, {"action": "revoke"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "revoked")
+        authorization.refresh_from_db()
+        self.assertIsNotNone(authorization.revoked_at)

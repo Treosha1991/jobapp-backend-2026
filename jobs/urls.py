@@ -26,6 +26,7 @@ from .api import (
     EmployerSubscriptionListAPIView,
     EmployerReviewModeratorListAPIView,
     EmployerSearchAPIView,
+    EmployerBoardPublishingAPIView,
     ComplaintAPIView,
     ComplaintByVacancyAPIView,
     ComplaintListAPIView,
@@ -122,6 +123,7 @@ urlpatterns = [
         name="economy-apple-complete",
     ),
     path("economy/vacancy-submission-state/", VacancySubmissionStateAPIView.as_view(), name="economy-vacancy-submission-state"),
+    path("employer/board-publishing/", EmployerBoardPublishingAPIView.as_view(), name="employer-board-publishing"),
     path("internal/import-vacancy/", InternalVacancyImportAPIView.as_view(), name="internal-import-vacancy"),
     path("internal/delete-vacancies/", InternalVacancyDeleteAPIView.as_view(), name="internal-delete-vacancies"),
 

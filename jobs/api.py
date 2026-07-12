@@ -21,7 +21,13 @@ from rest_framework.views import APIView
 
 from .alerts import dispatch_vacancy_alerts, preview_vacancy_alerts
 from .avatar_utils import avatar_public_url
-from .board_publishing import active_authorization_for_code, record_publication
+from .board_publishing import (
+    accept_authorization,
+    active_authorization_for_code,
+    authorization_payload_for_employer,
+    record_publication,
+    revoke_authorization,
+)
 from .country_choices import normalize_audience_country_codes
 from .driver_licenses import normalize_driver_license_categories
 from .economy import (
@@ -53,6 +59,7 @@ from .models import (
     ComplaintActionLog,
     EconomyConfig,
     EmployerBoardPublishingEvent,
+    EmployerBoardPublishingAuthorization,
     EmployerSubscription,
     PurchaseRecord,
     PushDevice,
@@ -711,6 +718,51 @@ class VacancyBookmarkStatusAPIView(APIView):
             {"count": len(results), "results": results},
             status=status.HTTP_200_OK,
         )
+
+
+class EmployerBoardPublishingAPIView(APIView):
+    """Employer-controlled consent for delegated JobHub publications."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(authorization_payload_for_employer(request.user))
+
+    def post(self, request):
+        authorization = EmployerBoardPublishingAuthorization.objects.filter(
+            employer=request.user
+        ).first()
+        if not authorization:
+            return Response(
+                {"error": "board_publishing_request_not_found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        action = str(request.data.get("action") or "").strip().lower()
+        if action == "accept":
+            if request.data.get("confirm_terms") is not True:
+                return Response(
+                    {"error": "board_publishing_consent_required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not accept_authorization(authorization, request=request):
+                return Response(
+                    {"error": "board_publishing_request_unavailable"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+        elif action == "revoke":
+            if not revoke_authorization(authorization, request=request):
+                return Response(
+                    {"error": "board_publishing_request_unavailable"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+        else:
+            return Response(
+                {"error": "board_publishing_action_invalid"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(authorization_payload_for_employer(request.user))
 
 
 class VacancyBlockOwnerAPIView(APIView):

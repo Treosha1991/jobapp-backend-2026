@@ -28,7 +28,10 @@
         <p class="jh-subtitle">{{ employer_t.board_active_text }}</p>
         <div class="jh-field" style="max-width:340px;">
           <label>{{ employer_t.board_private_code }}</label>
-          <input class="jh-input" readonly value="{{ authorization.board_code }}">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input id="board-code" class="jh-input" readonly value="{{ authorization.board_code }}">
+            <button class="jh-btn" type="button" onclick="navigator.clipboard.writeText(document.getElementById('board-code').value)">{{ employer_t.board_copy }}</button>
+          </div>
           <span class="jh-help">{{ employer_t.board_code_hint }}</span>
         </div>
         <p class="jh-help" style="margin-top:16px;">{{ employer_t.board_active_since }} {{ authorization.accepted_at|date:"d.m.Y H:i" }}</p>

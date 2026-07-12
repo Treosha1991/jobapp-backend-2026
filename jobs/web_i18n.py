@@ -450,17 +450,18 @@ def t(lang):
 # Supplemental labels for the employer web vacancy form. Kept separately so the
 # first web-cabinet iteration can be adjusted without rewriting the base copy.
 TRANSLATIONS["ru"].update({
-    "board_publishing": "JobHub Board",
+    "board_publishing": "Публикации с JobHub",
     "board_publishing_subtitle": "Управляйте разрешением JobHub публиковать вакансии от имени вашего профиля.",
     "board_no_request_title": "Запрос на публикацию не найден",
     "board_no_request_text": "Когда команда JobHub создаст запрос, он появится на этой странице.",
-    "board_request_title": "Разрешить публикации через JobHub Board",
+    "board_request_title": "Разрешить публикации с JobHub",
     "board_request_text": "Подтвердите разрешение только если вы действительно разрешаете JobHub публиковать вакансии от имени этого профиля.",
     "board_confirm_label": "Я прочитал(а) условия и подтверждаю разрешение.",
     "board_accept": "Подтвердить разрешение",
-    "board_active_title": "Публикации через JobHub Board включены",
+    "board_active_title": "Публикации с JobHub включены",
     "board_active_text": "JobHub может публиковать новые вакансии от имени вашего профиля по приватному коду ниже.",
     "board_private_code": "Приватный код работодателя",
+    "board_copy": "Копировать",
     "board_code_hint": "Не публикуйте этот код. Передавайте его только сотруднику JobHub, который готовит вашу вакансию.",
     "board_active_since": "Разрешение подтверждено:",
     "board_revoke": "Отозвать разрешение",
@@ -551,17 +552,18 @@ TRANSLATIONS["ru"].update({
     "driver_limit": "Можно выбрать до 3 категорий.",
 })
 TRANSLATIONS["en"].update({
-    "board_publishing": "JobHub Board",
+    "board_publishing": "Publishing with JobHub",
     "board_publishing_subtitle": "Manage permission for JobHub to publish vacancies on behalf of your employer profile.",
     "board_no_request_title": "No publishing request found",
     "board_no_request_text": "When the JobHub team creates a request, it will appear on this page.",
-    "board_request_title": "Allow publishing through JobHub Board",
+    "board_request_title": "Allow publishing with JobHub",
     "board_request_text": "Confirm only if you authorize JobHub to publish vacancies on behalf of this profile.",
     "board_confirm_label": "I have read the terms and confirm this authorization.",
     "board_accept": "Confirm authorization",
-    "board_active_title": "JobHub Board publishing is enabled",
+    "board_active_title": "Publishing with JobHub is enabled",
     "board_active_text": "JobHub can publish new vacancies on behalf of your profile using the private code below.",
     "board_private_code": "Private employer code",
+    "board_copy": "Copy",
     "board_code_hint": "Do not publish this code. Share it only with the JobHub team member preparing your vacancy.",
     "board_active_since": "Authorization confirmed:",
     "board_revoke": "Revoke authorization",
@@ -652,17 +654,18 @@ TRANSLATIONS["en"].update({
     "driver_limit": "Select up to 3 categories.",
 })
 TRANSLATIONS["pl"].update({
-    "board_publishing": "JobHub Board",
+    "board_publishing": "Publikacje z JobHub",
     "board_publishing_subtitle": "Zarządzaj zgodą na publikowanie ofert przez JobHub w imieniu Twojego profilu pracodawcy.",
     "board_no_request_title": "Nie znaleziono prośby o publikację",
     "board_no_request_text": "Gdy zespół JobHub utworzy prośbę, pojawi się ona na tej stronie.",
-    "board_request_title": "Zezwól na publikacje przez JobHub Board",
+    "board_request_title": "Zezwól na publikacje z JobHub",
     "board_request_text": "Potwierdź tylko wtedy, gdy upoważniasz JobHub do publikowania ofert w imieniu tego profilu.",
     "board_confirm_label": "Zapoznałem(-am) się z warunkami i potwierdzam upoważnienie.",
     "board_accept": "Potwierdź upoważnienie",
-    "board_active_title": "Publikowanie przez JobHub Board jest włączone",
+    "board_active_title": "Publikacje z JobHub są włączone",
     "board_active_text": "JobHub może publikować nowe oferty w imieniu Twojego profilu przy użyciu prywatnego kodu poniżej.",
     "board_private_code": "Prywatny kod pracodawcy",
+    "board_copy": "Kopiuj",
     "board_code_hint": "Nie publikuj tego kodu. Przekaż go tylko pracownikowi JobHub przygotowującemu ofertę.",
     "board_active_since": "Upoważnienie potwierdzone:",
     "board_revoke": "Cofnij upoważnienie",
@@ -753,17 +756,18 @@ TRANSLATIONS["pl"].update({
     "driver_limit": "Możesz wybrać do 3 kategorii.",
 })
 TRANSLATIONS["uk"].update({
-    "board_publishing": "JobHub Board",
+    "board_publishing": "Публікації з JobHub",
     "board_publishing_subtitle": "Керуйте дозволом JobHub публікувати вакансії від імені вашого профілю роботодавця.",
     "board_no_request_title": "Запит на публікацію не знайдено",
     "board_no_request_text": "Коли команда JobHub створить запит, він з'явиться на цій сторінці.",
-    "board_request_title": "Дозволити публікації через JobHub Board",
+    "board_request_title": "Дозволити публікації з JobHub",
     "board_request_text": "Підтвердіть лише якщо ви дозволяєте JobHub публікувати вакансії від імені цього профілю.",
     "board_confirm_label": "Я прочитав(-ла) умови та підтверджую цей дозвіл.",
     "board_accept": "Підтвердити дозвіл",
-    "board_active_title": "Публікації через JobHub Board увімкнено",
+    "board_active_title": "Публікації з JobHub увімкнено",
     "board_active_text": "JobHub може публікувати нові вакансії від імені вашого профілю за приватним кодом нижче.",
     "board_private_code": "Приватний код роботодавця",
+    "board_copy": "Копіювати",
     "board_code_hint": "Не публікуйте цей код. Передавайте його лише співробітнику JobHub, який готує вашу вакансію.",
     "board_active_since": "Дозвіл підтверджено:",
     "board_revoke": "Відкликати дозвіл",
@@ -957,7 +961,7 @@ def employer_i18n(request):
 
         wallet_total = get_or_create_wallet(request.user).total_credits
         from .chat_api import _unread_counts
-        from .models import ChatConversation
+        from .models import ChatConversation, EmployerBoardPublishingAuthorization
 
         conversations = list(
             ChatConversation.objects.filter(employer=request.user, last_message_at__isnull=False).only(
@@ -965,12 +969,18 @@ def employer_i18n(request):
             )
         )
         chat_unread_count = sum(_unread_counts(conversations, request.user).values())
+        board_publishing_pending = EmployerBoardPublishingAuthorization.objects.filter(
+            employer=request.user,
+            status="pending",
+        ).exists()
     else:
         chat_unread_count = 0
+        board_publishing_pending = False
     return {
         "employer_t": t(lang),
         "employer_wallet_total": wallet_total,
         "employer_chat_unread_count": chat_unread_count,
+        "employer_board_publishing_pending": board_publishing_pending,
         "employer_languages": [
             {
                 "code": code,

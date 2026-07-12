@@ -34,6 +34,7 @@ from .avatar_utils import (
 )
 from .economy import get_or_create_monetization_profile, get_or_create_wallet
 from .models import AccountDeletionRequest, EmailVerification, PhoneVerification, PhoneVerificationAttempt, UserProfile, Vacancy
+from .board_publishing import authorization_payload_for_employer
 from .reviews import get_employer_review_summary
 from .text_filters import (
     censor_minimal,
@@ -171,6 +172,7 @@ def _auth_payload(user, token):
         "employer_subscription_until": monetization_profile.employer_subscription_until,
         "seeker_subscription_until": monetization_profile.seeker_subscription_until,
         "employer_review_summary": get_employer_review_summary(user),
+        "board_publishing": authorization_payload_for_employer(user),
     }
 
 

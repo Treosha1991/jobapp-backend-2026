@@ -105,6 +105,34 @@ def active_authorization_for_code(raw_code):
     )
 
 
+def authorization_payload_for_employer(employer):
+    """Return the safe authorization state shown in the app and web cabinet."""
+    authorization = EmployerBoardPublishingAuthorization.objects.filter(
+        employer=employer
+    ).first()
+    if not authorization:
+        return {"status": "none", "has_pending_request": False}
+
+    payload = {
+        "status": authorization.status,
+        "has_pending_request": authorization.status == "pending",
+        "requested_at": authorization.requested_at.isoformat()
+        if authorization.requested_at
+        else None,
+        "accepted_at": authorization.accepted_at.isoformat()
+        if authorization.accepted_at
+        else None,
+        "revoked_at": authorization.revoked_at.isoformat()
+        if authorization.revoked_at
+        else None,
+    }
+    if authorization.status in {"pending", "active"}:
+        payload["authorization_text"] = AUTHORIZATION_TEXT
+    if authorization.status == "active":
+        payload["board_code"] = authorization.board_code
+    return payload
+
+
 def record_publication(authorization, vacancy):
     return EmployerBoardPublishingEvent.objects.create(
         authorization=authorization,
