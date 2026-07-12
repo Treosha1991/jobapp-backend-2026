@@ -6,7 +6,10 @@ from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
+from django.conf import settings
+from django.core.mail import send_mail
 from django.db.models import Count
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
@@ -24,6 +27,7 @@ from .driver_licenses import (
     encode_driver_license_categories,
 )
 from .economy import get_vacancy_contact_unlock_stats, set_wallet_balances
+from .board_publishing import request_authorization
 from .models import (
     AccountDeletionRequest,
     ChatConversation,
@@ -33,6 +37,8 @@ from .models import (
     ComplaintActionLog,
     EconomyConfig,
     EmailVerification,
+    EmployerBoardPublishingAuthorization,
+    EmployerBoardPublishingEvent,
     EmployerSubscription,
     PhoneVerification,
     PhoneVerificationAttempt,
@@ -827,6 +833,7 @@ class UserProfileAdmin(admin.ModelAdmin):
         "phone_e164",
         "phone_verified_badge",
         "employer_verified_badge",
+        "board_publishing_badge",
         "has_avatar_badge",
         "avatar_updated_at",
     )
@@ -834,7 +841,11 @@ class UserProfileAdmin(admin.ModelAdmin):
     list_filter = ("phone_verified", "employer_verified")
     list_select_related = ("user",)
     ordering = ("user__username",)
-    actions = ("mark_employers_verified", "remove_employer_verification")
+    actions = (
+        "mark_employers_verified",
+        "remove_employer_verification",
+        "request_board_publishing_authorization",
+    )
 
     @admin.display(description="Nickname", ordering="nickname")
     def nickname_display(self, obj):
@@ -848,6 +859,18 @@ class UserProfileAdmin(admin.ModelAdmin):
     def employer_verified_badge(self, obj):
         return _bool_badge(obj.employer_verified, "Verified", "Not verified")
 
+    @admin.display(description="JobHub Board")
+    def board_publishing_badge(self, obj):
+        authorization = getattr(obj.user, "board_publishing_authorization", None)
+        if not authorization:
+            return _muted("No request")
+        meta = {
+            "pending": ("Pending", "#B54708"),
+            "active": ("Active", "#198754"),
+            "revoked": ("Revoked", "#B42318"),
+        }.get(authorization.status, ("Unknown", "#667085"))
+        return _badge(meta[0], bg=meta[1])
+
     @admin.action(description="Mark selected employers as verified")
     def mark_employers_verified(self, request, queryset):
         updated = queryset.update(employer_verified=True)
@@ -858,9 +881,117 @@ class UserProfileAdmin(admin.ModelAdmin):
         updated = queryset.update(employer_verified=False)
         self.message_user(request, f"Employer verification removed from {updated} profile(s).")
 
+    @admin.action(description="Request JobHub Board publishing authorization")
+    def request_board_publishing_authorization(self, request, queryset):
+        requested = 0
+        emailed = 0
+        failed_email = 0
+        page_url = request.build_absolute_uri(reverse("employer:board_publishing"))
+        for profile in queryset.select_related("user"):
+            authorization = request_authorization(profile.user, requested_by=request.user)
+            if authorization.status == "active":
+                continue
+            requested += 1
+            email = (profile.user.email or "").strip()
+            if not email:
+                continue
+            try:
+                send_mail(
+                    "JobHub: publishing authorization request",
+                    (
+                        "JobHub has requested permission to publish vacancies on behalf "
+                        f"of your employer profile. Sign in and review the request: {page_url}"
+                    ),
+                    settings.DEFAULT_FROM_EMAIL,
+                    [email],
+                    fail_silently=False,
+                )
+                emailed += 1
+            except Exception:
+                failed_email += 1
+        self.message_user(
+            request,
+            f"Created or renewed {requested} request(s); email sent: {emailed}; email failed: {failed_email}.",
+        )
+
     @admin.display(description="Avatar")
     def has_avatar_badge(self, obj):
         return _bool_badge(bool((obj.avatar_key or "").strip()), "Uploaded", "Missing")
+
+
+@admin.register(EmployerBoardPublishingAuthorization)
+class EmployerBoardPublishingAuthorizationAdmin(admin.ModelAdmin):
+    list_display = (
+        "board_code",
+        "employer",
+        "status_badge",
+        "requested_by",
+        "requested_at",
+        "accepted_at",
+        "revoked_at",
+    )
+    list_filter = ("status", "requested_at", "accepted_at", "revoked_at")
+    search_fields = (
+        "board_code",
+        "employer__username",
+        "employer__email",
+        "employer__profile__nickname",
+    )
+    list_select_related = ("employer", "employer__profile", "requested_by")
+    raw_id_fields = ("employer", "requested_by")
+    readonly_fields = (
+        "board_code",
+        "requested_at",
+        "accepted_at",
+        "accepted_ip",
+        "accepted_user_agent",
+        "revoked_at",
+        "revoked_ip",
+        "authorization_version",
+        "authorization_text",
+    )
+    fieldsets = (
+        ("Employer", {"fields": ("employer", "status", "board_code", "requested_by")}),
+        (
+            "Archive",
+            {
+                "fields": (
+                    "requested_at",
+                    "accepted_at",
+                    "accepted_ip",
+                    "accepted_user_agent",
+                    "revoked_at",
+                    "revoked_ip",
+                    "authorization_version",
+                    "authorization_text",
+                )
+            },
+        ),
+    )
+
+    @admin.display(description="Status")
+    def status_badge(self, obj):
+        meta = {
+            "pending": ("Pending", "#B54708"),
+            "active": ("Active", "#198754"),
+            "revoked": ("Revoked", "#B42318"),
+        }.get(obj.status, ("Unknown", "#667085"))
+        return _badge(meta[0], bg=meta[1])
+
+
+@admin.register(EmployerBoardPublishingEvent)
+class EmployerBoardPublishingEventAdmin(admin.ModelAdmin):
+    list_display = ("id", "authorization", "action", "vacancy", "performed_by", "created_at")
+    list_filter = ("action", "created_at")
+    search_fields = (
+        "authorization__board_code",
+        "authorization__employer__username",
+        "authorization__employer__email",
+        "vacancy__title",
+    )
+    list_select_related = ("authorization", "authorization__employer", "vacancy", "performed_by")
+    raw_id_fields = ("authorization", "vacancy", "performed_by")
+    readonly_fields = ("authorization", "action", "vacancy", "performed_by", "details", "created_at")
 
 
 @admin.register(PhoneVerification)

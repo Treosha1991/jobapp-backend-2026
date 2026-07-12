@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import patch
@@ -12,6 +12,8 @@ from .models import (
     ChatConversation,
     ChatMessage,
     ChatReport,
+    EmployerBoardPublishingAuthorization,
+    EmployerBoardPublishingEvent,
     ModeratorNotificationDelivery,
     PushDevice,
     UserProfile,
@@ -19,6 +21,7 @@ from .models import (
     VacancyContactAccessPolicy,
     VacancyModerationAttempt,
 )
+from .board_publishing import accept_authorization, request_authorization, revoke_authorization
 from .service_sources import SERVICE_BOARD_USERNAME
 
 
@@ -176,6 +179,35 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
         self.assertContains(response, 'name="telegram_username_1"')
         self.assertContains(response, 'name="telegram_username_2"')
         self.assertContains(response, 'name="telegram_username_3"')
+
+    def test_employer_can_accept_and_revoke_board_publishing_request(self):
+        authorization = request_authorization(self.employer)
+
+        response = self.client.get("/employer/jobhub-board/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Allow publishing through JobHub Board")
+
+        accepted = self.client.post(
+            "/employer/jobhub-board/",
+            {"action": "accept", "confirm_terms": "1"},
+        )
+        self.assertEqual(accepted.status_code, 302)
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.status, "active")
+        self.assertIsNotNone(authorization.accepted_at)
+        active_page = self.client.get("/employer/jobhub-board/")
+        self.assertContains(active_page, authorization.board_code)
+
+        revoked = self.client.post("/employer/jobhub-board/", {"action": "revoke"})
+        self.assertEqual(revoked.status_code, 302)
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.status, "revoked")
+        self.assertTrue(
+            EmployerBoardPublishingEvent.objects.filter(
+                authorization=authorization,
+                action="revoked",
+            ).exists()
+        )
 
     def test_edit_form_keeps_city_that_is_missing_from_the_current_catalog(self):
         vacancy = Vacancy.objects.create(
@@ -695,6 +727,7 @@ class ContactAccessPolicyTests(TestCase):
 class InternalVacancyImportAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.request_factory = RequestFactory()
         self.url = "/api/internal/import-vacancy/"
         self.payload = {
             "title": "Warehouse worker",
@@ -754,6 +787,67 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertIn("Important details stay visible.", vacancy.description)
         self.assertEqual(vacancy.telegram_username, "jobhub_test")
         self.assertFalse(VacancyModerationAttempt.objects.filter(vacancy=vacancy).exists())
+
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    def test_publishes_for_employer_with_active_private_board_code(self):
+        employer = User.objects.create_user(
+            username="delegated-employer",
+            email="delegated@example.com",
+            password="password",
+        )
+        UserProfile.objects.create(user=employer)
+        authorization = request_authorization(employer)
+        accepted = accept_authorization(
+            authorization,
+            request=self.request_factory.get("/"),
+        )
+        self.assertTrue(accepted)
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.status, "active")
+
+        response = self.client.post(
+            self.url,
+            {**self.payload, "employer_board_code": authorization.board_code},
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        vacancy = Vacancy.objects.get(id=response.data["vacancy_id"])
+        self.assertEqual(vacancy.created_by, employer)
+        self.assertTrue(vacancy.is_approved)
+        self.assertEqual(response.data["published_for_employer_id"], employer.id)
+        self.assertTrue(
+            EmployerBoardPublishingEvent.objects.filter(
+                authorization=authorization,
+                vacancy=vacancy,
+                action="published",
+            ).exists()
+        )
+
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    def test_rejects_revoked_employer_board_code(self):
+        employer = User.objects.create_user(username="revoked-employer", password="password")
+        authorization = EmployerBoardPublishingAuthorization.objects.create(
+            employer=employer,
+            status="active",
+        )
+        self.assertTrue(
+            revoke_authorization(
+                authorization,
+                request=self.request_factory.get("/"),
+            )
+        )
+
+        response = self.client.post(
+            self.url,
+            {**self.payload, "employer_board_code": authorization.board_code},
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["error"], "employer_board_authorization_inactive")
 
     @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
     def test_legacy_telegram_phone_is_not_promoted_to_public_username(self):

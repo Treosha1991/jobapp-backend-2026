@@ -21,6 +21,7 @@ from rest_framework.views import APIView
 
 from .alerts import dispatch_vacancy_alerts, preview_vacancy_alerts
 from .avatar_utils import avatar_public_url
+from .board_publishing import active_authorization_for_code, record_publication
 from .country_choices import normalize_audience_country_codes
 from .driver_licenses import normalize_driver_license_categories
 from .economy import (
@@ -51,6 +52,7 @@ from .models import (
     Complaint,
     ComplaintActionLog,
     EconomyConfig,
+    EmployerBoardPublishingEvent,
     EmployerSubscription,
     PurchaseRecord,
     PushDevice,
@@ -898,6 +900,22 @@ class InternalVacancyImportAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        delegated_authorization = None
+        raw_employer_board_code = request.data.get("employer_board_code")
+        if raw_employer_board_code not in (None, "") and not isinstance(raw_employer_board_code, str):
+            return Response(
+                {"error": "invalid_employer_board_code"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        employer_board_code = (raw_employer_board_code or "").strip()
+        if employer_board_code:
+            delegated_authorization = active_authorization_for_code(employer_board_code)
+            if not delegated_authorization:
+                return Response(
+                    {"error": "employer_board_authorization_inactive"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
         serializer = InternalVacancyImportSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -913,12 +931,15 @@ class InternalVacancyImportAPIView(APIView):
         if created:
             service_user.set_unusable_password()
             service_user.save(update_fields=["password"])
+        vacancy_owner = (
+            delegated_authorization.employer if delegated_authorization else service_user
+        )
 
         duplicate = None
         if title and city and phone:
             duplicate = (
                 Vacancy.objects.filter(
-                    created_by=service_user,
+                    created_by=vacancy_owner,
                     title=title,
                     city=city,
                     phone=phone,
@@ -943,7 +964,9 @@ class InternalVacancyImportAPIView(APIView):
         requested_moderation_status = (
             request.data.get("moderation_status") or ""
         ).strip().lower()
-        create_pending = requested_moderation_status == "pending"
+        # Employer-authorized JobHub Board publications are validated by the
+        # Board workflow and therefore bypass the general moderation queue.
+        create_pending = requested_moderation_status == "pending" and not delegated_authorization
         extra_context = {
             "import_source": "internal_import",
             "source_url": source_url,
@@ -953,7 +976,7 @@ class InternalVacancyImportAPIView(APIView):
 
         with transaction.atomic():
             vacancy = serializer.save(
-                created_by=service_user,
+                created_by=vacancy_owner,
                 creator_token=secrets.token_hex(32),
                 approved_at=None if create_pending else now,
                 expires_at=now + VACANCY_LIVE_WINDOW,
@@ -987,6 +1010,8 @@ class InternalVacancyImportAPIView(APIView):
                     "set_by": service_user,
                 },
             )
+            if delegated_authorization:
+                record_publication(delegated_authorization, vacancy)
 
         if create_pending:
             transaction.on_commit(lambda: _notify_moderators_about_pending_vacancy_safe(vacancy))
@@ -1003,6 +1028,7 @@ class InternalVacancyImportAPIView(APIView):
                 "status": "created",
                 "vacancy_id": vacancy.id,
                 "moderation_status": vacancy.moderation_status,
+                "published_for_employer_id": vacancy_owner.id,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -1045,19 +1071,25 @@ class InternalVacancyDeleteAPIView(APIView):
                 vacancy_ids.append(vacancy_id)
 
         service_user = User.objects.filter(username=SERVICE_BOARD_USERNAME).first()
-        if not service_user:
+        delegated_ids = set(
+            EmployerBoardPublishingEvent.objects.filter(
+                vacancy_id__in=vacancy_ids,
+                action="published",
+            ).values_list("vacancy_id", flat=True)
+        )
+        if not service_user and not delegated_ids:
             return Response({"deleted": [], "skipped": vacancy_ids}, status=status.HTTP_200_OK)
 
         now = timezone.now()
         deleted = []
         with transaction.atomic():
+            allowed_filter = Q(id__in=delegated_ids)
+            if service_user:
+                allowed_filter |= Q(created_by=service_user)
             vacancies = (
                 Vacancy.objects.select_for_update()
-                .filter(
-                    id__in=vacancy_ids,
-                    created_by=service_user,
-                    is_deleted_by_moderator=False,
-                )
+                .filter(id__in=vacancy_ids, is_deleted_by_moderator=False)
+                .filter(allowed_filter)
                 .order_by("id")
             )
             for vacancy in vacancies:

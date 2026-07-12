@@ -1,0 +1,48 @@
+{% extends "employer/base.html" %}
+{% block title %}{{ employer_t.board_publishing }} - JobHub{% endblock %}
+{% block content %}
+  <section class="jh-card" style="max-width:820px;">
+    <h1 class="jh-title">{{ employer_t.board_publishing }}</h1>
+    <p class="jh-subtitle">{{ employer_t.board_publishing_subtitle }}</p>
+
+    {% if not authorization %}
+      <div class="jh-message">
+        <strong>{{ employer_t.board_no_request_title }}</strong><br>
+        {{ employer_t.board_no_request_text }}
+      </div>
+    {% elif authorization.status == 'pending' %}
+      <div class="jh-form-section">
+        <h2>{{ employer_t.board_request_title }}</h2>
+        <p class="jh-subtitle">{{ employer_t.board_request_text }}</p>
+        <div class="jh-message" style="margin-bottom:14px;white-space:pre-line;">{{ authorization_text }}</div>
+        <form method="post" class="jh-field">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="accept">
+          <label class="jh-inline-check"><input class="jh-checkbox" type="checkbox" name="confirm_terms" value="1">{{ employer_t.board_confirm_label }}</label>
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.board_accept }}</button></div>
+        </form>
+      </div>
+    {% elif authorization.status == 'active' %}
+      <div class="jh-form-section">
+        <h2>{{ employer_t.board_active_title }}</h2>
+        <p class="jh-subtitle">{{ employer_t.board_active_text }}</p>
+        <div class="jh-field" style="max-width:340px;">
+          <label>{{ employer_t.board_private_code }}</label>
+          <input class="jh-input" readonly value="{{ authorization.board_code }}">
+          <span class="jh-help">{{ employer_t.board_code_hint }}</span>
+        </div>
+        <p class="jh-help" style="margin-top:16px;">{{ employer_t.board_active_since }} {{ authorization.accepted_at|date:"d.m.Y H:i" }}</p>
+        <form method="post" class="jh-actions" onsubmit="return confirm('{{ employer_t.board_revoke_confirm|escapejs }}');">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="revoke">
+          <button class="jh-btn danger" type="submit">{{ employer_t.board_revoke }}</button>
+        </form>
+      </div>
+    {% else %}
+      <div class="jh-message">
+        <strong>{{ employer_t.board_revoked_title }}</strong><br>
+        {{ employer_t.board_revoked_text }}
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

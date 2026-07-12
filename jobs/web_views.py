@@ -31,6 +31,11 @@ from .chat_api import (
     _user_avatar_url,
     _user_display_name,
 )
+from .board_publishing import (
+    AUTHORIZATION_TEXT,
+    accept_authorization,
+    revoke_authorization,
+)
 from .auth_api import (
     _create_phone_code,
     _normalize_phone,
@@ -51,7 +56,16 @@ from .economy import (
     build_vacancy_submission_state,
     ensure_free_contact_policy,
 )
-from .models import ChatConversation, ChatMessage, ChatReport, PhoneVerification, UserBlock, UserProfile, Vacancy
+from .models import (
+    ChatConversation,
+    ChatMessage,
+    ChatReport,
+    EmployerBoardPublishingAuthorization,
+    PhoneVerification,
+    UserBlock,
+    UserProfile,
+    Vacancy,
+)
 from .serializers import chat_message_has_external_links
 from .city_catalog import CITY_CATALOG
 from .web_forms import EmployerVacancyForm
@@ -652,6 +666,39 @@ def vacancy_list(request):
         status_key, status_kind = _vacancy_status(vacancy)
         rows.append({"vacancy": vacancy, "status_label": tr(request, status_key), "status_kind": status_kind})
     return render(request, "employer/vacancy_list.html", {"rows": rows})
+
+
+@login_required(login_url="employer:login")
+def board_publishing(request):
+    """Employer-facing confirmation and revocation for JobHub Board."""
+    authorization = EmployerBoardPublishingAuthorization.objects.filter(
+        employer=request.user
+    ).first()
+
+    if request.method == "POST" and authorization:
+        action = (request.POST.get("action") or "").strip()
+        if action == "accept":
+            if request.POST.get("confirm_terms") != "1":
+                messages.error(request, tr(request, "board_consent_required"))
+            elif accept_authorization(authorization, request=request):
+                messages.success(request, tr(request, "board_authorization_active"))
+            else:
+                messages.error(request, tr(request, "board_request_unavailable"))
+        elif action == "revoke":
+            if revoke_authorization(authorization, request=request):
+                messages.success(request, tr(request, "board_authorization_revoked"))
+            else:
+                messages.error(request, tr(request, "board_request_unavailable"))
+        return redirect("employer:board_publishing")
+
+    return render(
+        request,
+        "employer/board_publishing.html",
+        {
+            "authorization": authorization,
+            "authorization_text": AUTHORIZATION_TEXT,
+        },
+    )
 
 
 @login_required(login_url="employer:login")

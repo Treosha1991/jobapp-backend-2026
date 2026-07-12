@@ -154,6 +154,7 @@
           <span class="jh-wallet"><span>{{ employer_t.wallet_balance }}</span><strong>{{ employer_wallet_total|default:0 }}</strong><span>{{ employer_t.credits }}</span></span>
           <a class="jh-btn" href="{% url 'employer:chat_list' %}">{{ employer_t.chats }}{% if employer_chat_unread_count %}<span class="jh-chat-badge">{{ employer_chat_unread_count }}</span>{% endif %}</a>
           <a class="jh-btn" href="{% url 'employer:vacancy_list' %}">{{ employer_t.my_vacancies }}</a>
+          <a class="jh-btn" href="{% url 'employer:board_publishing' %}">{{ employer_t.board_publishing }}</a>
           <a class="jh-btn primary" href="{% url 'employer:vacancy_create' %}">{{ employer_t.add_vacancy }}</a>
           <form method="post" action="{% url 'employer:logout' %}" style="margin:0">{% csrf_token %}<button class="jh-btn" type="submit">{{ employer_t.logout }}</button></form>
         {% endif %}

@@ -9,6 +9,7 @@ urlpatterns = [
     path("login/", web_views.EmployerLoginView.as_view(), name="login"),
     path("password-reset/", web_views.password_reset, name="password_reset"),
     path("chats/", web_views.chat_list, name="chat_list"),
+    path("jobhub-board/", web_views.board_publishing, name="board_publishing"),
     path("chats/<int:conversation_id>/", web_views.chat_detail, name="chat_detail"),
     path("language/<str:lang>/", web_views.set_language, name="set_language"),
     path("logout/", web_views.EmployerLogoutView.as_view(), name="logout"),

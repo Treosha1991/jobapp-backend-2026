@@ -1,4 +1,5 @@
 from decimal import Decimal
+import secrets
 
 from django.db import models
 from django.contrib.auth.models import User
@@ -752,6 +753,107 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"UserProfile {self.user.username}"
+
+
+class EmployerBoardPublishingAuthorization(models.Model):
+    """A private, revocable permission to publish through JobHub Board."""
+
+    STATUS_CHOICES = [
+        ("pending", "Awaiting employer confirmation"),
+        ("active", "Active"),
+        ("revoked", "Revoked by employer"),
+    ]
+
+    employer = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="board_publishing_authorization",
+    )
+    # This code is only for JobHub operators and the employer. It is never
+    # included in public vacancy responses.
+    board_code = models.CharField(max_length=16, unique=True, editable=False)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="pending")
+    requested_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="requested_board_publishing_authorizations",
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+    accepted_at = models.DateTimeField(blank=True, null=True)
+    accepted_ip = models.GenericIPAddressField(blank=True, null=True)
+    accepted_user_agent = models.CharField(max_length=500, blank=True, default="")
+    revoked_at = models.DateTimeField(blank=True, null=True)
+    revoked_ip = models.GenericIPAddressField(blank=True, null=True)
+    authorization_version = models.CharField(max_length=32, blank=True, default="")
+    authorization_text = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "updated_at"])]
+
+    @staticmethod
+    def generate_board_code():
+        # Random, non-sequential codes prevent one employer from guessing
+        # another employer's JobHub Board publishing identifier.
+        return f"N-{secrets.randbelow(900000) + 100000}"
+
+    def save(self, *args, **kwargs):
+        if not self.board_code:
+            for _ in range(20):
+                candidate = self.generate_board_code()
+                if not type(self).objects.filter(board_code=candidate).exists():
+                    self.board_code = candidate
+                    break
+            if not self.board_code:
+                raise RuntimeError("Could not generate unique JobHub Board code")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Board authorization {self.board_code} for user={self.employer_id} ({self.status})"
+
+
+class EmployerBoardPublishingEvent(models.Model):
+    ACTION_CHOICES = [
+        ("requested", "Request created"),
+        ("accepted", "Employer accepted"),
+        ("revoked", "Employer revoked"),
+        ("published", "Vacancy published"),
+    ]
+
+    authorization = models.ForeignKey(
+        EmployerBoardPublishingAuthorization,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    action = models.CharField(max_length=16, choices=ACTION_CHOICES)
+    vacancy = models.ForeignKey(
+        Vacancy,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="board_publishing_events",
+    )
+    performed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="board_publishing_events_performed",
+    )
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["authorization", "created_at"]),
+            models.Index(fields=["vacancy", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Board event {self.action} authorization={self.authorization_id}"
 
 
 class PhoneVerification(models.Model):
