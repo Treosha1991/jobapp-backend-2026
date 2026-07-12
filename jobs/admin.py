@@ -125,6 +125,18 @@ class VacancyAdminForm(forms.ModelForm):
                 message = "Invalid driver license categories."
             raise forms.ValidationError(message) from exc
 
+    def clean(self):
+        cleaned_data = super().clean()
+        pinned_from = cleaned_data.get("pinned_from")
+        pinned_until = cleaned_data.get("pinned_until")
+        if bool(pinned_from) != bool(pinned_until):
+            raise forms.ValidationError(
+                "Set both pin start and pin end, or leave both empty."
+            )
+        if pinned_from and pinned_until and pinned_until <= pinned_from:
+            raise forms.ValidationError("Pin end must be later than pin start.")
+        return cleaned_data
+
 
 def _badge(label, *, bg, fg="#FFFFFF"):
     return format_html(
@@ -217,6 +229,14 @@ def _vacancy_status_meta(obj):
     if obj.is_approved:
         return ("Live", "#198754")
     return ("Pending", "#7A5AF8")
+
+
+def _vacancy_promotion_meta(obj):
+    return {
+        "vip": ("VIP", "#9A7B33"),
+        "premium": ("Premium", "#9A7B33"),
+        "urgent": ("Urgent", "#B05A3C"),
+    }.get((obj.promotion_kind or "").strip().lower(), ("Standard", "#667085"))
 
 
 def _complaint_status_meta(value):
@@ -463,6 +483,8 @@ class VacancyAdmin(admin.ModelAdmin):
         "id",
         "title",
         "status_badge",
+        "promotion_badge",
+        "pin_badge",
         "owner_display",
         "location_display",
         "category",
@@ -483,6 +505,9 @@ class VacancyAdmin(admin.ModelAdmin):
         "is_paused_by_owner",
         "is_editing",
         "is_deleted_by_moderator",
+        "promotion_kind",
+        "pinned_from",
+        "pinned_until",
     )
     search_fields = (
         "title",
@@ -511,6 +536,15 @@ class VacancyAdmin(admin.ModelAdmin):
         "editing_started_at",
         "deleted_by_moderator_at",
         "last_owner_resume_at",
+        "promotion_badge",
+        "pin_badge",
+    )
+    actions = (
+        "pin_for_1_day",
+        "pin_for_3_days",
+        "pin_for_7_days",
+        "pin_for_14_days",
+        "clear_pin",
     )
     fieldsets = (
         (
@@ -559,6 +593,17 @@ class VacancyAdmin(admin.ModelAdmin):
                     ("whatsapp", "viber", "telegram_username", "telegram_usernames"),
                     ("telegram",),
                     "email",
+                ),
+            },
+        ),
+        (
+            "Feed promotion",
+            {
+                "classes": ("collapse",),
+                "fields": (
+                    "promotion_kind",
+                    ("pinned_from", "pinned_until"),
+                    ("promotion_badge", "pin_badge"),
                 ),
             },
         ),
@@ -662,6 +707,50 @@ class VacancyAdmin(admin.ModelAdmin):
     def status_badge(self, obj):
         label, color = _vacancy_status_meta(obj)
         return _badge(label, bg=color)
+
+    @admin.display(description="Promotion")
+    def promotion_badge(self, obj):
+        label, color = _vacancy_promotion_meta(obj)
+        return _badge(label, bg=color)
+
+    @admin.display(description="Pinned")
+    def pin_badge(self, obj):
+        if obj.is_pinned_now():
+            return _badge("Pinned now", bg="#356E9A")
+        if obj.pinned_from and obj.pinned_until:
+            return _muted(
+                f"Scheduled: {obj.pinned_from:%d.%m %H:%M} - {obj.pinned_until:%d.%m %H:%M}"
+            )
+        return _muted("Not pinned")
+
+    def _pin_for_duration(self, request, queryset, duration_days):
+        now = timezone.now()
+        updated = queryset.update(
+            pinned_from=now,
+            pinned_until=now + timedelta(days=duration_days),
+        )
+        self.message_user(request, f"Pinned {updated} vacancy(s) for {duration_days} day(s).")
+
+    @admin.action(description="Pin selected vacancies for 1 day")
+    def pin_for_1_day(self, request, queryset):
+        self._pin_for_duration(request, queryset, 1)
+
+    @admin.action(description="Pin selected vacancies for 3 days")
+    def pin_for_3_days(self, request, queryset):
+        self._pin_for_duration(request, queryset, 3)
+
+    @admin.action(description="Pin selected vacancies for 7 days")
+    def pin_for_7_days(self, request, queryset):
+        self._pin_for_duration(request, queryset, 7)
+
+    @admin.action(description="Pin selected vacancies for 14 days")
+    def pin_for_14_days(self, request, queryset):
+        self._pin_for_duration(request, queryset, 14)
+
+    @admin.action(description="Remove pin from selected vacancies")
+    def clear_pin(self, request, queryset):
+        updated = queryset.update(pinned_from=None, pinned_until=None)
+        self.message_user(request, f"Removed pin from {updated} vacancy(s).")
 
     @admin.display(description="Owner", ordering="created_by__username")
     def owner_display(self, obj):

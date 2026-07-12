@@ -508,7 +508,17 @@ class VacancyListAPIView(generics.ListAPIView):
             "contact_access_policy",
             "created_by",
             "created_by__profile",
-        ).order_by("-published_at")
+        ).annotate(
+            is_pinned=Case(
+                When(
+                    pinned_from__lte=current_time,
+                    pinned_until__gt=current_time,
+                    then=Value(1),
+                ),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        ).order_by("-is_pinned", "-published_at")
 
         country = self.request.query_params.get("country")
         city = self.request.query_params.get("city")

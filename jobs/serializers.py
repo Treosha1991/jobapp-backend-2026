@@ -353,6 +353,7 @@ class VacancyListSerializer(serializers.ModelSerializer):
     employer_verified = serializers.SerializerMethodField()
     is_service_board = serializers.SerializerMethodField()
     service_board_kind = serializers.SerializerMethodField()
+    is_pinned = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -388,6 +389,8 @@ class VacancyListSerializer(serializers.ModelSerializer):
             "employer_verified",
             "is_service_board",
             "service_board_kind",
+            "promotion_kind",
+            "is_pinned",
         ]
 
     def get_contacts(self, obj):
@@ -432,6 +435,12 @@ class VacancyListSerializer(serializers.ModelSerializer):
 
     def get_service_board_kind(self, obj):
         return _service_board_meta(obj)["service_board_kind"]
+
+    def get_is_pinned(self, obj):
+        annotated = getattr(obj, "is_pinned", None)
+        if annotated is not None:
+            return bool(annotated)
+        return obj.is_pinned_now()
 
 
 class VacancyModerationSerializer(VacancyListSerializer):
@@ -545,6 +554,7 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
     review_state = serializers.SerializerMethodField()
     moderator_review_summary = serializers.SerializerMethodField()
     employer_verified = serializers.SerializerMethodField()
+    is_pinned = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -585,6 +595,8 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
             "review_state",
             "moderator_review_summary",
             "employer_verified",
+            "promotion_kind",
+            "is_pinned",
         ]
 
     def get_contacts(self, obj):
@@ -639,6 +651,9 @@ class VacancyDetailSerializer(serializers.ModelSerializer):
 
     def get_employer_verified(self, obj):
         return _creator_is_verified_employer(obj)
+
+    def get_is_pinned(self, obj):
+        return obj.is_pinned_now()
 
     def get_review_state(self, obj):
         request = self.context.get("request")
@@ -1156,6 +1171,7 @@ class VacancyMineSerializer(serializers.ModelSerializer):
     )
     driver_license_categories = DriverLicenseCategoriesField(read_only=True)
     employer_verified = serializers.SerializerMethodField()
+    is_pinned = serializers.SerializerMethodField()
 
     class Meta:
         model = Vacancy
@@ -1198,6 +1214,8 @@ class VacancyMineSerializer(serializers.ModelSerializer):
             "rejection_reason_code",
             "rejection_reason_comment",
             "employer_verified",
+            "promotion_kind",
+            "is_pinned",
         ]
 
     def get_contacts(self, obj):
@@ -1247,6 +1265,9 @@ class VacancyMineSerializer(serializers.ModelSerializer):
 
     def get_employer_verified(self, obj):
         return _creator_is_verified_employer(obj)
+
+    def get_is_pinned(self, obj):
+        return obj.is_pinned_now()
 
 class VacancyContactSerializer(serializers.ModelSerializer):
     nickname = serializers.SerializerMethodField()

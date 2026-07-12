@@ -85,6 +85,13 @@ class Vacancy(models.Model):
         ("netto", "Netto"),
     ]
 
+    PROMOTION_KIND_CHOICES = [
+        ("", "Standard"),
+        ("vip", "VIP"),
+        ("premium", "Premium"),
+        ("urgent", "Urgent"),
+    ]
+
 
     # Основное
     title = models.CharField(max_length=120)
@@ -169,6 +176,16 @@ class Vacancy(models.Model):
     owner_resume_count_day = models.PositiveSmallIntegerField(default=0)
     is_editing = models.BooleanField(default=False)
     editing_started_at = models.DateTimeField(blank=True, null=True)
+    # Operator-controlled presentation in the public feed. Pinning is active
+    # only inside its time window, so it expires without a background job.
+    promotion_kind = models.CharField(
+        max_length=10,
+        choices=PROMOTION_KIND_CHOICES,
+        blank=True,
+        default="",
+    )
+    pinned_from = models.DateTimeField(blank=True, null=True)
+    pinned_until = models.DateTimeField(blank=True, null=True)
 
     @property
     def moderation_status(self):
@@ -184,6 +201,14 @@ class Vacancy(models.Model):
 
     def is_active(self):
         return self.expires_at > timezone.now()
+
+    def is_pinned_now(self, *, now=None):
+        current_time = now or timezone.now()
+        return bool(
+            self.pinned_from
+            and self.pinned_until
+            and self.pinned_from <= current_time < self.pinned_until
+        )
 
     def __str__(self):
         return self.title

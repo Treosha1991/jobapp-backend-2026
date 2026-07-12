@@ -74,6 +74,62 @@ class VerifiedEmployerApiTests(TestCase):
         self.assertTrue(profile.data["employer"]["is_verified"])
 
 
+class VacancyPromotionFeedTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="promotion-owner",
+            email="promotion-owner@example.com",
+            password="password",
+        )
+        UserProfile.objects.create(user=self.owner)
+        self.now = timezone.now()
+
+    def _vacancy(self, *, title, published_at, pinned_from=None, pinned_until=None):
+        vacancy = Vacancy.objects.create(
+            created_by=self.owner,
+            title=title,
+            country="DE",
+            city="Berlin",
+            category="warehouse",
+            employment_type="full",
+            description="Promotion ordering test vacancy.",
+            housing_type="none",
+            source="direct",
+            is_approved=True,
+            expires_at=self.now + timezone.timedelta(days=30),
+            pinned_from=pinned_from,
+            pinned_until=pinned_until,
+        )
+        Vacancy.objects.filter(pk=vacancy.pk).update(published_at=published_at)
+        return Vacancy.objects.get(pk=vacancy.pk)
+
+    def test_active_pin_is_first_and_exposes_promotion_payload(self):
+        regular = self._vacancy(
+            title="New regular vacancy",
+            published_at=self.now,
+        )
+        pinned = self._vacancy(
+            title="Pinned vacancy",
+            published_at=self.now - timezone.timedelta(days=2),
+            pinned_from=self.now - timezone.timedelta(hours=1),
+            pinned_until=self.now + timezone.timedelta(days=1),
+        )
+        pinned.promotion_kind = "premium"
+        pinned.save(update_fields=["promotion_kind"])
+
+        response = APIClient().get("/api/vacancies/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["results"][0]["id"], pinned.id)
+        self.assertTrue(response.data["results"][0]["is_pinned"])
+        self.assertEqual(response.data["results"][0]["promotion_kind"], "premium")
+        self.assertFalse(
+            next(item for item in response.data["results"] if item["id"] == regular.id)[
+                "is_pinned"
+            ]
+        )
+
+
 class EmployerPortalVacancyWorkflowTests(TestCase):
     """Keep the browser vacancy flow aligned with the mobile submission flow."""
 
