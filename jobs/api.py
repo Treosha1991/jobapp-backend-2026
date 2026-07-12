@@ -2857,6 +2857,7 @@ class VacancyMineAPIView(generics.ListAPIView):
 
     def get_queryset(self):
         _auto_pause_due_owner_vacancies(self.request.user)
+        now = timezone.now()
         return (
             Vacancy.objects.filter(
                 created_by=self.request.user,
@@ -2864,9 +2865,17 @@ class VacancyMineAPIView(generics.ListAPIView):
             )
             .annotate(
                 bucket_order=Case(
-                    When(is_approved=True, then=Value(2)),
-                    When(is_rejected=True, then=Value(1)),
-                    default=Value(0),  # pending + editing
+                    # Keep the employer's currently live offers at the top of
+                    # the cabinet, independently of when other drafts were made.
+                    When(
+                        is_approved=True,
+                        is_paused_by_owner=False,
+                        expires_at__gt=now,
+                        then=Value(0),
+                    ),
+                    When(is_approved=True, then=Value(1)),  # paused / expired
+                    When(is_rejected=True, then=Value(3)),
+                    default=Value(2),  # pending + drafts + editing
                     output_field=IntegerField(),
                 )
             )
