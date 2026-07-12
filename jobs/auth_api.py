@@ -163,6 +163,7 @@ def _auth_payload(user, token):
         "subscribers_count": user.employer_followers.count(),
         "phone": (profile.phone_e164 if profile else "") or "",
         "phone_verified": bool(profile and profile.phone_verified),
+        "employer_verified": bool(profile and profile.employer_verified),
         "has_password": user.has_usable_password(),
         "wallet_total_credits": wallet.total_credits,
         "wallet_paid_credits": wallet.paid_credits,
