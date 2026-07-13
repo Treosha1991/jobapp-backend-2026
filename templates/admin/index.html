@@ -1,111 +1,113 @@
 {% extends "admin/base_site.html" %}
 {% load i18n log admin_ui %}
 
+{% block title %}{% operator_text 'workspace' %} | JobHub{% endblock %}
+
 {% block content_title %}{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    <span aria-hidden="true">›</span>
+    {% operator_text 'dashboard_breadcrumb' %}
+</div>
+{% endblock %}
 
 {% block content %}
 {% operator_sections app_list as sections %}
 {% operator_featured_models app_list as featured_models %}
-{% get_admin_log 8 as admin_log for_user user %}
+{% get_admin_log 6 as admin_log for_user user %}
 
 <div class="jh-dashboard">
-    <section class="jh-hero">
-        <div class="jh-hero-copy">
-            <span class="jh-eyebrow">Operator dashboard</span>
-            <h1>Quick access to the main work queues.</h1>
-            <div class="jh-chip-row">
-                <span class="jh-chip">{{ app_list|length }} app zones</span>
-                <span class="jh-chip">{{ app_list|count_admin_models }} admin tools</span>
+    <section class="jh-dashboard-intro">
+        <div>
+            <span class="jh-eyebrow">JobHub</span>
+            <h1>{% operator_text 'workspace' %}</h1>
+            <p>{% operator_text 'workspace_note' %}</p>
+        </div>
+        <div class="jh-dashboard-stats" aria-label="Statistics">
+            <span><strong>{{ app_list|count_admin_models }}</strong> {% operator_text 'tools' %}</span>
+        </div>
+    </section>
+
+    <section class="jh-work-queue">
+        <div class="jh-block-title">
+            <div>
+                <span class="jh-eyebrow">{% operator_text 'daily_work' %}</span>
+                <h2>{% operator_text 'daily_work_note' %}</h2>
             </div>
         </div>
-        <div class="jh-highlight-grid">
+        <div class="jh-queue-grid">
             {% for model in featured_models %}
-            <a class="jh-highlight-card" href="{{ model.admin_url }}">
-                <div class="jh-highlight-top">
-                    <span class="jh-highlight-kicker">{{ model.app_label|upper }}</span>
-                    <span class="jh-highlight-arrow">Open</span>
-                </div>
-                <strong>{{ model.name }}</strong>
-                <p>Jump straight into the list view for daily operator work.</p>
+            <a class="jh-queue-card jh-queue-{{ model.object_name|lower }}" href="{{ model.admin_url }}">
+                <span class="jh-queue-icon">{{ model.display_name|slice:':1' }}</span>
+                <span class="jh-queue-copy">
+                    <strong>{{ model.display_name }}</strong>
+                    <small>{% operator_text 'open' %}</small>
+                </span>
+                <span class="jh-arrow" aria-hidden="true">→</span>
             </a>
             {% endfor %}
         </div>
     </section>
 
-    <div class="jh-dashboard-grid">
-        <div class="jh-section-stack">
-            {% for section in sections %}
-            <section class="jh-section-card jh-accent-{{ section.accent }}">
-                <div class="jh-section-head">
-                    <div class="jh-section-badge">{{ section.short }}</div>
-                    <div>
-                        <h2>{{ section.title }}</h2>
-                        <p>{{ section.description }}</p>
-                    </div>
+    <div class="jh-dashboard-layout">
+        <section class="jh-tools-panel">
+            <div class="jh-block-title">
+                <div>
+                    <span class="jh-eyebrow">{% operator_text 'all_tools' %}</span>
+                    <h2>{% operator_text 'all_tools_note' %}</h2>
                 </div>
-                <div class="jh-model-grid">
-                    {% for model in section.models %}
-                    <article class="jh-model-card">
-                        <div class="jh-model-top">
-                            <span class="jh-model-app">{{ model.app_name }}</span>
-                            {% if model.view_only %}
-                            <span class="jh-mini-chip">View only</span>
-                            {% else %}
-                            <span class="jh-mini-chip">Editable</span>
-                            {% endif %}
-                        </div>
-                        <h3>{{ model.name }}</h3>
-                        <p class="jh-model-note">
-                            {{ model.object_name }} records are available from the {{ model.app_label }} area.
-                        </p>
-                        <div class="jh-card-actions">
-                            {% if model.admin_url %}
-                            <a href="{{ model.admin_url }}">Open list</a>
-                            {% endif %}
+            </div>
+            <div class="jh-section-stack">
+                {% for section in sections %}
+                <details class="jh-tool-group jh-accent-{{ section.accent }}"{% if forloop.first %} open{% endif %}>
+                    <summary>
+                        <span class="jh-section-badge">{{ section.short }}</span>
+                        <span class="jh-section-copy">
+                            <strong>{{ section.title }}</strong>
+                            <small>{{ section.description }}</small>
+                        </span>
+                        <span class="jh-section-count">{{ section.models|length }}</span>
+                        <span class="jh-chevron" aria-hidden="true">⌄</span>
+                    </summary>
+                    <div class="jh-tool-list">
+                        {% for model in section.models %}
+                        <div class="jh-tool-row">
+                            <a class="jh-tool-main" href="{{ model.admin_url }}">
+                                <span>{{ model.display_name }}</span>
+                                <small>{% if model.view_only %}{% operator_text 'view_only' %}{% else %}{% operator_text 'editable' %}{% endif %}</small>
+                            </a>
                             {% if model.add_url %}
-                            <a class="jh-card-action-secondary" href="{{ model.add_url }}">Add new</a>
+                            <a class="jh-tool-add" href="{{ model.add_url }}" aria-label="{% operator_text 'add' %}: {{ model.display_name }}">+</a>
                             {% endif %}
                         </div>
-                    </article>
-                    {% endfor %}
-                </div>
-            </section>
-            {% endfor %}
-        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+                {% endfor %}
+            </div>
+        </section>
 
-        <aside class="jh-side-rail">
-            <section class="jh-side-card">
-                <div class="jh-side-head">
-                    <span class="jh-side-kicker">Quick routes</span>
-                    <h2>Fast actions</h2>
+        <aside class="jh-activity-panel">
+            <div class="jh-block-title">
+                <div>
+                    <span class="jh-eyebrow">{% operator_text 'recent_activity' %}</span>
                 </div>
-                <div class="jh-quick-links">
-                    <a href="/admin/jobs/vacancy/">Review vacancies</a>
-                    <a href="/admin/jobs/complaint/">Resolve complaints</a>
-                    <a href="/admin/auth/user/">Inspect users</a>
-                    <a href="/admin/jobs/vacancymoderationattempt/">Check moderation history</a>
-                </div>
-            </section>
-
-            <section class="jh-side-card">
-                <div class="jh-side-head">
-                    <span class="jh-side-kicker">Recent activity</span>
-                    <h2>Latest actions</h2>
-                </div>
-                <ul class="jh-log-list">
-                    {% for entry in admin_log %}
-                    <li>
-                        <span class="jh-log-action">{{ entry.object_repr }}</span>
-                        <span class="jh-log-meta">{{ entry.content_type }} - {{ entry.action_time|date:"Y-m-d H:i" }}</span>
-                    </li>
-                    {% empty %}
-                    <li>
-                        <span class="jh-log-action">No recent admin activity yet.</span>
-                        <span class="jh-log-meta">Actions will appear here once operators start working.</span>
-                    </li>
-                    {% endfor %}
-                </ul>
-            </section>
+            </div>
+            <ul class="jh-log-list">
+                {% for entry in admin_log %}
+                <li>
+                    <span class="jh-log-dot"></span>
+                    <span class="jh-log-copy">
+                        <strong>{{ entry.object_repr }}</strong>
+                        <small>{{ entry.action_time|date:'d.m.Y H:i' }}</small>
+                    </span>
+                </li>
+                {% empty %}
+                <li class="jh-empty-state">{% operator_text 'no_activity' %}</li>
+                {% endfor %}
+            </ul>
         </aside>
     </div>
 </div>

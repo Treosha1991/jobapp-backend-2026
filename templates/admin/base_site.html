@@ -1,30 +1,97 @@
 {% extends "admin/base.html" %}
-{% load i18n static %}
+{% load i18n static admin_ui %}
+{% get_current_language as LANGUAGE_CODE %}
 
-{% block extrastyle %}
+{% block title %}{{ title }} | JobHub{% endblock %}
+
+{% block extrastyle %}{{ block.super }}{% endblock %}
+
+{# Load the operator theme after Django's responsive.css so mobile rules win. #}
+{% block responsive %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'jobs/admin/operator.css' %}">
+  <link rel="stylesheet" href="{% static 'jobs/admin/operator.css' %}?v=20260713-14">
 {% endblock %}
 
 {% block extrahead %}
 {{ block.super }}
-<script src="{% static 'jobs/admin/operator.js' %}" defer></script>
+<script>
+    window.JobHubAdmin = {
+        language: "{{ LANGUAGE_CODE|escapejs }}",
+        more: "{% operator_text 'show_more' %}",
+        less: "{% operator_text 'show_less' %}",
+        filters: "{% operator_text 'filters' %}",
+        close: "{% operator_text 'close' %}",
+        add: "{% operator_text 'add' %}",
+        modelLabel: "{% if opts %}{{ opts.object_name|operator_model_label|escapejs }}{% endif %}",
+        modelFormLabel: "{% if opts %}{{ opts.object_name|operator_model_form_label|escapejs }}{% endif %}",
+        isAdd: {% if add %}true{% else %}false{% endif %},
+        choiceLabels: {% operator_choice_labels_json %}
+    };
+</script>
+  <script src="{% static 'jobs/admin/operator.js' %}?v=20260713-14" defer></script>
 {% endblock %}
 
 {% block branding %}
 <div class="jh-branding-shell">
-    <img class="jh-brand-mark" src="{% static 'jobs/admin/app-icon.png' %}" alt="JobHub">
-    <div class="jh-brand-copy">
-        <div id="site-name"><a href="{% url 'admin:index' %}">JobHub Operator Console</a></div>
-    </div>
+    <a class="jh-brand-link" href="{% url 'admin:index' %}" aria-label="JobHub {% operator_text 'console' %}">
+        <img class="jh-brand-mark" src="{% static 'jobs/admin/app-icon.png' %}" alt="">
+        <span class="jh-brand-copy">
+            <strong>JobHub</strong>
+            <small>{% operator_text 'console' %}</small>
+        </span>
+    </a>
+    <button class="jh-menu-toggle" type="button" aria-expanded="false" aria-controls="jh-admin-menu">
+        <span></span><span></span><span></span>
+        <span class="visually-hidden">{% operator_text 'menu' %}</span>
+    </button>
+    {% if not has_permission %}
+    <form class="jh-language-switch jh-login-language" action="{% url 'set_language' %}" method="post">
+        {% csrf_token %}
+        <input name="next" type="hidden" value="{{ request.get_full_path }}">
+        <span class="jh-language-label">{% operator_text 'language' %}</span>
+        <button name="language" value="ru" type="submit" {% if LANGUAGE_CODE|slice:':2' == 'ru' %}class="is-active" aria-current="true"{% endif %}>RU</button>
+        <button name="language" value="en" type="submit" {% if LANGUAGE_CODE|slice:':2' != 'ru' %}class="is-active" aria-current="true"{% endif %}>EN</button>
+    </form>
+    {% endif %}
 </div>
 {% endblock %}
 
-{% block nav-global %}
-<div class="jh-global-actions">
-    <a href="{% url 'admin:index' %}">Dashboard</a>
-    <a href="/admin/jobs/vacancy/">Vacancies</a>
-    <a href="/admin/jobs/complaint/">Complaints</a>
-    <a href="/admin/auth/user/">Users</a>
+{% block usertools %}
+{% if has_permission %}
+<div id="user-tools" class="jh-user-tools">
+    <span class="jh-user-name">{{ user.get_short_name|default:user.get_username }}</span>
+    <form class="jh-language-switch" action="{% url 'set_language' %}" method="post">
+        {% csrf_token %}
+        <input name="next" type="hidden" value="{{ request.get_full_path }}">
+        <span class="jh-language-label">{% operator_text 'language' %}</span>
+        <button name="language" value="ru" type="submit" {% if LANGUAGE_CODE|slice:':2' == 'ru' %}class="is-active" aria-current="true"{% endif %}>RU</button>
+        <button name="language" value="en" type="submit" {% if LANGUAGE_CODE|slice:':2' != 'ru' %}class="is-active" aria-current="true"{% endif %}>EN</button>
+    </form>
+    <div class="jh-account-links">
+        {% if site_url %}<a href="{{ site_url }}">{% translate 'View site' %}</a>{% endif %}
+        {% if user.has_usable_password %}<a href="{% url 'admin:password_change' %}">{% translate 'Change password' %}</a>{% endif %}
+        <form id="logout-form" method="post" action="{% url 'admin:logout' %}">
+            {% csrf_token %}
+            <button type="submit">{% translate 'Log out' %}</button>
+        </form>
+    </div>
 </div>
+{% endif %}
+{% endblock %}
+
+{% block nav-global %}
+<nav class="jh-global-actions" id="jh-admin-menu" aria-label="{% operator_text 'menu' %}">
+    <a href="{% url 'admin:index' %}"{% if request.path == '/admin/' %} class="is-active"{% endif %}>
+        <span class="jh-nav-icon">⌂</span><span>{% operator_text 'dashboard' %}</span>
+    </a>
+    <a href="/admin/jobs/vacancy/"{% if '/admin/jobs/vacancy/' in request.path %} class="is-active"{% endif %}>
+        <span class="jh-nav-icon">▤</span><span>{% operator_text 'vacancies' %}</span>
+    </a>
+    <a href="/admin/jobs/complaint/"{% if '/admin/jobs/complaint/' in request.path %} class="is-active"{% endif %}>
+        <span class="jh-nav-icon">!</span><span>{% operator_text 'complaints' %}</span>
+    </a>
+    <a href="/admin/auth/user/"{% if '/admin/auth/user/' in request.path %} class="is-active"{% endif %}>
+        <span class="jh-nav-icon">◉</span><span>{% operator_text 'users' %}</span>
+    </a>
+</nav>
 {% endblock %}

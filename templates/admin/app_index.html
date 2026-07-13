@@ -1,45 +1,29 @@
 {% extends "admin/base_site.html" %}
-{% load i18n %}
+{% load i18n admin_ui %}
+
+{% block title %}{% operator_text 'all_tools' %} | JobHub{% endblock %}
 
 {% block content_title %}{% endblock %}
 
 {% block content %}
 <div class="jh-app-page">
     {% for app in app_list %}
-    <section class="jh-hero jh-hero-compact">
-        <div class="jh-hero-copy">
-            <span class="jh-eyebrow">Application area</span>
-            <h1>{{ app.name }}</h1>
-        </div>
-        <div class="jh-chip-row">
-            <span class="jh-chip">{{ app.models|length }} tools</span>
-            <span class="jh-chip">{{ app.app_label }}</span>
-        </div>
+    <section class="jh-app-head">
+        <span class="jh-eyebrow">{% operator_text 'all_tools' %}</span>
+        <h1>{{ app.name }}</h1>
+        <span class="jh-chip">{{ app.models|length }} {% operator_text 'tools' %}</span>
     </section>
 
-    <div class="jh-model-grid">
+    <div class="jh-app-tool-list">
         {% for model in app.models %}
-        <article class="jh-model-card">
-            <div class="jh-model-top">
-                <span class="jh-model-app">{{ app.name }}</span>
-                {% if model.view_only %}
-                <span class="jh-mini-chip">View only</span>
-                {% else %}
-                <span class="jh-mini-chip">Editable</span>
-                {% endif %}
-            </div>
-            <h3>{{ model.name }}</h3>
-            <p class="jh-model-note">
-                Work with {{ model.object_name }} entries from this application panel.
-            </p>
-            <div class="jh-card-actions">
-                {% if model.admin_url %}
-                <a href="{{ model.admin_url }}">Open list</a>
-                {% endif %}
-                {% if model.add_url %}
-                <a class="jh-card-action-secondary" href="{{ model.add_url }}">Add new</a>
-                {% endif %}
-            </div>
+        <article class="jh-app-tool-row">
+            <a class="jh-tool-main" href="{{ model.admin_url }}">
+                <strong>{{ model.object_name|operator_model_label }}</strong>
+                <small>{% if model.view_only %}{% operator_text 'view_only' %}{% else %}{% operator_text 'editable' %}{% endif %}</small>
+            </a>
+            {% if model.add_url %}
+            <a class="jh-tool-add" href="{{ model.add_url }}" aria-label="{% operator_text 'add' %}: {{ model.object_name|operator_model_label }}">+</a>
+            {% endif %}
         </article>
         {% endfor %}
     </div>

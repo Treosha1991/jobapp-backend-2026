@@ -185,7 +185,7 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
 
         response = self.client.get("/employer/jobhub-board/")
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Allow publishing through JobHub Board")
+        self.assertContains(response, "Allow publishing with JobHub")
 
         accepted = self.client.post(
             "/employer/jobhub-board/",
