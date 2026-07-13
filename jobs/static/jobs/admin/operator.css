@@ -2333,3 +2333,97 @@ body.login .submit-row {
         grid-template-columns: minmax(0, 1fr);
     }
 }
+
+/* operator-desktop-changelist-workspace */
+/* Final desktop/tablet override: use the complete workspace without changing mobile cards. */
+@media (min-width: 861px) {
+  body.change-list #container,
+  body.change-list #main,
+  body.change-list .main,
+  body.change-list #content,
+  body.change-list #content-main {
+    box-sizing: border-box !important;
+    float: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  body.change-list #changelist {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 18rem !important;
+    grid-template-rows: auto !important;
+    align-items: start !important;
+    gap: 1.5rem !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  body.change-list #changelist-form,
+  body.change-list #changelist .results {
+    grid-column: 1 !important;
+    box-sizing: border-box !important;
+    float: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  body.change-list #changelist-filter {
+    display: block !important;
+    grid-column: 2 !important;
+    grid-row: 1 / span 12 !important;
+    box-sizing: border-box !important;
+    float: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    position: sticky !important;
+    top: 5.75rem !important;
+  }
+
+  body.change-list #changelist > .paginator,
+  body.change-list #changelist > form + .paginator {
+    grid-column: 1 !important;
+  }
+
+  body.change-list #changelist .results {
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+  }
+
+  body.change-list #result_list {
+    table-layout: auto !important;
+    width: max(100%, 66rem) !important;
+    min-width: 66rem !important;
+  }
+
+  body.change-list #result_list th,
+  body.change-list #result_list td {
+    width: auto !important;
+    min-width: 5rem !important;
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    hyphens: auto;
+  }
+
+  body.change-list #result_list th:first-child,
+  body.change-list #result_list td:first-child {
+    min-width: 2.5rem !important;
+  }
+}
+
+@media (min-width: 861px) and (max-width: 1200px) {
+  body.change-list #changelist {
+    grid-template-columns: minmax(0, 1fr) 15rem !important;
+    gap: 1rem !important;
+  }
+
+  body.change-list #result_list {
+    width: max(100%, 56rem) !important;
+    min-width: 56rem !important;
+  }
+}
