@@ -5,13 +5,16 @@ from django.utils import timezone
 from .models import EmployerBoardPublishingAuthorization, EmployerBoardPublishingEvent
 
 
-AUTHORIZATION_VERSION = "2026-07-12"
+AUTHORIZATION_VERSION = "2026-07-15"
 AUTHORIZATION_TEXT = (
     "I authorize JobHub to prepare and publish job vacancies on behalf of my "
     "employer profile through JobHub Board. I confirm that I have the right to "
-    "publish this information and understand that I can revoke this permission "
-    "at any time. Revocation blocks new JobHub Board publications; it does not "
-    "automatically remove vacancies already published."
+    "publish this information. JobHub will use vacancy information that I provide "
+    "or approve. I can manage, edit, pause, or remove published vacancies in my "
+    "employer portal. I can revoke this permission at any time; revocation blocks "
+    "new JobHub Board publications but does not automatically remove vacancies "
+    "already published. I will keep the private employer code confidential and "
+    "share it only with the JobHub team member preparing a vacancy."
 )
 
 

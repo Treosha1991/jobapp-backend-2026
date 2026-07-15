@@ -5,6 +5,18 @@
     <h1 class="jh-title">{{ employer_t.board_publishing }}</h1>
     <p class="jh-subtitle">{{ employer_t.board_publishing_subtitle }}</p>
 
+    <section class="jh-form-section jh-board-terms" aria-labelledby="board-terms-title">
+      <h2 id="board-terms-title">{{ employer_t.board_terms_title }}</h2>
+      <p class="jh-subtitle">{{ employer_t.board_terms_intro }}</p>
+      <ol class="jh-board-terms-list">
+        <li><strong>{{ employer_t.board_terms_choice_title }}</strong><span>{{ employer_t.board_terms_choice_text }}</span></li>
+        <li><strong>{{ employer_t.board_terms_source_title }}</strong><span>{{ employer_t.board_terms_source_text }}</span></li>
+        <li><strong>{{ employer_t.board_terms_control_title }}</strong><span>{{ employer_t.board_terms_control_text }}</span></li>
+        <li><strong>{{ employer_t.board_terms_revoke_title }}</strong><span>{{ employer_t.board_terms_revoke_text }}</span></li>
+        <li><strong>{{ employer_t.board_terms_code_title }}</strong><span>{{ employer_t.board_terms_code_text }}</span></li>
+      </ol>
+    </section>
+
     {% if not authorization %}
       <div class="jh-message">
         <strong>{{ employer_t.board_no_request_title }}</strong><br>
@@ -14,7 +26,7 @@
       <div class="jh-form-section">
         <h2>{{ employer_t.board_request_title }}</h2>
         <p class="jh-subtitle">{{ employer_t.board_request_text }}</p>
-        <div class="jh-message" style="margin-bottom:14px;white-space:pre-line;">{{ authorization_text }}</div>
+        <div class="jh-message" style="margin-bottom:14px;">{{ employer_t.board_terms_confirmation }}</div>
         <form method="post" class="jh-field">
           {% csrf_token %}
           <input type="hidden" name="action" value="accept">

@@ -183,9 +183,22 @@ class EmployerPortalVacancyWorkflowTests(TestCase):
     def test_employer_can_accept_and_revoke_board_publishing_request(self):
         authorization = request_authorization(self.employer)
 
+        terms_titles = {
+            "ru": "Как работают «Публикации с JobHub»",
+            "en": "How “Publishing with JobHub” works",
+            "pl": "Jak działają „Publikacje z JobHub”",
+            "uk": "Як працюють «Публікації з JobHub»",
+        }
+        for language, terms_title in terms_titles.items():
+            localized_page = self.client.get("/employer/jobhub-board/", {"lang": language})
+            self.assertContains(localized_page, terms_title)
+
         response = self.client.get("/employer/jobhub-board/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Allow publishing with JobHub")
+        self.assertContains(response, "How “Publishing with JobHub” works")
+        self.assertContains(response, "You stay in control of your vacancies.")
+        self.assertContains(response, "The code is for JobHub only.")
 
         accepted = self.client.post(
             "/employer/jobhub-board/",
