@@ -8,6 +8,19 @@
   .team-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; flex-wrap:wrap; }
   .team-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
   .team-note { margin:18px 0 0; padding:13px 15px; border:1px solid rgba(110,199,255,.34); border-radius:16px; color:#caedff; background:rgba(110,199,255,.08); line-height:1.45; }
+  .team-invite { margin-top:18px; padding:17px; border:1px solid rgba(24,223,103,.38); border-radius:18px; background:linear-gradient(135deg,rgba(24,223,103,.12),rgba(5,22,36,.28)); }
+  .team-invite h2 { margin:0 0 5px; font-size:19px; }
+  .team-invite > p { margin:0 0 15px; color:var(--muted); line-height:1.42; }
+  .team-invite-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .team-permission-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:14px 0; }
+  .team-permission-option { display:flex; align-items:flex-start; gap:8px; padding:10px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.26); color:#e8f6ff; font-size:13px; line-height:1.3; cursor:pointer; }
+  .team-permission-option input { margin-top:2px; accent-color:var(--green); }
+  .team-pending { margin-top:16px; padding-top:15px; border-top:1px solid rgba(173,220,255,.16); }
+  .team-pending h3 { margin:0 0 8px; font-size:16px; }
+  .team-pending-list { display:grid; gap:7px; }
+  .team-pending-item { padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.24); }
+  .team-pending-item strong, .team-pending-item span { display:block; }
+  .team-pending-item span { margin-top:3px; color:var(--muted); font-size:12px; line-height:1.35; }
   .team-layout { display:grid; grid-template-columns:minmax(220px,.72fr) minmax(0,1.28fr); gap:18px; margin-top:22px; }
   .team-panel { padding:16px; border:1px solid var(--line); border-radius:18px; background:rgba(5,22,36,.28); }
   .team-panel h2 { margin:0 0 5px; font-size:19px; }
@@ -30,7 +43,7 @@
   .team-form p { margin:0 0 12px; color:var(--muted); line-height:1.4; }
   .team-full-access { padding:15px; border:1px solid rgba(24,223,103,.32); border-radius:16px; color:#c6ffd9; background:rgba(24,223,103,.08); line-height:1.45; }
   .team-empty { padding:18px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; }
-  @media (max-width:760px) { .team-layout { grid-template-columns:1fr; } .team-scope { align-items:flex-start; flex-direction:column; } }
+  @media (max-width:760px) { .team-layout, .team-invite-fields, .team-permission-grid { grid-template-columns:1fr; } .team-scope { align-items:flex-start; flex-direction:column; } }
 </style>
 {% endblock %}
 
@@ -45,6 +58,47 @@
       </div>
     </div>
     <div class="team-note">{{ employer_t.support_team_notice }}</div>
+
+    {% if can_invite_staff %}
+      <section class="team-invite">
+        <h2>{{ employer_t.support_team_invite_title }}</h2>
+        <p>{{ employer_t.support_team_invite_text }}</p>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="member_invite">
+          <div class="team-invite-fields">
+            <label class="jh-field"><span>{{ employer_t.support_team_invite_email }}</span><input class="jh-input" type="email" name="invited_email" autocomplete="email" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_team_invite_role }}</span><input class="jh-input" type="text" name="display_role" maxlength="80" placeholder="{{ employer_t.support_team_invite_role_placeholder }}"></label>
+          </div>
+          {% if invitation_permission_groups %}
+            <p class="jh-muted" style="margin:14px 0 0">{{ employer_t.support_team_invite_permissions }}</p>
+            <div class="team-permission-grid">
+              {% for item in invitation_permission_groups %}
+                <label class="team-permission-option"><input type="checkbox" name="permission_groups" value="{{ item.id }}"><span>{{ item.label }}</span></label>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="jh-muted" style="margin:14px 0 0">{{ employer_t.support_team_invite_no_delegable_permissions }}</p>
+          {% endif %}
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_team_invite_submit }}</button></div>
+        </form>
+
+        {% if pending_invitations %}
+          <div class="team-pending">
+            <h3>{{ employer_t.support_team_pending_title }}</h3>
+            <div class="team-pending-list">
+              {% for invitation in pending_invitations %}
+                <article class="team-pending-item">
+                  <strong>{{ invitation.invited_email }}</strong>
+                  <span>{% if invitation.display_role %}{{ invitation.display_role }} · {% endif %}{{ employer_t.support_team_pending_until }} {{ invitation.expires_at|date:"d.m.Y H:i" }}</span>
+                  {% if invitation.permission_group_labels %}<span>{{ invitation.permission_group_labels|join:" · " }}</span>{% endif %}
+                </article>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+      </section>
+    {% endif %}
 
     <div class="team-layout">
       <aside class="team-panel">

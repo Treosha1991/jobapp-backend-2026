@@ -18,6 +18,7 @@ from support.models import (
     HousingPlace,
     HousingRoom,
     HousingSite,
+    MembershipInvitation,
     OrganizationMembership,
     ScheduledWorkShift,
     SupportApplication,
@@ -34,6 +35,8 @@ from support.models import (
 from support.permission_codes import (
     DOCUMENT_REQUEST,
     HOUSING_MANAGE,
+    MEMBER_DELEGATE_PERMISSIONS,
+    MEMBER_INVITE,
     ORGANIZATION_MANAGE,
     PIPELINE_REVIEW,
     SCHEDULE_MANAGE,
@@ -48,8 +51,10 @@ from support.permissions import (
     has_permission,
     has_unrestricted_worker_access,
     has_worker_connection_access,
+    may_delegate_permission,
     worker_connection_queryset_for,
 )
+from support.permission_groups import TEAM_PERMISSION_GROUPS
 
 
 def _display_name(user):
@@ -779,6 +784,62 @@ def team_management_snapshot(*, user, organization_public_id=None, membership_pu
             f"{item.connection.display_name} · {item.connection.vacancy.internal_title}"
         )
 
+    can_invite_staff = has_permission(
+        user=user,
+        organization=organization,
+        permission_code=MEMBER_INVITE,
+    )
+    can_delegate_permissions = (
+        viewer_membership.is_owner
+        or has_permission(
+            user=user,
+            organization=organization,
+            permission_code=MEMBER_DELEGATE_PERMISSIONS,
+        )
+    )
+    invitation_permission_groups = []
+    if can_invite_staff:
+        for group_id, label_key, group_codes in TEAM_PERMISSION_GROUPS:
+            if viewer_membership.is_owner or (
+                can_delegate_permissions
+                and all(
+                    may_delegate_permission(
+                        user=user,
+                        organization=organization,
+                        permission_code=code,
+                    )
+                    for code in group_codes
+                )
+            ):
+                invitation_permission_groups.append(
+                    {
+                        "id": group_id,
+                        "label_key": label_key,
+                    }
+                )
+
+    pending_invitations = list(
+        MembershipInvitation.objects.filter(
+            organization=organization,
+            state=MembershipInvitation.STATUS_PENDING,
+        )
+        .prefetch_related("permission_grants")
+        .order_by("-created_at", "-id")
+    )
+    group_codes_by_id = {
+        group_id: set(group_codes)
+        for group_id, _label_key, group_codes in TEAM_PERMISSION_GROUPS
+    }
+    for invitation in pending_invitations:
+        invitation_codes = {
+            grant.permission_code for grant in invitation.permission_grants.all()
+        }
+        invitation.permission_group_ids = [
+            group_id
+            for group_id, group_codes in group_codes_by_id.items()
+            if group_codes.issubset(invitation_codes)
+        ]
+
     return {
         "organization": organization,
         "membership": viewer_membership,
@@ -797,6 +858,9 @@ def team_management_snapshot(*, user, organization_public_id=None, membership_pu
         "available_workers": [
             item for item in active_workers if item.id not in selected_scope_connection_ids
         ],
+        "can_invite_staff": can_invite_staff,
+        "invitation_permission_groups": invitation_permission_groups,
+        "pending_invitations": pending_invitations,
     }
 
 

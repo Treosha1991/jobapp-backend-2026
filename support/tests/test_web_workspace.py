@@ -9,6 +9,7 @@ from support.models import (
     HousingPlace,
     HousingRoom,
     HousingSite,
+    MembershipInvitation,
     DriverVehicleAssignment,
     NotificationOutbox,
     OrganizationMembership,
@@ -109,6 +110,47 @@ class SupportWorkspaceWebTests(TestCase):
             candidate=working_application.candidate,
             stage=SupportConnection.STAGE_COORDINATOR,
         )
+
+    def test_owner_can_invite_registered_staff_from_team_screen(self):
+        invited_staff = User.objects.create_user(
+            username="workspace-invited-staff",
+            email="workspace-invited-staff@example.com",
+            password="password",
+        )
+        team_url = f"/employer/support/team/?organization={self.organization.public_id}"
+        self.client.force_login(self.owner)
+
+        page = self.client.get(team_url)
+
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Invite a staff member")
+        self.assertContains(page, 'name="permission_groups"')
+
+        response = self.client.post(
+            team_url,
+            {
+                "action": "member_invite",
+                "invited_email": invited_staff.email,
+                "display_role": "Transport coordinator",
+                "permission_groups": ["chats", "transport"],
+            },
+        )
+
+        self.assertRedirects(response, team_url)
+        invitation = MembershipInvitation.objects.get(
+            organization=self.organization,
+            invited_user=invited_staff,
+        )
+        self.assertEqual(invitation.display_role, "Transport coordinator")
+        self.assertEqual(invitation.state, MembershipInvitation.STATUS_PENDING)
+        self.assertEqual(
+            set(invitation.permission_grants.values_list("permission_code", flat=True)),
+            {"chat.manage", "transport.manage"},
+        )
+
+        pending_page = self.client.get(team_url)
+        self.assertContains(pending_page, invited_staff.email)
+        self.assertContains(pending_page, "Waiting for confirmation")
 
     def test_owner_sees_only_approved_workspace_information_and_navigation_link(self):
         self.client.force_login(self.owner)

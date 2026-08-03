@@ -25,6 +25,7 @@ from support.services.organizations import activate_organization, create_organiz
 
 DEMO_OWNER_EMAIL = "support-owner@jobhub.test"
 DEMO_WORKER_EMAIL = "support-worker@jobhub.test"
+DEMO_COORDINATOR_EMAIL = "support-coordinator@jobhub.test"
 
 
 class Command(BaseCommand):
@@ -87,6 +88,33 @@ class Command(BaseCommand):
         if worker_created or changed_worker_fields or not worker.check_password(password):
             worker.set_password(password)
             worker.save(update_fields=[*changed_worker_fields, "password"])
+
+        coordinator, coordinator_created = user_model.objects.get_or_create(
+            username=DEMO_COORDINATOR_EMAIL,
+            defaults={
+                "email": DEMO_COORDINATOR_EMAIL,
+                "first_name": "Demo",
+                "last_name": "Coordinator",
+                "is_active": True,
+            },
+        )
+        changed_coordinator_fields = []
+        for field, value in {
+            "email": DEMO_COORDINATOR_EMAIL,
+            "first_name": "Demo",
+            "last_name": "Coordinator",
+            "is_active": True,
+        }.items():
+            if getattr(coordinator, field) != value:
+                setattr(coordinator, field, value)
+                changed_coordinator_fields.append(field)
+        if (
+            coordinator_created
+            or changed_coordinator_fields
+            or not coordinator.check_password(password)
+        ):
+            coordinator.set_password(password)
+            coordinator.save(update_fields=[*changed_coordinator_fields, "password"])
 
         organization, created = SupportOrganization.objects.get_or_create(
             legal_name="JobHub Support Demo B.V.",
@@ -214,6 +242,7 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 "JobHub Support demo workspace is ready: "
-                f"owner={DEMO_OWNER_EMAIL}, worker={DEMO_WORKER_EMAIL}."
+                f"owner={DEMO_OWNER_EMAIL}, worker={DEMO_WORKER_EMAIL}, "
+                f"coordinator={DEMO_COORDINATOR_EMAIL}."
             )
         )

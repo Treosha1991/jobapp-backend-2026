@@ -94,9 +94,11 @@ from .services.registries import (
     create_worksite,
 )
 from .services.organizations import (
+    create_membership_invitation,
     grant_worker_access_scope,
     revoke_worker_access_scope,
 )
+from .permission_groups import TEAM_PERMISSION_GROUPS, permission_codes_for_group_ids
 
 
 @login_required(login_url="employer:login")
@@ -672,16 +674,39 @@ def _team_redirect(organization, membership):
     )
 
 
+def _team_list_redirect(organization):
+    return redirect(
+        f"{reverse('support:team')}?organization={organization.public_id}"
+    )
+
+
 def _team_operation(request, *, snapshot):
     organization = snapshot["organization"]
     action = (request.POST.get("action") or "").strip()
-    membership = get_object_or_404(
-        OrganizationMembership,
-        organization=organization,
-        state=OrganizationMembership.STATE_ACTIVE,
-        public_id=request.POST.get("membership_id"),
-    )
     try:
+        if action == "member_invite":
+            selected_groups = request.POST.getlist("permission_groups")
+            allowed_group_ids = {
+                item["id"] for item in snapshot["invitation_permission_groups"]
+            }
+            if any(group_id not in allowed_group_ids for group_id in selected_groups):
+                raise ValueError("support_invitation_permission_not_allowed")
+            create_membership_invitation(
+                actor=request.user,
+                organization=organization,
+                invited_email=request.POST.get("invited_email"),
+                display_role=request.POST.get("display_role"),
+                permission_codes=permission_codes_for_group_ids(selected_groups),
+            )
+            messages.success(request, tr(request, "support_team_invitation_created"))
+            return _team_list_redirect(organization)
+
+        membership = get_object_or_404(
+            OrganizationMembership,
+            organization=organization,
+            state=OrganizationMembership.STATE_ACTIVE,
+            public_id=request.POST.get("membership_id"),
+        )
         if membership.is_owner:
             raise ValueError("owner_scope_not_needed")
         if action == "scope_grant":
@@ -714,7 +739,12 @@ def _team_operation(request, *, snapshot):
         else:
             raise ValueError("team_operation_unknown")
     except (APIException, ValueError):
-        messages.error(request, tr(request, "support_team_operation_error"))
+        message_key = (
+            "support_team_invitation_error"
+            if action == "member_invite"
+            else "support_team_operation_error"
+        )
+        messages.error(request, tr(request, message_key))
     else:
         messages.success(request, tr(request, message_key))
     return _team_redirect(organization, membership)
@@ -731,6 +761,17 @@ def team_management(request):
     )
     if request.method == "POST":
         return _team_operation(request, snapshot=snapshot)
+    permission_group_labels = {
+        group_id: tr(request, label_key)
+        for group_id, label_key, _group_codes in TEAM_PERMISSION_GROUPS
+    }
+    for item in snapshot["invitation_permission_groups"]:
+        item["label"] = permission_group_labels[item["id"]]
+    for invitation in snapshot["pending_invitations"]:
+        invitation.permission_group_labels = [
+            permission_group_labels[group_id]
+            for group_id in invitation.permission_group_ids
+        ]
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
