@@ -1,0 +1,39 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_nav_staff_chats }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .support-chat-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .support-conversation-list { display:grid; gap:10px; }
+  .support-conversation { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:center; padding:15px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); text-decoration:none; }
+  .support-conversation:hover { border-color:rgba(24,223,103,.52); background:rgba(24,223,103,.07); }
+  .support-conversation-main { min-width:0; display:grid; gap:5px; }
+  .support-conversation-title { font-size:16px; font-weight:900; }
+  .support-conversation-people { overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+  .support-conversation-meta { color:var(--muted); font-size:11px; white-space:nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+  <section class="jh-card">
+    <p class="support-chat-kicker">JobHub Support · {{ organization.display_name }}</p>
+    <h1 class="jh-title">{{ employer_t.support_nav_staff_chats }}</h1>
+    <p class="jh-subtitle">{{ employer_t.support_chats_subtitle }}</p>
+    {% if conversation_rows %}
+      <div class="support-conversation-list">
+        {% for item in conversation_rows %}
+          <a class="support-conversation" href="{{ item.detail_url }}?organization={{ organization.public_id }}">
+            <span class="support-conversation-main">
+              <span class="support-conversation-title">{% if item.title %}{{ item.title }}{% else %}{{ item.kind_label }}{% endif %}</span>
+              <span class="support-conversation-people">{% if item.participants %}{{ item.participants|join:", " }}{% else %}{{ employer_t.support_chats_no_other_participants }}{% endif %}</span>
+            </span>
+            <span class="support-conversation-meta">{{ item.updated_at|date:"d.m H:i" }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="jh-empty"><h2>{{ employer_t.support_chats_empty_title }}</h2><p>{{ employer_t.support_chats_empty_text }}</p></div>
+    {% endif %}
+  </section>
+{% endblock %}

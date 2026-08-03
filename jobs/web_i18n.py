@@ -1569,6 +1569,127 @@ TRANSLATIONS["uk"].update({
 })
 
 
+# IMPORTANT: These are the fixed labels for the Support-first employer header.
+# Keeping the four languages together prevents a new navigation control from
+# degrading into `???` when a manager changes the portal language.
+TRANSLATIONS["ru"].update({
+    "employer_menu": "Меню",
+    "employer_menu_language": "Язык",
+    "support_nav_workers": "Работники",
+    "support_nav_requests": "Запросы",
+    "support_nav_registries": "Справочник",
+    "support_nav_staff_chats": "Чат сотрудников",
+    "support_nav_general_chat": "Общий чат",
+    "support_menu_time": "Часы и график",
+    "support_menu_transport": "Маршруты",
+    "support_menu_team": "Сотрудники и доступы",
+    "support_chats_subtitle": "Здесь только чаты фирмы, в которые вас добавили. Остальные переписки и данные работников не открываются.",
+    "support_chats_empty_title": "Назначенных чатов пока нет",
+    "support_chats_empty_text": "Когда вас добавят в личный или групповой чат фирмы, он появится здесь.",
+    "support_chats_no_other_participants": "Других участников пока нет",
+    "support_chats_empty_messages": "В этом чате пока нет сообщений.",
+    "support_chat_back": "К чатам сотрудников",
+    "support_chat_message_label": "Сообщение",
+    "support_chat_message_placeholder": "Напишите сообщение",
+    "support_chat_send": "Отправить",
+    "support_chat_message_invalid": "Введите сообщение до 1500 символов.",
+    "support_chat_send_error": "Не удалось отправить сообщение. Обновите страницу и попробуйте снова.",
+    "support_chat_deleted_sender": "Удалённый пользователь",
+    "support_chat_kind_manager": "Чат с менеджером",
+    "support_chat_kind_coordinator": "Чат с координатором",
+    "support_chat_kind_driver": "Чат с водителем",
+    "support_chat_kind_group": "Групповой чат",
+    "support_chat_kind_jobhub": "Чат JobHub",
+})
+TRANSLATIONS["en"].update({
+    "employer_menu": "Menu",
+    "employer_menu_language": "Language",
+    "support_nav_workers": "Workers",
+    "support_nav_requests": "Requests",
+    "support_nav_registries": "Registry",
+    "support_nav_staff_chats": "Staff chat",
+    "support_nav_general_chat": "General chat",
+    "support_menu_time": "Hours and schedule",
+    "support_menu_transport": "Routes",
+    "support_menu_team": "Staff and access",
+    "support_chats_subtitle": "Only company chats that you were added to appear here. Other conversations and worker data stay closed.",
+    "support_chats_empty_title": "No chats assigned yet",
+    "support_chats_empty_text": "A personal or group company chat will appear here after you are added to it.",
+    "support_chats_no_other_participants": "No other participants yet",
+    "support_chats_empty_messages": "There are no messages in this chat yet.",
+    "support_chat_back": "Back to staff chats",
+    "support_chat_message_label": "Message",
+    "support_chat_message_placeholder": "Write a message",
+    "support_chat_send": "Send",
+    "support_chat_message_invalid": "Enter a message of up to 1500 characters.",
+    "support_chat_send_error": "The message could not be sent. Refresh the page and try again.",
+    "support_chat_deleted_sender": "Deleted user",
+    "support_chat_kind_manager": "Manager chat",
+    "support_chat_kind_coordinator": "Coordinator chat",
+    "support_chat_kind_driver": "Driver chat",
+    "support_chat_kind_group": "Group chat",
+    "support_chat_kind_jobhub": "JobHub chat",
+})
+TRANSLATIONS["pl"].update({
+    "employer_menu": "Menu",
+    "employer_menu_language": "Język",
+    "support_nav_workers": "Pracownicy",
+    "support_nav_requests": "Wnioski",
+    "support_nav_registries": "Rejestr",
+    "support_nav_staff_chats": "Czat pracowników",
+    "support_nav_general_chat": "Czat ogólny",
+    "support_menu_time": "Godziny i grafik",
+    "support_menu_transport": "Trasy",
+    "support_menu_team": "Pracownicy i dostępy",
+    "support_chats_subtitle": "Widzisz tu tylko czaty firmy, do których zostałeś dodany. Pozostałe rozmowy i dane pracowników są zamknięte.",
+    "support_chats_empty_title": "Nie przydzielono jeszcze czatów",
+    "support_chats_empty_text": "Osobisty albo grupowy czat firmy pojawi się tutaj po dodaniu Cię do niego.",
+    "support_chats_no_other_participants": "Nie ma jeszcze innych uczestników",
+    "support_chats_empty_messages": "W tym czacie nie ma jeszcze wiadomości.",
+    "support_chat_back": "Wróć do czatów pracowników",
+    "support_chat_message_label": "Wiadomość",
+    "support_chat_message_placeholder": "Napisz wiadomość",
+    "support_chat_send": "Wyślij",
+    "support_chat_message_invalid": "Wpisz wiadomość do 1500 znaków.",
+    "support_chat_send_error": "Nie udało się wysłać wiadomości. Odśwież stronę i spróbuj ponownie.",
+    "support_chat_deleted_sender": "Usunięty użytkownik",
+    "support_chat_kind_manager": "Czat z menedżerem",
+    "support_chat_kind_coordinator": "Czat z koordynatorem",
+    "support_chat_kind_driver": "Czat z kierowcą",
+    "support_chat_kind_group": "Czat grupowy",
+    "support_chat_kind_jobhub": "Czat JobHub",
+})
+TRANSLATIONS["uk"].update({
+    "employer_menu": "Меню",
+    "employer_menu_language": "Мова",
+    "support_nav_workers": "Працівники",
+    "support_nav_requests": "Запити",
+    "support_nav_registries": "Довідник",
+    "support_nav_staff_chats": "Чат співробітників",
+    "support_nav_general_chat": "Загальний чат",
+    "support_menu_time": "Години й графік",
+    "support_menu_transport": "Маршрути",
+    "support_menu_team": "Співробітники та доступи",
+    "support_chats_subtitle": "Тут лише чати компанії, до яких вас додали. Інші листування та дані працівників залишаються закритими.",
+    "support_chats_empty_title": "Призначених чатів поки немає",
+    "support_chats_empty_text": "Особистий або груповий чат компанії з’явиться тут, коли вас до нього додадуть.",
+    "support_chats_no_other_participants": "Інших учасників поки немає",
+    "support_chats_empty_messages": "У цьому чаті поки немає повідомлень.",
+    "support_chat_back": "До чатів співробітників",
+    "support_chat_message_label": "Повідомлення",
+    "support_chat_message_placeholder": "Напишіть повідомлення",
+    "support_chat_send": "Надіслати",
+    "support_chat_message_invalid": "Введіть повідомлення до 1500 символів.",
+    "support_chat_send_error": "Не вдалося надіслати повідомлення. Оновіть сторінку та спробуйте ще раз.",
+    "support_chat_deleted_sender": "Видалений користувач",
+    "support_chat_kind_manager": "Чат з менеджером",
+    "support_chat_kind_coordinator": "Чат із координатором",
+    "support_chat_kind_driver": "Чат з водієм",
+    "support_chat_kind_group": "Груповий чат",
+    "support_chat_kind_jobhub": "Чат JobHub",
+})
+
+
 TRANSLATIONS["ru"].update({
     "support_worker_back": "К рабочему кабинету",
     "support_worker_intro": "Карточка показывает только разделы, разрешённые вашей ролью.",
@@ -2286,6 +2407,17 @@ def employer_i18n(request):
         chat_unread_count = 0
         board_publishing_pending = False
     support_workspace_available = False
+    support_header = {
+        "organization_id": "",
+        "query": "",
+        "workers": False,
+        "requests": False,
+        "registries": False,
+        "staff_chats": False,
+        "time": False,
+        "transport": False,
+        "team": False,
+    }
     if getattr(request.user, "is_authenticated", False):
         # The link is intentionally absent until Support is enabled and the
         # account belongs to an active, manually approved organization.
@@ -2293,18 +2425,91 @@ def employer_i18n(request):
 
         if is_support_feature_enabled():
             from support.models import OrganizationMembership
+            from support.permission_codes import (
+                CHAT_MANAGE,
+                HOUSING_MANAGE,
+                ORGANIZATION_MANAGE,
+                REQUEST_DECIDE,
+                SCHEDULE_MANAGE,
+                TIME_VIEW,
+                TRANSPORT_MANAGE,
+                WORKER_VIEW,
+            )
+            from support.permissions import has_permission
 
-            support_workspace_available = OrganizationMembership.objects.filter(
-                user=request.user,
-                state=OrganizationMembership.STATE_ACTIVE,
-                organization__status="active",
-            ).exists()
+            memberships = list(
+                OrganizationMembership.objects.filter(
+                    user=request.user,
+                    state=OrganizationMembership.STATE_ACTIVE,
+                    organization__status="active",
+                )
+                .select_related("organization")
+                .order_by("organization__display_name", "id")
+            )
+            support_workspace_available = bool(memberships)
+            if memberships:
+                requested_organization_id = (request.GET.get("organization") or "").strip()
+                membership = next(
+                    (
+                        item
+                        for item in memberships
+                        if str(item.organization.public_id) == requested_organization_id
+                    ),
+                    memberships[0],
+                )
+                organization = membership.organization
+                support_header = {
+                    "organization_id": str(organization.public_id),
+                    "query": f"organization={organization.public_id}",
+                    "workers": has_permission(
+                        user=request.user,
+                        organization=organization,
+                        permission_code=WORKER_VIEW,
+                    ),
+                    "requests": has_permission(
+                        user=request.user,
+                        organization=organization,
+                        permission_code=REQUEST_DECIDE,
+                    ),
+                    "registries": any(
+                        has_permission(
+                            user=request.user,
+                            organization=organization,
+                            permission_code=code,
+                        )
+                        for code in (HOUSING_MANAGE, SCHEDULE_MANAGE, TRANSPORT_MANAGE)
+                    ),
+                    "staff_chats": has_permission(
+                        user=request.user,
+                        organization=organization,
+                        permission_code=CHAT_MANAGE,
+                    ),
+                    "time": has_permission(
+                        user=request.user,
+                        organization=organization,
+                        permission_code=TIME_VIEW,
+                    ),
+                    "transport": has_permission(
+                        user=request.user,
+                        organization=organization,
+                        permission_code=TRANSPORT_MANAGE,
+                    ),
+                    "team": has_permission(
+                        user=request.user,
+                        organization=organization,
+                        permission_code=ORGANIZATION_MANAGE,
+                    ),
+                }
     return {
         "employer_t": t(lang),
         "employer_wallet_total": wallet_total,
         "employer_chat_unread_count": chat_unread_count,
         "employer_board_publishing_pending": board_publishing_pending,
         "employer_support_workspace_available": support_workspace_available,
+        "employer_support_header": support_header,
+        # Language changes must return a manager to the same Support section,
+        # including the active organization filter.
+        "employer_language_next": request.get_full_path(),
         "employer_languages": [
             {
                 "code": code,

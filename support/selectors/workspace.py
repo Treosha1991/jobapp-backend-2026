@@ -23,6 +23,7 @@ from support.models import (
     ScheduledWorkShift,
     SupportApplication,
     SupportConnection,
+    SupportConversation,
     TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
@@ -33,6 +34,7 @@ from support.models import (
     WorkerRequest,
 )
 from support.permission_codes import (
+    CHAT_MANAGE,
     DOCUMENT_REQUEST,
     HOUSING_MANAGE,
     MEMBER_DELEGATE_PERMISSIONS,
@@ -91,6 +93,9 @@ def _select_membership(*, user, organization_public_id):
 
 def _permissions_for(*, user, organization):
     return {
+        "chat_manage": has_permission(
+            user=user, organization=organization, permission_code=CHAT_MANAGE
+        ),
         "pipeline": has_permission(
             user=user, organization=organization, permission_code=PIPELINE_REVIEW
         ),
@@ -364,6 +369,59 @@ def workspace_snapshot(*, user, organization_public_id=None):
         "worker_count": worker_count,
         "worker_rows": worker_rows,
         "operation_cards": operation_cards,
+    }
+
+
+def conversation_workspace_snapshot(*, user, organization_public_id=None):
+    """Return only Support conversations explicitly assigned to this staff user.
+
+    A company-wide membership alone is not enough to list a chat.  This keeps
+    manager, coordinator and group conversations private until the employer
+    adds the employee as a conversation member.
+    """
+
+    memberships, membership = _select_membership(
+        user=user,
+        organization_public_id=organization_public_id,
+    )
+    organization = membership.organization
+    permissions = _permissions_for(user=user, organization=organization)
+    if not permissions["chat_manage"]:
+        raise Http404("support_conversations_not_found")
+
+    conversations = list(
+        SupportConversation.objects.filter(
+            organization=organization,
+            state=SupportConversation.STATE_ACTIVE,
+            members__user=user,
+            members__left_at__isnull=True,
+        )
+        .prefetch_related("members__user")
+        .distinct()
+        .order_by("-updated_at", "-id")[:100]
+    )
+    rows = []
+    for conversation in conversations:
+        participant_names = [
+            _display_name(item.user)
+            for item in conversation.members.all()
+            if item.left_at is None and item.user_id != user.id
+        ]
+        rows.append(
+            {
+                "conversation_id": str(conversation.public_id),
+                "kind": conversation.kind,
+                "title": conversation.title,
+                "participants": participant_names,
+                "updated_at": conversation.updated_at,
+            }
+        )
+    return {
+        "organization": organization,
+        "membership": membership,
+        "memberships": memberships,
+        "permissions": permissions,
+        "conversation_rows": rows,
     }
 
 

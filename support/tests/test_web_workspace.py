@@ -15,6 +15,9 @@ from support.models import (
     OrganizationMembership,
     SupportApplication,
     SupportConnection,
+    SupportConversation,
+    SupportConversationMember,
+    SupportMessage,
     SupportVacancy,
     TransportRoute,
     Vehicle,
@@ -166,6 +169,69 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(
             response,
             f"/employer/support/workers/{self.worker_connection.public_id}/",
+        )
+
+    def test_support_member_opens_support_by_default_but_can_open_vacancies_from_menu(self):
+        self.client.force_login(self.owner)
+
+        default_response = self.client.get("/employer/")
+
+        self.assertRedirects(
+            default_response,
+            f"/employer/support/?organization={self.organization.public_id}",
+        )
+        vacancies_response = self.client.get("/employer/?view=vacancies")
+        self.assertEqual(vacancies_response.status_code, 200)
+        self.assertContains(vacancies_response, "Menu")
+
+    def test_owner_sees_support_first_header_and_only_assigned_staff_chats(self):
+        membership = OrganizationMembership.objects.get(
+            organization=self.organization,
+            user=self.owner,
+        )
+        conversation = SupportConversation.objects.create(
+            organization=self.organization,
+            kind=SupportConversation.KIND_GROUP,
+            title="Transport coordinators",
+            created_by=self.owner,
+        )
+        SupportConversationMember.objects.create(
+            conversation=conversation,
+            user=self.owner,
+            organization_membership=membership,
+            role=SupportConversationMember.ROLE_STAFF,
+        )
+        self.client.force_login(self.owner)
+        workspace_url = f"/employer/support/?organization={self.organization.public_id}"
+
+        workspace = self.client.get(workspace_url)
+        self.assertEqual(workspace.status_code, 200)
+        self.assertContains(workspace, "Workers")
+        self.assertContains(workspace, "Requests")
+        self.assertContains(workspace, "Registry")
+        self.assertContains(workspace, "Staff chat")
+        self.assertContains(workspace, "General chat")
+        self.assertContains(workspace, "Menu")
+
+        conversations_url = (
+            f"/employer/support/conversations/?organization={self.organization.public_id}"
+        )
+        conversations = self.client.get(conversations_url)
+        self.assertEqual(conversations.status_code, 200)
+        self.assertContains(conversations, "Transport coordinators")
+
+        detail_url = (
+            f"/employer/support/conversations/{conversation.public_id}/"
+            f"?organization={self.organization.public_id}"
+        )
+        sent = self.client.post(detail_url, {"body": "Driver route is ready."})
+        self.assertRedirects(sent, detail_url)
+        self.assertTrue(
+            SupportMessage.objects.filter(
+                conversation=conversation,
+                body="Driver route is ready.",
+                sender=self.owner,
+            ).exists()
         )
 
     def test_limited_member_gets_workspace_but_no_candidate_or_worker_data(self):

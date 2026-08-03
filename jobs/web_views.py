@@ -10,7 +10,7 @@ from django.db import transaction
 from django.db.models import F
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.utils.safestring import mark_safe
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -657,6 +657,29 @@ def phone_verify_code(request):
 
 @login_required(login_url="employer:login")
 def vacancy_list(request):
+    # A Support staff account starts in its working cabinet.  The explicit
+    # `view=vacancies` escape keeps ordinary vacancy management one click away
+    # from the compact employer menu.
+    if request.GET.get("view") != "vacancies":
+        from support.feature_flags import is_support_feature_enabled
+
+        if is_support_feature_enabled():
+            from support.models import OrganizationMembership
+
+            membership = (
+                OrganizationMembership.objects.filter(
+                    user=request.user,
+                    state=OrganizationMembership.STATE_ACTIVE,
+                    organization__status="active",
+                )
+                .select_related("organization")
+                .order_by("organization__display_name", "id")
+                .first()
+            )
+            if membership is not None:
+                return redirect(
+                    f"{reverse('support:workspace')}?organization={membership.organization.public_id}"
+                )
     vacancies = (
         Vacancy.objects.filter(created_by=request.user, is_deleted_by_moderator=False)
         .order_by("-published_at")

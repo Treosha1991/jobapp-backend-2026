@@ -34,21 +34,35 @@
     a { color: inherit; }
     .jh-shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
     .jh-topbar { position: sticky; top: 0; z-index: 5; backdrop-filter: blur(14px); background: rgba(6, 27, 45, .82); border-bottom: 1px solid var(--line); }
-    .jh-topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; }
+    .jh-topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; }
     .jh-brand { display: flex; flex:0 0 auto; align-items: center; gap: 8px; text-decoration: none; font-size:13px; font-weight: 800; letter-spacing: .2px; white-space:nowrap; }
     .jh-logo { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 11px; background: linear-gradient(145deg, #0e3757, #09243a); border: 1px solid var(--line); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
     .jh-logo img { width: 100%; height: 100%; display: block; object-fit: cover; }
-    .jh-nav { display: flex; min-width:0; align-items: center; justify-content:flex-end; gap: 6px; flex-wrap: nowrap; }
+    .jh-nav { display: flex; min-width:0; flex:1 1 auto; align-items: center; justify-content:flex-end; gap: 6px; flex-wrap: nowrap; }
     .jh-wallet { display: inline-flex; align-items:baseline; gap:4px; padding:6px 8px; border-radius:11px; border:1px solid rgba(24,223,103,.35); background:rgba(24,223,103,.08); color:#bafbd2; font-size:10px; font-weight:800; white-space:nowrap; }
     .jh-wallet strong { color:var(--green); font-size:13px; }
     .jh-btn, button.jh-btn { border:1px solid var(--line); background:rgba(20,63,97,.7); color:var(--text); padding:7px 10px; border-radius:11px; text-decoration:none; font-size:12px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; }
     .jh-chat-badge { min-width:17px; height:17px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:0 5px; background:var(--green); color:#052012; font-size:10px; font-weight:900; }
     .jh-btn.primary { background: linear-gradient(135deg, var(--green), var(--green-2)); color: #052012; border-color: rgba(24,223,103,.7); }
     .jh-btn.danger { color: var(--red); }
-    .jh-lang-switch { display:inline-flex; align-items:center; gap:3px; padding:3px; border-radius:12px; border:1px solid var(--line); background:rgba(5,22,36,.42); }
-    .jh-lang-label { color:var(--muted); font-size:10px; padding-left:5px; }
-    .jh-lang-link { min-width:29px; text-align:center; padding:6px 6px; border-radius:9px; color:var(--muted); text-decoration:none; font-weight:800; font-size:10px; }
-    .jh-lang-link.active { color: #052012; background: var(--green); }
+    .jh-menu { position:relative; flex:0 0 auto; }
+    .jh-menu > summary { list-style:none; }
+    .jh-menu > summary::-webkit-details-marker, .jh-menu-language > summary::-webkit-details-marker { display:none; }
+    .jh-menu > summary.jh-btn::after { content:"▾"; color:var(--muted); font-size:10px; transition:transform .16s ease; }
+    .jh-menu[open] > summary.jh-btn { border-color:rgba(24,223,103,.65); background:rgba(24,223,103,.11); }
+    .jh-menu[open] > summary.jh-btn::after { transform:rotate(180deg); }
+    .jh-menu-panel { position:absolute; z-index:30; top:calc(100% + 9px); right:0; width:min(280px, calc(100vw - 24px)); display:grid; gap:7px; padding:10px; border:1px solid var(--line); border-radius:16px; background:linear-gradient(180deg, rgba(20,63,97,.98), rgba(8,31,50,.98)); box-shadow:0 20px 48px rgba(0,0,0,.38); }
+    .jh-menu-panel > a, .jh-menu-panel form, .jh-menu-language { margin:0; }
+    .jh-menu-panel > a, .jh-menu-panel form button { width:100%; justify-content:flex-start; }
+    .jh-menu-separator { height:1px; margin:2px 0; background:var(--line); }
+    .jh-menu-language { border:1px solid rgba(183,224,255,.16); border-radius:12px; background:rgba(5,22,36,.32); }
+    .jh-menu-language > summary { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:9px 10px; cursor:pointer; color:#dff4ff; font-size:12px; font-weight:800; list-style:none; }
+    .jh-menu-language > summary::after { content:"▾"; color:var(--muted); font-size:10px; }
+    .jh-menu-language[open] > summary::after { transform:rotate(180deg); }
+    .jh-menu-languages { display:flex; gap:5px; padding:0 8px 9px; }
+    .jh-lang-link { min-width:31px; text-align:center; padding:6px; border-radius:9px; color:var(--muted); text-decoration:none; font-weight:800; font-size:10px; border:1px solid transparent; }
+    .jh-lang-link:hover { border-color:var(--line); color:var(--text); }
+    .jh-lang-link.active { color:#052012; background:var(--green); border-color:var(--green); }
     .jh-main { padding: 30px 0 52px; }
     .jh-card { background: linear-gradient(180deg, rgba(20,63,97,.92), rgba(11,37,60,.92)); border: 1px solid var(--line); border-radius: 22px; box-shadow: 0 18px 55px rgba(0,0,0,.23); padding: 20px; }
     .jh-title { margin: 0 0 8px; font-size: clamp(24px, 3.4vw, 38px); line-height: 1.05; }
@@ -137,7 +151,7 @@
     .jh-empty { text-align: center; padding: 44px 20px; color: var(--muted); }
     .jh-muted { color: var(--muted); }
     @media (max-width: 900px) { .jh-verify-card, .jh-verify-row { grid-template-columns: 1fr; } .jh-verify-row.compact { grid-template-columns: 1fr; } }
-    @media (max-width: 1020px) { .jh-topbar-inner { align-items:flex-start; flex-direction:column; } .jh-nav { flex-wrap:wrap; justify-content:flex-start; } }
+    @media (max-width: 1020px) { .jh-topbar-inner { align-items:flex-start; flex-direction:column; } .jh-nav { width:100%; flex-wrap:wrap; justify-content:flex-start; } .jh-menu { margin-left:auto; } }
     @media (max-width: 760px) { .jh-grid, .jh-phone-grid, .jh-housing-cost-grid { grid-template-columns: 1fr; } .jh-card { padding: 16px; border-radius: 20px; } .jh-form-section { padding: 13px; } }
   </style>
   {% block extra_head %}{% endblock %}
@@ -145,26 +159,47 @@
 <body>
   <header class="jh-topbar">
     <div class="jh-shell jh-topbar-inner">
-      <a class="jh-brand" href="{% url 'employer:vacancy_list' %}">
+      <a class="jh-brand" href="{% if employer_support_workspace_available %}{% url 'support:workspace' %}?{{ employer_support_header.query }}{% else %}{% url 'employer:vacancy_list' %}{% endif %}">
         <span class="jh-logo"><img src="{% static 'jobs/admin/app-icon.png' %}" alt="JobHub"></span>
         <span>{{ employer_t.brand }}</span>
       </a>
       <nav class="jh-nav">
-        <div class="jh-lang-switch" aria-label="{{ employer_t.language }}">
-          <span class="jh-lang-label">{{ employer_t.language }}</span>
-          {% for item in employer_languages %}
-            <a class="jh-lang-link{% if item.active %} active{% endif %}" href="{% url 'employer:set_language' item.code %}?next={{ employer_language_next|urlencode }}">{{ item.label }}</a>
-          {% endfor %}
-        </div>
         {% if request.user.is_authenticated %}
-          <span class="jh-wallet"><span>{{ employer_t.wallet_balance }}</span><strong>{{ employer_wallet_total|default:0 }}</strong><span>{{ employer_t.credits }}</span></span>
-          <a class="jh-btn" href="{% url 'employer:chat_list' %}">{{ employer_t.chats }}{% if employer_chat_unread_count %}<span class="jh-chat-badge">{{ employer_chat_unread_count }}</span>{% endif %}</a>
-          <a class="jh-btn" href="{% url 'employer:vacancy_list' %}">{{ employer_t.my_vacancies }}</a>
-          {% if employer_support_workspace_available %}<a class="jh-btn primary" href="{% url 'support:workspace' %}">{{ employer_t.support_workspace_nav }}</a>{% endif %}
-          <a class="jh-btn" href="{% url 'employer:board_publishing' %}">{{ employer_t.board_publishing }}{% if employer_board_publishing_pending %}<span class="jh-chat-badge" aria-label="Pending">!</span>{% endif %}</a>
-          <a class="jh-btn primary" href="{% url 'employer:vacancy_create' %}">{{ employer_t.add_vacancy }}</a>
-          <form method="post" action="{% url 'employer:logout' %}" style="margin:0">{% csrf_token %}<button class="jh-btn" type="submit">{{ employer_t.logout }}</button></form>
+          {% if employer_support_workspace_available %}
+            {% if employer_support_header.workers %}<a class="jh-btn primary" href="{% url 'support:workspace' %}?{{ employer_support_header.query }}#support-workers">{{ employer_t.support_nav_workers }}</a>{% endif %}
+            {% if employer_support_header.requests %}<a class="jh-btn" href="{% url 'support:worker-requests' %}?{{ employer_support_header.query }}">{{ employer_t.support_nav_requests }}</a>{% endif %}
+            {% if employer_support_header.registries %}<a class="jh-btn" href="{% url 'support:registries' %}?{{ employer_support_header.query }}">{{ employer_t.support_nav_registries }}</a>{% endif %}
+            {% if employer_support_header.staff_chats %}<a class="jh-btn" href="{% url 'support:conversations' %}?{{ employer_support_header.query }}">{{ employer_t.support_nav_staff_chats }}</a>{% endif %}
+            <a class="jh-btn" href="{% url 'employer:chat_list' %}">{{ employer_t.support_nav_general_chat }}{% if employer_chat_unread_count %}<span class="jh-chat-badge">{{ employer_chat_unread_count }}</span>{% endif %}</a>
+          {% endif %}
         {% endif %}
+        <details class="jh-menu">
+          <summary class="jh-btn">{{ employer_t.employer_menu }}</summary>
+          <div class="jh-menu-panel">
+            <details class="jh-menu-language">
+              <summary>{{ employer_t.employer_menu_language }}</summary>
+              <div class="jh-menu-languages" aria-label="{{ employer_t.language }}">
+                {% for item in employer_languages %}
+                  <a class="jh-lang-link{% if item.active %} active{% endif %}" href="{% url 'employer:set_language' item.code %}?next={{ employer_language_next|urlencode }}">{{ item.label }}</a>
+                {% endfor %}
+              </div>
+            </details>
+            {% if request.user.is_authenticated %}
+              <span class="jh-wallet"><span>{{ employer_t.wallet_balance }}</span><strong>{{ employer_wallet_total|default:0 }}</strong><span>{{ employer_t.credits }}</span></span>
+              <div class="jh-menu-separator"></div>
+              {% if employer_support_workspace_available %}
+                {% if employer_support_header.time %}<a class="jh-btn" href="{% url 'support:time' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_time }}</a>{% endif %}
+                {% if employer_support_header.transport %}<a class="jh-btn" href="{% url 'support:transport' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_transport }}</a>{% endif %}
+                {% if employer_support_header.team %}<a class="jh-btn" href="{% url 'support:team' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_team }}</a>{% endif %}
+                <div class="jh-menu-separator"></div>
+              {% endif %}
+              <a class="jh-btn" href="{% url 'employer:vacancy_list' %}?view=vacancies">{{ employer_t.my_vacancies }}</a>
+              <a class="jh-btn" href="{% url 'employer:board_publishing' %}">{{ employer_t.board_publishing }}{% if employer_board_publishing_pending %}<span class="jh-chat-badge" aria-label="Pending">!</span>{% endif %}</a>
+              <a class="jh-btn primary" href="{% url 'employer:vacancy_create' %}">{{ employer_t.add_vacancy }}</a>
+              <form method="post" action="{% url 'employer:logout' %}">{% csrf_token %}<button class="jh-btn danger" type="submit">{{ employer_t.logout }}</button></form>
+            {% endif %}
+          </div>
+        </details>
       </nav>
     </div>
   </header>

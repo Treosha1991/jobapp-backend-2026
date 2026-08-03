@@ -78,7 +78,7 @@
     </div>
 
     {% if permissions.pipeline %}
-      <section class="support-section">
+      <section class="support-section" id="support-candidates">
         <h2>{{ employer_t.support_workspace_candidates }}</h2>
         <p>{{ employer_t.support_workspace_candidates_subtitle }}</p>
         {% if application_rows %}
@@ -95,7 +95,7 @@
     {% endif %}
 
     {% if permissions.workers %}
-      <section class="support-section">
+      <section class="support-section" id="support-workers">
         <h2>{{ employer_t.support_workspace_workers }}</h2>
         <p>{{ employer_t.support_workspace_workers_subtitle }}</p>
         {% if worker_rows %}

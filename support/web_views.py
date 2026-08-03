@@ -1,3 +1,5 @@
+import uuid
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404
@@ -8,7 +10,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework.exceptions import APIException
 
-from jobs.web_i18n import tr
+from jobs.web_i18n import get_lang, tr
 
 from .feature_flags import is_support_feature_enabled
 from .permissions import worker_connection_queryset_for
@@ -23,6 +25,7 @@ from .models import (
     RouteStop,
     ScheduledWorkShift,
     SupportConnection,
+    SupportConversation,
     TransportRoute,
     Vehicle,
     WorkerProjectAssignment,
@@ -39,6 +42,7 @@ from .selectors.workspace import (
     transport_workspace_snapshot,
     worker_requests_snapshot,
     worker_card_snapshot,
+    conversation_workspace_snapshot,
     workspace_snapshot,
 )
 from .serializers import (
@@ -98,6 +102,11 @@ from .services.organizations import (
     grant_worker_access_scope,
     revoke_worker_access_scope,
 )
+from .services.conversations import (
+    mark_conversation_read,
+    require_conversation_access,
+    send_text_message,
+)
 from .permission_groups import TEAM_PERMISSION_GROUPS, permission_codes_for_group_ids
 
 
@@ -138,6 +147,91 @@ def workspace_home(request):
     if snapshot["permissions"]["organization_manage"]:
         snapshot["team_url"] = reverse("support:team")
     return render(request, "support/workspace.html", snapshot)
+
+
+@login_required(login_url="employer:login")
+def conversations_workspace(request):
+    """List only Support chats assigned to the current employee."""
+
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = conversation_workspace_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+    )
+    for item in snapshot["conversation_rows"]:
+        item["kind_label"] = tr(request, f"support_chat_kind_{item['kind']}")
+        item["detail_url"] = reverse(
+            "support:conversation-detail",
+            kwargs={"conversation_public_id": item["conversation_id"]},
+        )
+    return render(request, "support/conversations.html", snapshot)
+
+
+@login_required(login_url="employer:login")
+def conversation_detail(request, conversation_public_id):
+    """Safe browser view for one Support chat, with text messages only."""
+
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = conversation_workspace_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+    )
+    conversation = get_object_or_404(
+        SupportConversation.objects.filter(
+            organization=snapshot["organization"],
+            state=SupportConversation.STATE_ACTIVE,
+            members__user=request.user,
+            members__left_at__isnull=True,
+        )
+        .prefetch_related("members__user", "messages__sender")
+        .distinct(),
+        public_id=conversation_public_id,
+    )
+    try:
+        require_conversation_access(user=request.user, conversation=conversation)
+    except APIException as exc:
+        raise Http404("support_conversation_not_found") from exc
+
+    detail_url = (
+        f"{reverse('support:conversation-detail', kwargs={'conversation_public_id': conversation.public_id})}"
+        f"?organization={snapshot['organization'].public_id}"
+    )
+    if request.method == "POST":
+        body = (request.POST.get("body") or "").strip()
+        if not body or len(body) > 1500 or "\x00" in body:
+            messages.error(request, tr(request, "support_chat_message_invalid"))
+        else:
+            try:
+                send_text_message(
+                    sender=request.user,
+                    conversation=conversation,
+                    body=body,
+                    original_language=get_lang(request),
+                    client_message_id=uuid.uuid4(),
+                )
+            except APIException:
+                messages.error(request, tr(request, "support_chat_send_error"))
+            else:
+                return redirect(detail_url)
+    else:
+        mark_conversation_read(user=request.user, conversation=conversation)
+
+    participant_names = [
+        item.user.get_full_name().strip() or item.user.username
+        for item in conversation.members.all()
+        if item.left_at is None and item.user_id != request.user.id
+    ]
+    snapshot.update(
+        {
+            "conversation": conversation,
+            "conversation_kind_label": tr(request, f"support_chat_kind_{conversation.kind}"),
+            "participant_names": participant_names,
+            "messages": list(conversation.messages.select_related("sender").order_by("created_at", "id")[:500]),
+        }
+    )
+    return render(request, "support/conversation_detail.html", snapshot)
 
 
 def _aware_datetime(value, *, required=True):

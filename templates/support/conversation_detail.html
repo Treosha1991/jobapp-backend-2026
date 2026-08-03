@@ -1,0 +1,44 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_nav_staff_chats }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .support-chat-back { margin:0 0 18px; }
+  .support-chat-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .support-chat-people { margin:0 0 20px; color:var(--muted); }
+  .support-message-list { display:grid; gap:10px; }
+  .support-message { max-width:min(82%, 720px); padding:12px 14px; border:1px solid var(--line); border-radius:16px; background:rgba(5,22,36,.32); }
+  .support-message.mine { justify-self:end; border-color:rgba(24,223,103,.4); background:rgba(24,223,103,.10); }
+  .support-message-meta { display:flex; gap:8px; margin-bottom:6px; color:var(--muted); font-size:11px; }
+  .support-message-body { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.4; }
+  .support-chat-compose { display:grid; gap:10px; margin-top:20px; padding-top:20px; border-top:1px solid var(--line); }
+  @media (max-width:760px) { .support-message { max-width:100%; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <p class="support-chat-back"><a class="jh-btn" href="{% url 'support:conversations' %}?organization={{ organization.public_id }}">← {{ employer_t.support_chat_back }}</a></p>
+  <section class="jh-card">
+    <p class="support-chat-kicker">JobHub Support · {{ organization.display_name }}</p>
+    <h1 class="jh-title">{% if conversation.title %}{{ conversation.title }}{% else %}{{ conversation_kind_label }}{% endif %}</h1>
+    <p class="support-chat-people">{% if participant_names %}{{ participant_names|join:", " }}{% else %}{{ employer_t.support_chats_no_other_participants }}{% endif %}</p>
+    {% if messages %}
+      <div class="support-message-list">
+        {% for item in messages %}
+          <article class="support-message{% if item.sender_id == request.user.id %} mine{% endif %}">
+            <div class="support-message-meta"><strong>{% if item.sender %}{{ item.sender.get_full_name|default:item.sender.username }}{% else %}{{ employer_t.support_chat_deleted_sender }}{% endif %}</strong><span>{{ item.created_at|date:"d.m H:i" }}</span></div>
+            <div class="support-message-body">{% if item.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ item.body }}{% endif %}</div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="jh-empty"><p>{{ employer_t.support_chats_empty_messages }}</p></div>
+    {% endif %}
+    <form class="support-chat-compose" method="post">
+      {% csrf_token %}
+      <label class="jh-field" for="support-message-body"><span>{{ employer_t.support_chat_message_label }}</span><textarea class="jh-input" id="support-message-body" name="body" maxlength="1500" required placeholder="{{ employer_t.support_chat_message_placeholder }}"></textarea></label>
+      <div><button class="jh-btn primary" type="submit">{{ employer_t.support_chat_send }}</button></div>
+    </form>
+  </section>
+{% endblock %}
