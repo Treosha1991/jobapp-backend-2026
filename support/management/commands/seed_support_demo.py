@@ -4,6 +4,7 @@ The command has no effect until SUPPORT_DEMO_SEED=1 is configured explicitly.
 It never belongs in the production service build command.
 """
 
+from datetime import timedelta
 from os import environ
 
 from django.contrib.auth import get_user_model
@@ -13,6 +14,7 @@ from django.utils import timezone
 from support.models import (
     EmploymentExclusivityLock,
     OrganizationMembership,
+    SupportAccessGrant,
     SupportApplication,
     SupportConnection,
     SupportOrganization,
@@ -169,6 +171,45 @@ class Command(BaseCommand):
             connection=connection,
             defaults={"state": EmploymentExclusivityLock.STATE_ACTIVE},
         )
+
+        access_grant = (
+            SupportAccessGrant.objects.filter(
+                user=worker,
+                organization=organization,
+                reason=SupportAccessGrant.REASON_TECHNICAL,
+            )
+            .order_by("-ends_at", "-id")
+            .first()
+        )
+        access_end = timezone.now() + timedelta(days=365)
+        if access_grant is None:
+            SupportAccessGrant.objects.create(
+                user=worker,
+                organization=organization,
+                granted_by=owner,
+                starts_at=timezone.now(),
+                ends_at=access_end,
+                reason=SupportAccessGrant.REASON_TECHNICAL,
+                status=SupportAccessGrant.STATUS_ACTIVE,
+            )
+        else:
+            access_grant.granted_by = owner
+            access_grant.starts_at = timezone.now()
+            access_grant.ends_at = access_end
+            access_grant.status = SupportAccessGrant.STATUS_ACTIVE
+            access_grant.revoked_at = None
+            access_grant.revoked_by = None
+            access_grant.save(
+                update_fields=[
+                    "granted_by",
+                    "starts_at",
+                    "ends_at",
+                    "status",
+                    "revoked_at",
+                    "revoked_by",
+                    "updated_at",
+                ]
+            )
 
         self.stdout.write(
             self.style.SUCCESS(
