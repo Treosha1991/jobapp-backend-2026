@@ -22,6 +22,7 @@ from support.models import (
     HousingSite,
     MembershipInvitation,
     OrganizationMembership,
+    RouteStop,
     ScheduledWorkShift,
     SupportApplication,
     SupportConnection,
@@ -63,6 +64,19 @@ from support.permission_groups import TEAM_PERMISSION_GROUPS
 
 def _display_name(user):
     return user.get_full_name().strip() or user.username
+
+
+def _date_period_overlaps(*, starts_field, ends_field, starts_on, ends_on):
+    """Return a query for date ranges that overlap the supplied period."""
+
+    if ends_on is None:
+        return Q(**{f"{ends_field}__isnull": True}) | Q(
+            **{f"{ends_field}__gt": starts_on}
+        )
+    return Q(**{f"{starts_field}__lte": ends_on}) & (
+        Q(**{f"{ends_field}__isnull": True})
+        | Q(**{f"{ends_field}__gt": starts_on})
+    )
 
 
 def _select_membership(*, user, organization_public_id):
@@ -636,6 +650,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
     driver_routes = []
     passenger_routes = []
     vehicles = []
+    worksites = []
     if permissions["transport"]:
         driver_assignments = list(
             DriverVehicleAssignment.objects.filter(
@@ -687,6 +702,24 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                 "internal_name", "id"
             )
         )
+        worksites = list(
+            Worksite.objects.filter(organization=organization, is_active=True).order_by(
+                "internal_name", "id"
+            )
+        )
+        transport_workers = list(
+            worker_connection_queryset_for(
+                user=user,
+                organization=organization,
+                queryset=SupportConnection.objects.filter(
+                    is_archived=False,
+                    stage__in=(
+                        SupportConnection.STAGE_COORDINATOR,
+                        SupportConnection.STAGE_ACTIVE_WORKER,
+                    ),
+                ).select_related("candidate", "vacancy"),
+            ).order_by("candidate__first_name", "candidate__last_name", "candidate__username")
+        )
         for route in driver_routes:
             route.passengers_for_driver = list(route.passenger_assignments.all())
             route.occupied_seat_count = min(
@@ -698,8 +731,79 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                 route.driver_vehicle_assignment.vehicle.seat_capacity
                 - route.occupied_seat_count,
             )
+            route.is_reservation_active = (
+                route.state == TransportRoute.STATE_DRAFT
+                and route.reservation_expires_at is not None
+                and route.reservation_expires_at > timezone.now()
+            )
+            route.stops_for_builder = list(route.stops.all())
+            route.pickup_stops = [
+                item for item in route.stops_for_builder if item.kind == RouteStop.KIND_PICKUP
+            ]
+            route.dropoff_stops = [
+                item for item in route.stops_for_builder if item.kind == RouteStop.KIND_DROPOFF
+            ]
+            route.next_stop_sequence = len(route.stops_for_builder) + 1
+            route.next_boarding_order = len(route.passengers_for_driver) + 1
+            assigned_passenger_ids = {
+                item.connection_id for item in route.passengers_for_driver
+            }
+            occupied_elsewhere_ids = set(
+                TransportPassengerAssignment.objects.filter(
+                    route__organization=organization,
+                    route__state__in=(
+                        TransportRoute.STATE_DRAFT,
+                        TransportRoute.STATE_PUBLISHED,
+                    ),
+                )
+                .exclude(route=route)
+                .filter(
+                    Q(route__state=TransportRoute.STATE_PUBLISHED)
+                    | Q(route__reservation_expires_at__gt=timezone.now())
+                )
+                .filter(
+                    _date_period_overlaps(
+                        starts_field="route__starts_on",
+                        ends_field="route__ends_on",
+                        starts_on=route.starts_on,
+                        ends_on=route.ends_on,
+                    )
+                )
+                .values_list("connection_id", flat=True)
+            )
+            driver_ids = set(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    state__in=(
+                        DriverVehicleAssignment.STATE_DRAFT,
+                        DriverVehicleAssignment.STATE_PUBLISHED,
+                    ),
+                )
+                .filter(
+                    _date_period_overlaps(
+                        starts_field="starts_on",
+                        ends_field="ends_on",
+                        starts_on=route.starts_on,
+                        ends_on=route.ends_on,
+                    )
+                )
+                .values_list("driver_connection_id", flat=True)
+            )
+            route.passenger_choices = [
+                item
+                for item in transport_workers
+                if item.id != route.driver_vehicle_assignment.driver_connection_id
+                and item.id not in assigned_passenger_ids
+                and item.id not in occupied_elsewhere_ids
+                and item.id not in driver_ids
+            ]
         for passenger_assignment in passenger_routes:
             passenger_assignment.is_selected_worker = True
+        routes_by_driver_assignment_id = {
+            route.driver_vehicle_assignment_id: route for route in driver_routes
+        }
+        for assignment in driver_assignments:
+            assignment.route_for_driver = routes_by_driver_assignment_id.get(assignment.id)
 
     document_packages = []
     if permissions["document_request"]:
@@ -735,6 +839,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         "driver_routes": driver_routes,
         "passenger_routes": passenger_routes,
         "vehicles": vehicles,
+        "worksites": worksites,
         "document_packages": document_packages,
     }
 

@@ -411,6 +411,136 @@ def _worker_card_operation(request, *, snapshot):
                 ends_on=ends_on,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
+        elif action == "route_create":
+            data = _validated_post(
+                TransportRouteCreateSerializer,
+                request,
+                nullable_fields=("ends_on", "worksite_id", "departure_time"),
+                ignored_fields=("return_tab", "return_month", "return_site"),
+            )
+            driver_assignment = get_object_or_404(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    driver_connection=connection,
+                ),
+                public_id=data.pop("driver_vehicle_assignment_id"),
+            )
+            worksite_id = data.pop("worksite_id")
+            worksite = (
+                get_object_or_404(
+                    Worksite,
+                    organization=organization,
+                    public_id=worksite_id,
+                )
+                if worksite_id
+                else None
+            )
+            create_transport_route(
+                actor=request.user,
+                organization=organization,
+                driver_vehicle_assignment=driver_assignment,
+                worksite=worksite,
+                **data,
+            )
+            messages.success(request, tr(request, "support_transport_route_created"))
+        elif action == "route_stop_create":
+            route = get_object_or_404(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    driver_vehicle_assignment__driver_connection=connection,
+                ),
+                public_id=request.POST.get("route_id"),
+            )
+            data = _validated_post(
+                RouteStopCreateSerializer,
+                request,
+                nullable_fields=("housing_site_id",),
+                ignored_fields=(
+                    "route_id",
+                    "return_tab",
+                    "return_month",
+                    "return_site",
+                ),
+            )
+            housing_site_id = data.pop("housing_site_id")
+            housing_site = (
+                get_object_or_404(
+                    HousingSite,
+                    organization=organization,
+                    public_id=housing_site_id,
+                )
+                if housing_site_id
+                else None
+            )
+            add_route_stop(
+                actor=request.user,
+                route=route,
+                housing_site=housing_site,
+                **data,
+            )
+            messages.success(request, tr(request, "support_transport_stop_added"))
+        elif action == "route_passenger_create":
+            route = get_object_or_404(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    driver_vehicle_assignment__driver_connection=connection,
+                ),
+                public_id=request.POST.get("route_id"),
+            )
+            data = _validated_post(
+                RoutePassengerCreateSerializer,
+                request,
+                ignored_fields=(
+                    "route_id",
+                    "return_tab",
+                    "return_month",
+                    "return_site",
+                ),
+            )
+            passenger_connection = get_object_or_404(
+                SupportConnection,
+                organization=organization,
+                public_id=data.pop("connection_id"),
+            )
+            pickup_stop = get_object_or_404(
+                RouteStop,
+                route=route,
+                public_id=data.pop("pickup_stop_id"),
+            )
+            dropoff_stop = get_object_or_404(
+                RouteStop,
+                route=route,
+                public_id=data.pop("dropoff_stop_id"),
+            )
+            add_route_passenger(
+                actor=request.user,
+                route=route,
+                connection=passenger_connection,
+                pickup_stop=pickup_stop,
+                dropoff_stop=dropoff_stop,
+                **data,
+            )
+            messages.success(request, tr(request, "support_transport_passenger_added"))
+        elif action == "route_publish":
+            route = get_object_or_404(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    driver_vehicle_assignment__driver_connection=connection,
+                ),
+                public_id=request.POST.get("route_id"),
+            )
+            publish_transport_route(actor=request.user, route=route)
+            messages.success(request, tr(request, "support_transport_route_published"))
+        elif action == "route_cancel":
+            route = get_object_or_404(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    driver_vehicle_assignment__driver_connection=connection,
+                ),
+                public_id=request.POST.get("route_id"),
+            )
+            cancel_transport_route(actor=request.user, route=route)
+            messages.success(request, tr(request, "support_transport_route_cancelled"))
         elif action == "scheduled_shift_create":
             work_date = _operation_date(request.POST.get("work_date"))
             starts_at = _aware_datetime(request.POST.get("starts_at"))

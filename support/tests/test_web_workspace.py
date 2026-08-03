@@ -13,6 +13,7 @@ from support.models import (
     DriverVehicleAssignment,
     NotificationOutbox,
     OrganizationMembership,
+    RouteStop,
     SupportApplication,
     SupportConnection,
     SupportConversation,
@@ -658,6 +659,116 @@ class SupportWorkspaceWebTests(TestCase):
             published,
             "The route was published. The driver and passengers will receive a notification.",
         )
+
+    def test_owner_builds_a_route_and_adds_a_passenger_from_driver_card(self):
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Driver car",
+            registration_identifier="NL-DR-01",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        passenger_user = User.objects.create_user(
+            username="worker-card-passenger",
+            first_name="Ihor",
+            last_name="Passenger",
+            email="worker-card-passenger@example.com",
+            password="password",
+        )
+        passenger_application = SupportApplication.objects.create(
+            vacancy=self.worker_connection.vacancy,
+            candidate=passenger_user,
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        passenger_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=passenger_application,
+            candidate=passenger_user,
+            stage=SupportConnection.STAGE_COORDINATOR,
+        )
+        starts_on = date.today() + timedelta(days=7)
+        driver_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.worker_connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+            created_by=self.owner,
+        )
+        card_url = f"/employer/support/workers/{self.worker_connection.public_id}/?tab=transport"
+        self.client.force_login(self.owner)
+
+        created = self.client.post(
+            card_url,
+            {
+                "action": "route_create",
+                "driver_vehicle_assignment_id": str(driver_assignment.public_id),
+                "internal_name": "Card route",
+                "worksite_id": "",
+                "starts_on": starts_on.isoformat(),
+                "ends_on": "",
+                "departure_time": "",
+                "return_tab": "transport",
+            },
+            follow=True,
+        )
+        self.assertEqual(created.status_code, 200)
+        self.assertContains(created, "The route draft was created.")
+        route = TransportRoute.objects.get(organization=self.organization, internal_name="Card route")
+
+        for sequence, kind, label in (
+            (1, "pickup", "Home"),
+            (2, "dropoff", "Work"),
+        ):
+            response = self.client.post(
+                card_url,
+                {
+                    "action": "route_stop_create",
+                    "route_id": str(route.public_id),
+                    "sequence": str(sequence),
+                    "kind": kind,
+                    "label": label,
+                    "housing_site_id": "",
+                    "return_tab": "transport",
+                },
+                follow=True,
+            )
+            self.assertEqual(response.status_code, 200)
+
+        stops = list(RouteStop.objects.filter(route=route).order_by("sequence"))
+        passenger_added = self.client.post(
+            card_url,
+            {
+                "action": "route_passenger_create",
+                "route_id": str(route.public_id),
+                "connection_id": str(passenger_connection.public_id),
+                "pickup_stop_id": str(stops[0].public_id),
+                "dropoff_stop_id": str(stops[1].public_id),
+                "boarding_order": "1",
+                "return_tab": "transport",
+            },
+            follow=True,
+        )
+        self.assertEqual(passenger_added.status_code, 200)
+        self.assertContains(passenger_added, "The passenger was added")
+
+        published = self.client.post(
+            card_url,
+            {
+                "action": "route_publish",
+                "route_id": str(route.public_id),
+                "return_tab": "transport",
+            },
+            follow=True,
+        )
+        self.assertEqual(published.status_code, 200)
+        route.refresh_from_db()
+        self.assertEqual(route.state, TransportRoute.STATE_PUBLISHED)
+        self.assertContains(published, "Card route")
 
     @override_settings(SUPPORT_FEATURE_ENABLED=False)
     def test_workspace_stays_hidden_when_feature_flag_is_off(self):
