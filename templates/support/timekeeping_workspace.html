@@ -1,0 +1,118 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_time_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .time-back { margin-bottom:16px; }
+  .time-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .time-filter { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:11px; align-items:end; margin:18px 0; padding:14px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); }
+  .time-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:18px 0; }
+  .time-stat { padding:15px; border:1px solid var(--line); border-radius:16px; background:rgba(5,22,36,.28); }
+  .time-stat span { display:block; color:var(--muted); font-size:11px; font-weight:800; }
+  .time-stat strong { display:block; margin-top:7px; color:var(--green); font-size:25px; }
+  .time-section { margin-top:25px; padding-top:23px; border-top:1px solid var(--line); }
+  .time-section h2 { margin:0 0 5px; font-size:21px; }
+  .time-section > p { margin:0 0 15px; color:var(--muted); line-height:1.45; }
+  .time-form { margin-top:14px; padding:15px; border:1px solid rgba(24,223,103,.3); border-radius:17px; background:linear-gradient(135deg,rgba(24,223,103,.07),rgba(5,22,36,.25)); }
+  .time-form h3 { margin:0 0 11px; font-size:16px; }
+  .time-form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:11px; }
+  .time-form .jh-actions { margin-top:14px; }
+  .time-shift { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:14px; margin-top:9px; border:1px solid var(--line); border-radius:16px; background:rgba(5,22,36,.28); }
+  .time-shift h3 { margin:0; font-size:15px; }
+  .time-shift p { margin:6px 0 0; color:var(--muted); line-height:1.4; }
+  .time-entry-actions { display:grid; gap:9px; min-width:210px; }
+  .time-entry-actions form { margin:0; }
+  .time-entry-actions .jh-input { min-height:36px; padding:7px 9px; }
+  .time-entry-edit { margin-top:9px; padding:11px; border:1px solid var(--line); border-radius:13px; background:rgba(5,22,36,.22); }
+  .time-entry-edit summary { cursor:pointer; color:#ccecff; font-weight:800; }
+  .time-entry-edit .time-form-grid { margin-top:11px; }
+  .time-empty { padding:18px; color:var(--muted); border:1px dashed var(--line); border-radius:15px; text-align:center; }
+  .time-note { margin:18px 0; padding:13px 15px; border:1px solid rgba(110,199,255,.3); border-radius:16px; color:#ccecff; background:rgba(110,199,255,.08); line-height:1.45; }
+  @media (max-width:850px) { .time-filter, .time-summary, .time-form-grid { grid-template-columns:1fr; } .time-shift { flex-direction:column; } .time-entry-actions { width:100%; min-width:0; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions time-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a></div>
+  <section class="jh-card">
+    <p class="time-kicker">JobHub Support · {{ organization.display_name }}</p>
+    <h1 class="jh-title">{{ employer_t.support_time_title }}</h1>
+    <p class="jh-subtitle">{{ employer_t.support_time_subtitle }}</p>
+    <div class="time-note">{{ employer_t.support_time_note }}</div>
+
+    <form class="time-filter" method="get">
+      <input type="hidden" name="organization" value="{{ organization.public_id }}">
+      <label class="jh-field"><span>{{ employer_t.support_time_date_from }}</span><input class="jh-input" type="date" name="date_from" value="{{ date_from|date:'Y-m-d' }}"></label>
+      <label class="jh-field"><span>{{ employer_t.support_time_date_to }}</span><input class="jh-input" type="date" name="date_to" value="{{ date_to|date:'Y-m-d' }}"></label>
+      <button class="jh-btn primary" type="submit">{{ employer_t.support_time_apply_period }}</button>
+    </form>
+
+    {% if permissions.time_view %}
+      <div class="time-summary">
+        <article class="time-stat"><span>{{ employer_t.support_time_total_minutes }}</span><strong>{{ totals.worked_minutes }}</strong></article>
+        <article class="time-stat"><span>{{ employer_t.support_time_total_duration }}</span><strong>{{ totals.duration_label }}</strong></article>
+        <article class="time-stat"><span>{{ employer_t.support_time_total_decimal }}</span><strong>{{ totals.decimal_hours_label }}</strong></article>
+      </div>
+    {% endif %}
+
+    {% if permissions.schedule %}
+      <section class="time-section">
+        <h2>{{ employer_t.support_time_schedule }}</h2>
+        <p>{{ employer_t.support_time_schedule_text }}</p>
+        {% if workers %}
+          <form class="time-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="scheduled_shift_draft"><input type="hidden" name="date_from" value="{{ date_from|date:'Y-m-d' }}"><input type="hidden" name="date_to" value="{{ date_to|date:'Y-m-d' }}">
+            <h3>{{ employer_t.support_time_new_shift }}</h3>
+            <div class="time-form-grid">
+              <label class="jh-field"><span>{{ employer_t.support_time_worker }}</span><select class="jh-input" name="connection_id" required>{% for worker in workers %}<option value="{{ worker.public_id }}">{{ worker.time_label }}</option>{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_time_work_date }}</span><input class="jh-input" type="date" name="work_date" value="{{ date_to|date:'Y-m-d' }}" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_time_label }}</span><input class="jh-input" name="worker_label" maxlength="160"></label>
+              <label class="jh-field"><span>{{ employer_t.support_time_start }}</span><input class="jh-input" type="datetime-local" name="starts_at" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_time_end }}</span><input class="jh-input" type="datetime-local" name="ends_at" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_time_break }}</span><input class="jh-input" type="number" name="break_minutes" min="0" max="720" value="0" required></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
+          </form>
+        {% else %}<div class="time-empty">{{ employer_t.support_time_no_workers }}</div>{% endif %}
+
+        <div class="time-shift-list">
+          {% for shift in scheduled_shifts %}
+            <article class="time-shift">
+              <div><h3>{{ shift.worker_display_name }} · {{ shift.work_date|date:'d.m.Y' }}</h3><p>{{ shift.starts_at|date:'d.m.Y H:i' }} — {{ shift.ends_at|date:'d.m.Y H:i' }} · {{ employer_t.support_time_break }}: {{ shift.break_minutes }}{% if shift.worker_label %}<br>{{ shift.worker_label }}{% endif %}</p></div>
+              <div class="jh-actions" style="margin-top:0"><span class="jh-status {% if shift.state == 'published' %}success{% else %}warning{% endif %}">{{ shift.state_label }}</span>{% if shift.state == 'draft' %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="scheduled_shift_publish"><input type="hidden" name="shift_id" value="{{ shift.public_id }}"><input type="hidden" name="date_from" value="{{ date_from|date:'Y-m-d' }}"><input type="hidden" name="date_to" value="{{ date_to|date:'Y-m-d' }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form>{% endif %}{% if shift.state != 'cancelled' %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="scheduled_shift_cancel"><input type="hidden" name="shift_id" value="{{ shift.public_id }}"><input type="hidden" name="date_from" value="{{ date_from|date:'Y-m-d' }}"><input type="hidden" name="date_to" value="{{ date_to|date:'Y-m-d' }}"><button class="jh-btn" type="submit">{{ employer_t.support_worker_cancel }}</button></form>{% endif %}</div>
+            </article>
+          {% empty %}<div class="time-empty">{{ employer_t.support_time_no_shifts }}</div>{% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
+    {% if permissions.time_view %}
+      <section class="time-section">
+        <h2>{{ employer_t.support_time_ledger }}</h2>
+        <p>{{ employer_t.support_time_ledger_text }}</p>
+        {% if entries %}
+          <div class="jh-table-wrap"><table class="jh-table"><thead><tr><th>{{ employer_t.support_time_worker }}</th><th>{{ employer_t.support_time_work_date }}</th><th>{{ employer_t.support_time_actual }}</th><th>{{ employer_t.support_time_break }}</th><th>{{ employer_t.support_time_total_duration }}</th><th>{{ employer_t.support_time_total_decimal }}</th><th>{{ employer_t.support_time_status }}</th><th>{{ employer_t.support_time_actions }}</th></tr></thead><tbody>
+            {% for entry in entries %}
+              <tr>
+                <td><strong><a href="{{ entry.worker_url }}">{{ entry.worker_display_name }}</a></strong><br><span class="jh-muted">{{ entry.connection.vacancy.internal_title }}</span></td>
+                <td>{{ entry.work_date|date:'d.m.Y' }}</td>
+                <td>{{ entry.started_at|date:'d.m.Y H:i' }}<br>{{ entry.ended_at|date:'d.m.Y H:i' }}</td>
+                <td>{{ entry.break_minutes }}</td><td><strong>{{ entry.duration_label }}</strong></td><td>{{ entry.decimal_hours_label }}</td><td><span class="jh-status {% if entry.status == 'confirmed' %}success{% elif entry.status == 'submitted' %}info{% else %}warning{% endif %}">{{ entry.status_label }}</span>{% if entry.manager_note %}<br><span class="jh-muted">{{ entry.manager_note }}</span>{% endif %}</td>
+                <td><div class="time-entry-actions">
+                  {% if permissions.time_review and entry.status == 'submitted' %}
+                    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="time_entry_confirm"><input type="hidden" name="entry_id" value="{{ entry.public_id }}"><input type="hidden" name="date_from" value="{{ date_from|date:'Y-m-d' }}"><input type="hidden" name="date_to" value="{{ date_to|date:'Y-m-d' }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_time_confirm }}</button></form>
+                    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="time_entry_correction"><input type="hidden" name="entry_id" value="{{ entry.public_id }}"><input type="hidden" name="date_from" value="{{ date_from|date:'Y-m-d' }}"><input type="hidden" name="date_to" value="{{ date_to|date:'Y-m-d' }}"><input class="jh-input" name="reason" maxlength="500" placeholder="{{ employer_t.support_time_correction_reason }}" required><button class="jh-btn" type="submit">{{ employer_t.support_time_request_correction }}</button></form>
+                  {% endif %}
+                  {% if permissions.time_edit %}
+                    <details class="time-entry-edit"><summary>{{ employer_t.support_time_edit }}</summary><form method="post" class="time-form" style="margin-top:10px">{% csrf_token %}<input type="hidden" name="action" value="time_entry_edit"><input type="hidden" name="entry_id" value="{{ entry.public_id }}"><input type="hidden" name="date_from" value="{{ date_from|date:'Y-m-d' }}"><input type="hidden" name="date_to" value="{{ date_to|date:'Y-m-d' }}"><div class="time-form-grid"><label class="jh-field"><span>{{ employer_t.support_time_start }}</span><input class="jh-input" type="datetime-local" name="started_at" value="{{ entry.started_at|date:'Y-m-d' }}T{{ entry.started_at|time:'H:i' }}" required></label><label class="jh-field"><span>{{ employer_t.support_time_end }}</span><input class="jh-input" type="datetime-local" name="ended_at" value="{{ entry.ended_at|date:'Y-m-d' }}T{{ entry.ended_at|time:'H:i' }}" required></label><label class="jh-field"><span>{{ employer_t.support_time_break }}</span><input class="jh-input" type="number" name="break_minutes" min="0" max="720" value="{{ entry.break_minutes }}" required></label><label class="jh-field"><span>{{ employer_t.support_time_edit_reason }}</span><input class="jh-input" name="reason" maxlength="500" required></label></div><div class="jh-actions"><button class="jh-btn" type="submit">{{ employer_t.support_time_save_change }}</button></div></form></details>
+                  {% endif %}
+                </div></td>
+              </tr>
+            {% endfor %}
+          </tbody></table></div>
+        {% else %}<div class="time-empty">{{ employer_t.support_time_no_entries }}</div>{% endif %}
+      </section>
+    {% endif %}
+  </section>
+{% endblock %}

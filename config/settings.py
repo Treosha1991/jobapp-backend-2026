@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework.authtoken",
     "jobs",
+    "support",
     
 
 ]
@@ -206,6 +207,14 @@ GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = os.environ.get(
 ).strip()
 
 REWARDED_ADS_ENABLED = os.environ.get("REWARDED_ADS_ENABLED", "0") == "1"
+
+# JobHub Support is developed behind a server-side feature flag.  It is off by
+# default so deploying the new Django app cannot change the public JobHub flow.
+SUPPORT_FEATURE_ENABLED = os.environ.get("SUPPORT_FEATURE_ENABLED", "0") == "1"
+# Live Support-chat text must not be sent to an external translation provider
+# until its privacy/retention terms have been reviewed.  The translation API is
+# intentionally disabled by default, but its safe cache/access boundary exists.
+SUPPORT_TRANSLATION_PROVIDER = os.environ.get("SUPPORT_TRANSLATION_PROVIDER", "disabled").strip().lower()
 
 
 def _env_int(name, default):

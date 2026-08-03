@@ -1,0 +1,163 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ candidate_name }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .worker-back { margin-bottom:16px; }
+  .worker-header { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; flex-wrap:wrap; }
+  .worker-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .worker-meta { display:grid; grid-template-columns:repeat(2,minmax(170px,1fr)); gap:10px; min-width:min(100%,420px); }
+  .worker-meta div { padding:12px 13px; border:1px solid var(--line); border-radius:14px; background:rgba(5,22,36,.3); }
+  .worker-meta span { display:block; color:var(--muted); font-size:11px; font-weight:800; }
+  .worker-meta strong { display:block; margin-top:5px; font-size:13px; }
+  .worker-warning { margin:19px 0; padding:13px 15px; border:1px solid rgba(255,211,106,.35); border-radius:16px; color:#ffe7ae; background:rgba(255,211,106,.08); line-height:1.45; }
+  .worker-section { margin-top:25px; padding-top:23px; border-top:1px solid var(--line); }
+  .worker-section h2 { margin:0 0 5px; font-size:21px; }
+  .worker-section > p { margin:0 0 15px; color:var(--muted); line-height:1.45; }
+  .worker-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:start; margin-top:9px; padding:14px; border:1px solid var(--line); border-radius:16px; background:rgba(5,22,36,.28); }
+  .worker-item h3 { margin:0; font-size:14px; }
+  .worker-item p { margin:6px 0 0; color:var(--muted); line-height:1.4; }
+  .worker-form { margin-top:14px; padding:15px; border:1px solid rgba(24,223,103,.28); border-radius:17px; background:linear-gradient(135deg,rgba(24,223,103,.07),rgba(5,22,36,.25)); }
+  .worker-form h3 { margin:0 0 13px; font-size:16px; }
+  .worker-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+  .worker-form .jh-actions { margin-top:14px; }
+  .worker-empty { padding:16px; color:var(--muted); border:1px dashed var(--line); border-radius:15px; text-align:center; }
+  .worker-status { white-space:nowrap; }
+  @media (max-width:760px) { .worker-meta, .worker-form-grid { grid-template-columns:1fr; } .worker-item { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions worker-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a>{% if time_url %}<a class="jh-btn primary" href="{{ time_url }}">{{ employer_t.support_time_workspace_link }}</a>{% endif %}{% if team_url %}<a class="jh-btn" href="{{ team_url }}">{{ employer_t.support_team_workspace_link }}</a>{% endif %}{% if registry_url %}<a class="jh-btn" href="{{ registry_url }}">{{ employer_t.support_workspace_registries }}</a>{% endif %}{% if transport_url %}<a class="jh-btn" href="{{ transport_url }}">{{ employer_t.support_transport_builder }}</a>{% endif %}</div>
+  <section class="jh-card">
+    <div class="worker-header">
+      <div>
+        <p class="worker-kicker">JobHub Support · {{ organization.display_name }}</p>
+        <h1 class="jh-title">{{ candidate_name }}</h1>
+        <p class="jh-subtitle">{{ employer_t.support_worker_intro }}</p>
+      </div>
+      <div class="worker-meta">
+        <div><span>{{ employer_t.support_worker_vacancy }}</span><strong>{{ connection.vacancy.internal_title }}</strong></div>
+        <div><span>{{ employer_t.support_worker_stage }}</span><strong>{{ connection.stage_label }}</strong></div>
+      </div>
+    </div>
+
+    {% if not can_operate %}<div class="worker-warning">{{ employer_t.support_worker_not_ready }}</div>{% endif %}
+
+    {% if permissions.document_request %}
+      <section class="worker-section">
+        <h2>{{ employer_t.support_documents_title }}</h2>
+        <p>{{ employer_t.support_documents_text }}</p>
+        {% for item in document_packages %}
+          <article class="worker-item">
+            <div>
+              <h3>{{ item.requested_items_label }}</h3>
+              <p>{{ employer_t.support_documents_recipient }}: {{ item.recipient_email }}<br>{{ employer_t.support_documents_code }}: {{ item.account_reference.reference_code }}{% if item.additional_instructions %}<br>{{ item.additional_instructions }}{% endif %}{% if item.manager_note %}<br>{{ employer_t.support_documents_note }}: {{ item.manager_note }}{% endif %}</p>
+            </div>
+            <div class="worker-status">
+              <span class="jh-status {% if item.status == 'completed' %}success{% elif item.status == 'needs_correction' %}warning{% endif %}">{{ item.status_label }}</span>
+              {% if item.status == 'sent_to_employer' %}
+                <form method="post" class="jh-actions" style="margin-top:8px">{% csrf_token %}<input type="hidden" name="action" value="document_package_complete"><input type="hidden" name="package_id" value="{{ item.public_id }}"><input class="jh-input" name="manager_note" maxlength="500" placeholder="{{ employer_t.support_documents_note }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_documents_complete }}</button></form>
+              {% endif %}
+              {% if item.status == 'requested' or item.status == 'sent_to_employer' or item.status == 'needs_correction' %}
+                <form method="post" class="jh-actions" style="margin-top:8px">{% csrf_token %}<input type="hidden" name="action" value="document_package_correction"><input type="hidden" name="package_id" value="{{ item.public_id }}"><input class="jh-input" name="manager_note" maxlength="500" required placeholder="{{ employer_t.support_documents_note }}"><button class="jh-btn" type="submit">{{ employer_t.support_documents_correction }}</button></form>
+                <form method="post" class="jh-actions" style="margin-top:8px">{% csrf_token %}<input type="hidden" name="action" value="document_package_not_required"><input type="hidden" name="package_id" value="{{ item.public_id }}"><input type="hidden" name="manager_note" value=""><button class="jh-btn" type="submit">{{ employer_t.support_documents_not_required }}</button></form>
+              {% endif %}
+            </div>
+          </article>
+        {% empty %}<div class="worker-empty">{{ employer_t.support_documents_no_items }}</div>{% endfor %}
+        <form class="worker-form" method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="document_package_create">
+          <h3>{{ employer_t.support_documents_create }}</h3>
+          <p>{{ employer_t.support_documents_types }}</p>
+          <div class="worker-form-grid">
+            <label><input type="checkbox" name="document_type" value="passport"> {{ employer_t.support_document_passport }}</label><label><input type="checkbox" name="document_type" value="visa"> {{ employer_t.support_document_visa }}</label><label><input type="checkbox" name="document_type" value="residence_permit"> {{ employer_t.support_document_residence_permit }}</label><label><input type="checkbox" name="document_type" value="pesel"> {{ employer_t.support_document_pesel }}</label><label><input type="checkbox" name="document_type" value="bsn"> {{ employer_t.support_document_bsn }}</label><label><input type="checkbox" name="document_type" value="bank_account"> {{ employer_t.support_document_bank_account }}</label><label><input type="checkbox" name="document_type" value="driving_license"> {{ employer_t.support_document_driving_license }}</label><label><input type="checkbox" name="document_type" value="custom"> {{ employer_t.support_documents_custom }}</label>
+            <label class="jh-field"><span>{{ employer_t.support_documents_custom_label }}</span><input class="jh-input" name="custom_document_label" maxlength="80"></label>
+            <label class="jh-field"><span>{{ employer_t.support_documents_instructions }}</span><input class="jh-input" name="additional_instructions" maxlength="500"></label>
+          </div>
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_documents_send }}</button></div>
+        </form>
+      </section>
+    {% endif %}
+
+    {% if permissions.housing %}
+      <section class="worker-section">
+        <h2>{{ employer_t.support_worker_housing }}</h2>
+        <p>{{ employer_t.support_worker_housing_text }}</p>
+        {% for item in housing_assignments %}
+          <article class="worker-item">
+            <div><h3>{{ item.place.room.site.internal_name }} · {{ item.place.room.label }} · {{ item.place.label }}</h3><p>{{ employer_t.support_worker_check_in }}: {{ item.check_in_at|date:"d.m.Y H:i" }}{% if item.check_out_at %}<br>{{ employer_t.support_worker_check_out }}: {{ item.check_out_at|date:"d.m.Y H:i" }}{% endif %}</p></div>
+            <div class="worker-status"><span class="jh-status {% if item.state == 'published' %}success{% else %}warning{% endif %}">{{ item.state_label }}</span>{% if item.state == 'draft' and can_operate %}<form method="post" class="jh-actions" style="margin-top:8px">{% csrf_token %}<input type="hidden" name="action" value="publish_housing"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form>{% endif %}{% if item.state != 'cancelled' and can_operate %}<form method="post" class="jh-actions" style="margin-top:8px">{% csrf_token %}<input type="hidden" name="action" value="cancel_housing"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_worker_cancel }}</button></form>{% endif %}</div>
+          </article>
+        {% empty %}<div class="worker-empty">{{ employer_t.support_worker_no_assignments }}</div>{% endfor %}
+
+        {% if can_operate and housing_places %}
+          <form class="worker-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="housing_draft">
+            <h3>{{ employer_t.support_worker_create_housing }}</h3>
+            <div class="worker-form-grid">
+              <label class="jh-field"><span>{{ employer_t.support_worker_place }}</span><select class="jh-input" name="place_id" required>{% for item in housing_places %}<option value="{{ item.public_id }}">{{ item.room.site.internal_name }} · {{ item.room.label }} · {{ item.label }}</option>{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_check_in }}</span><input class="jh-input" name="check_in_at" type="datetime-local" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_check_out }}</span><input class="jh-input" name="check_out_at" type="datetime-local"></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
+          </form>
+        {% elif can_operate %}<div class="worker-empty">{{ employer_t.support_worker_registry_empty }}</div>{% endif %}
+      </section>
+    {% endif %}
+
+    {% if permissions.work %}
+      <section class="worker-section">
+        <h2>{{ employer_t.support_worker_work }}</h2>
+        <p>{{ employer_t.support_worker_work_text }}</p>
+        {% for item in work_assignments %}
+          <article class="worker-item">
+            <div><h3>{{ item.project.worker_visible_name }}</h3><p>{{ item.project.internal_name }}{% if item.worker_role %}<br>{{ employer_t.support_worker_role }}: {{ item.worker_role }}{% endif %}<br>{{ employer_t.support_worker_starts }}: {{ item.starts_at|date:"d.m.Y H:i" }}{% if item.ends_at %}<br>{{ employer_t.support_worker_ends }}: {{ item.ends_at|date:"d.m.Y H:i" }}{% endif %}</p></div>
+            <div class="worker-status"><span class="jh-status {% if item.state == 'published' %}success{% else %}warning{% endif %}">{{ item.state_label }}</span>{% if item.state == 'draft' and can_operate %}<form method="post" class="jh-actions" style="margin-top:8px">{% csrf_token %}<input type="hidden" name="action" value="publish_work"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form>{% endif %}{% if item.state != 'cancelled' and can_operate %}<form method="post" class="jh-actions" style="margin-top:8px">{% csrf_token %}<input type="hidden" name="action" value="cancel_work"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_worker_cancel }}</button></form>{% endif %}</div>
+          </article>
+        {% empty %}<div class="worker-empty">{{ employer_t.support_worker_no_assignments }}</div>{% endfor %}
+
+        {% if can_operate and work_projects %}
+          <form class="worker-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="work_draft">
+            <h3>{{ employer_t.support_worker_create_work }}</h3>
+            <div class="worker-form-grid">
+              <label class="jh-field"><span>{{ employer_t.support_worker_project }}</span><select class="jh-input" name="project_id" required>{% for item in work_projects %}<option value="{{ item.public_id }}">{{ item.worker_visible_name }} · {{ item.internal_name }}</option>{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_role }}</span><input class="jh-input" name="worker_role" maxlength="160"></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" name="starts_at" type="datetime-local" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_at" type="datetime-local"></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
+          </form>
+        {% elif can_operate %}<div class="worker-empty">{{ employer_t.support_worker_registry_empty }}</div>{% endif %}
+      </section>
+    {% endif %}
+
+    {% if permissions.transport %}
+      <section class="worker-section">
+        <h2>{{ employer_t.support_worker_transport }}</h2>
+        <p>{{ employer_t.support_worker_transport_text }}</p>
+        {% for item in driver_assignments %}
+          <article class="worker-item"><div><h3>{{ employer_t.support_worker_driver }} · {{ item.vehicle.internal_name }}</h3><p>{{ employer_t.support_worker_vehicle_places }}: {{ item.vehicle.seat_capacity }}<br>{{ employer_t.support_worker_starts }}: {{ item.starts_on|date:"d.m.Y" }}{% if item.ends_on %}<br>{{ employer_t.support_worker_ends }}: {{ item.ends_on|date:"d.m.Y" }}{% endif %}</p></div><span class="jh-status {% if item.state == 'published' %}success{% else %}warning{% endif %}">{{ item.state_label }}</span></article>
+        {% endfor %}
+        {% for item in passenger_routes %}
+          <article class="worker-item"><div><h3>{{ employer_t.support_worker_passenger_route }} · {{ item.route.internal_name }}</h3><p>{{ item.route.driver_vehicle_assignment.vehicle.internal_name }}<br>{{ employer_t.support_worker_starts }}: {{ item.route.starts_on|date:"d.m.Y" }}</p></div><span class="jh-status {% if item.route.state == 'published' %}success{% else %}warning{% endif %}">{{ item.route.state_label }}</span></article>
+        {% empty %}{% if not driver_assignments %}<div class="worker-empty">{{ employer_t.support_worker_no_assignments }}</div>{% endif %}{% endfor %}
+
+        {% if can_operate and vehicles %}
+          <form class="worker-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft">
+            <h3>{{ employer_t.support_worker_create_driver }}</h3>
+            <div class="worker-form-grid">
+              <label class="jh-field"><span>{{ employer_t.support_worker_vehicle }}</span><select class="jh-input" name="vehicle_id" required>{% for item in vehicles %}<option value="{{ item.public_id }}">{{ item.internal_name }} · {{ item.registration_identifier }} · {{ item.seat_capacity }}</option>{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" name="starts_on" type="date" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_on" type="date"></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
+          </form>
+        {% elif can_operate %}<div class="worker-empty">{{ employer_t.support_worker_registry_empty }}</div>{% endif %}
+      </section>
+    {% endif %}
+  </section>
+{% endblock %}

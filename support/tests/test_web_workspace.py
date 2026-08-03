@@ -1,0 +1,558 @@
+from datetime import date, timedelta
+
+from django.contrib.auth.models import User
+from django.test import TestCase, override_settings
+from django.utils import timezone
+
+from support.models import (
+    HousingAssignment,
+    HousingPlace,
+    HousingRoom,
+    HousingSite,
+    DriverVehicleAssignment,
+    NotificationOutbox,
+    OrganizationMembership,
+    SupportApplication,
+    SupportConnection,
+    SupportVacancy,
+    TransportRoute,
+    Vehicle,
+    WorkerProjectAssignment,
+    WorkProject,
+    Worksite,
+)
+from support.services.organizations import activate_organization, create_organization
+
+
+@override_settings(SUPPORT_FEATURE_ENABLED=True)
+class SupportWorkspaceWebTests(TestCase):
+    def setUp(self):
+        self.operator = User.objects.create_user(
+            username="workspace-operator",
+            email="workspace-operator@example.com",
+            password="password",
+            is_staff=True,
+        )
+        self.owner = User.objects.create_user(
+            username="workspace-owner",
+            first_name="Olena",
+            last_name="Owner",
+            email="workspace-owner@example.com",
+            password="password",
+        )
+        self.candidate = User.objects.create_user(
+            username="workspace-candidate",
+            first_name="Andrei",
+            last_name="Worker",
+            email="workspace-candidate@example.com",
+            password="password",
+        )
+        self.limited_member = User.objects.create_user(
+            username="workspace-limited",
+            email="workspace-limited@example.com",
+            password="password",
+        )
+        self.outsider = User.objects.create_user(
+            username="workspace-outsider",
+            email="workspace-outsider@example.com",
+            password="password",
+        )
+        self.organization, _ = create_organization(
+            jobhub_operator=self.operator,
+            legal_name="Workspace Agency sp. z o.o.",
+            display_name="Workspace Agency",
+            owner_email=self.owner.email,
+        )
+        activate_organization(jobhub_operator=self.operator, organization=self.organization)
+        OrganizationMembership.objects.create(
+            organization=self.organization,
+            user=self.limited_member,
+            display_role="Limited",
+            created_by=self.owner,
+            accepted_at=timezone.now(),
+        )
+        self._create_candidate_records()
+
+    def _create_candidate_records(self):
+        vacancy = SupportVacancy.objects.create(
+            organization=self.organization,
+            internal_title="Packing helper",
+            created_by=self.owner,
+        )
+        SupportApplication.objects.create(
+            vacancy=vacancy,
+            candidate=self.candidate,
+            revision=1,
+            preferred_language="ru",
+            citizenship_country_code="BY",
+            current_country_code="PL",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+        )
+        working_application = SupportApplication.objects.create(
+            vacancy=vacancy,
+            candidate=User.objects.create_user(
+                username="workspace-active-worker",
+                email="workspace-active-worker@example.com",
+                password="password",
+            ),
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        self.worker_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=vacancy,
+            application=working_application,
+            candidate=working_application.candidate,
+            stage=SupportConnection.STAGE_COORDINATOR,
+        )
+
+    def test_owner_sees_only_approved_workspace_information_and_navigation_link(self):
+        self.client.force_login(self.owner)
+
+        response = self.client.get("/employer/support/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Workspace Agency")
+        self.assertContains(response, "Andrei Worker")
+        self.assertContains(response, "Packing helper")
+        self.assertContains(response, "JobHub Support")
+        self.assertNotContains(response, "Blauwe Slank")
+        self.assertContains(
+            response,
+            f"/employer/support/workers/{self.worker_connection.public_id}/",
+        )
+
+    def test_limited_member_gets_workspace_but_no_candidate_or_worker_data(self):
+        self.client.force_login(self.limited_member)
+
+        response = self.client.get("/employer/support/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Andrei Worker")
+        self.assertNotContains(response, "Packing helper")
+        self.assertContains(response, "There are no operational sections available for your role.")
+        blocked_card = self.client.get(
+            f"/employer/support/workers/{self.worker_connection.public_id}/"
+        )
+        self.assertEqual(blocked_card.status_code, 404)
+        blocked_registry = self.client.get("/employer/support/registries/")
+        self.assertEqual(blocked_registry.status_code, 404)
+
+    def test_outsider_cannot_open_workspace(self):
+        self.client.force_login(self.outsider)
+
+        response = self.client.get("/employer/support/")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_owner_switches_organization_without_receiving_other_company_data(self):
+        other_organization, _ = create_organization(
+            jobhub_operator=self.operator,
+            legal_name="Other Workspace Agency sp. z o.o.",
+            display_name="Other Workspace Agency",
+            owner_email=self.owner.email,
+        )
+        activate_organization(jobhub_operator=self.operator, organization=other_organization)
+        other_candidate = User.objects.create_user(
+            username="workspace-other-candidate",
+            first_name="Other",
+            last_name="Candidate",
+            email="workspace-other-candidate@example.com",
+            password="password",
+        )
+        other_vacancy = SupportVacancy.objects.create(
+            organization=other_organization,
+            internal_title="Other vacancy",
+            created_by=self.owner,
+        )
+        SupportApplication.objects.create(
+            vacancy=other_vacancy,
+            candidate=other_candidate,
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+        )
+        self.client.force_login(self.owner)
+
+        main_response = self.client.get(
+            f"/employer/support/?organization={self.organization.public_id}"
+        )
+        other_response = self.client.get(
+            f"/employer/support/?organization={other_organization.public_id}"
+        )
+
+        self.assertEqual(main_response.status_code, 200)
+        self.assertContains(main_response, "Andrei Worker")
+        self.assertNotContains(main_response, "Other Candidate")
+        self.assertEqual(other_response.status_code, 200)
+        self.assertContains(other_response, "Other Candidate")
+        self.assertNotContains(other_response, "Andrei Worker")
+
+    def test_owner_creates_then_publishes_housing_draft_from_worker_card(self):
+        site = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="Lelystad home",
+            country_code="NL",
+            city="Lelystad",
+            postal_code="8223XP",
+            street="Blauwe Slank",
+            building="31B",
+            created_by=self.owner,
+        )
+        room = HousingRoom.objects.create(site=site, label="Room 3", capacity=1)
+        place = HousingPlace.objects.create(room=room, label="Bed 1")
+        self.client.force_login(self.owner)
+        card_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
+
+        card = self.client.get(card_url)
+        self.assertEqual(card.status_code, 200)
+        self.assertContains(card, "Lelystad home")
+        self.assertNotContains(card, "Blauwe Slank")
+
+        drafted = self.client.post(
+            card_url,
+            {
+                "action": "housing_draft",
+                "place_id": str(place.public_id),
+                "check_in_at": "2026-09-01T10:00",
+                "check_out_at": "",
+            },
+            follow=True,
+        )
+        self.assertEqual(drafted.status_code, 200)
+        assignment = HousingAssignment.objects.get(connection=self.worker_connection)
+        self.assertEqual(assignment.state, HousingAssignment.STATE_DRAFT)
+        self.assertFalse(
+            NotificationOutbox.objects.filter(
+                notification_code="housing.assignment_published"
+            ).exists()
+        )
+        self.assertContains(drafted, "The draft was saved. The worker cannot see it yet.")
+
+        published = self.client.post(
+            card_url,
+            {"action": "publish_housing", "assignment_id": str(assignment.public_id)},
+            follow=True,
+        )
+        self.assertEqual(published.status_code, 200)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, HousingAssignment.STATE_PUBLISHED)
+        self.assertTrue(
+            NotificationOutbox.objects.filter(
+                notification_code="housing.assignment_published",
+                recipient=self.worker_connection.candidate,
+            ).exists()
+        )
+        self.assertContains(published, "The assignment was published. The worker will receive a notification.")
+
+        cancelled = self.client.post(
+            card_url,
+            {"action": "cancel_housing", "assignment_id": str(assignment.public_id)},
+            follow=True,
+        )
+        self.assertEqual(cancelled.status_code, 200)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, HousingAssignment.STATE_CANCELLED)
+        self.assertContains(cancelled, "The assignment was cancelled. Its history was kept;")
+
+    def test_owner_creates_work_draft_from_worker_card(self):
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Flevosap site",
+            country_code="NL",
+            city="Biddinghuizen",
+            street="Zuurlaan",
+            building="22",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Flevosap line A",
+            worker_visible_name="Flevosap",
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        card_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
+
+        response = self.client.post(
+            card_url,
+            {
+                "action": "work_draft",
+                "project_id": str(project.public_id),
+                "worker_role": "Operator",
+                "starts_at": "2026-09-01T06:00",
+                "ends_at": "",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        assignment = WorkerProjectAssignment.objects.get(connection=self.worker_connection)
+        self.assertEqual(assignment.state, WorkerProjectAssignment.STATE_DRAFT)
+        self.assertContains(response, "The draft was saved. The worker cannot see it yet.")
+
+    def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):
+        self.client.force_login(self.owner)
+        registry_url = (
+            f"/employer/support/registries/?organization={self.organization.public_id}"
+        )
+
+        response = self.client.post(
+            registry_url,
+            {
+                "action": "housing_site_create",
+                "internal_name": "Lelystad home",
+                "country_code": "nl",
+                "city": "Lelystad",
+                "postal_code": "8223XP",
+                "street": "Blauwe Slank",
+                "building": "31B",
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The registry entry was added.")
+        site = HousingSite.objects.get(
+            organization=self.organization,
+            internal_name="Lelystad home",
+        )
+        self.assertEqual(site.country_code, "NL")
+
+        self.client.post(
+            registry_url,
+            {
+                "action": "housing_room_create",
+                "site_id": str(site.public_id),
+                "label": "Room 3",
+                "capacity": "1",
+            },
+            follow=True,
+        )
+        room = HousingRoom.objects.get(site=site, label="Room 3")
+        self.client.post(
+            registry_url,
+            {
+                "action": "housing_place_create",
+                "room_id": str(room.public_id),
+                "label": "Bed 1",
+            },
+            follow=True,
+        )
+        self.assertEqual(HousingPlace.objects.filter(room=room).count(), 1)
+
+        capacity_response = self.client.post(
+            registry_url,
+            {
+                "action": "housing_place_create",
+                "room_id": str(room.public_id),
+                "label": "Bed 2",
+            },
+            follow=True,
+        )
+        self.assertEqual(HousingPlace.objects.filter(room=room).count(), 1)
+        self.assertContains(capacity_response, "The entry could not be added.")
+
+        self.client.post(
+            registry_url,
+            {
+                "action": "worksite_create",
+                "internal_name": "Flevosap site",
+                "country_code": "NL",
+                "city": "Biddinghuizen",
+                "postal_code": "",
+                "street": "Zuurlaan",
+                "building": "22",
+            },
+            follow=True,
+        )
+        worksite = Worksite.objects.get(
+            organization=self.organization,
+            internal_name="Flevosap site",
+        )
+        self.client.post(
+            registry_url,
+            {
+                "action": "work_project_create",
+                "worksite_id": str(worksite.public_id),
+                "internal_name": "Flevosap line A",
+                "worker_visible_name": "Flevosap",
+            },
+            follow=True,
+        )
+        self.assertTrue(
+            WorkProject.objects.filter(
+                organization=self.organization,
+                worksite=worksite,
+                internal_name="Flevosap line A",
+            ).exists()
+        )
+
+        self.client.post(
+            registry_url,
+            {
+                "action": "vehicle_create",
+                "internal_name": "Transport 1",
+                "registration_identifier": "NL-TR-01",
+                "seat_capacity": "8",
+            },
+            follow=True,
+        )
+        vehicle = Vehicle.objects.get(
+            organization=self.organization,
+            registration_identifier="NL-TR-01",
+        )
+        self.assertEqual(vehicle.seat_capacity, 8)
+
+        card = self.client.get(
+            f"/employer/support/workers/{self.worker_connection.public_id}/"
+        )
+        self.assertContains(card, "Lelystad home")
+        self.assertContains(card, "Flevosap line A")
+        self.assertContains(card, "Transport 1")
+
+    def test_transport_staff_builds_and_publishes_one_complete_route(self):
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Transport 1",
+            registration_identifier="NL-TR-01",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        passenger_user = User.objects.create_user(
+            username="workspace-route-passenger",
+            first_name="Ihor",
+            last_name="Passenger",
+            email="workspace-route-passenger@example.com",
+            password="password",
+        )
+        passenger_application = SupportApplication.objects.create(
+            vacancy=self.worker_connection.vacancy,
+            candidate=passenger_user,
+            revision=1,
+            preferred_language="uk",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        passenger_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=passenger_application,
+            candidate=passenger_user,
+            stage=SupportConnection.STAGE_COORDINATOR,
+        )
+        starts_on = date.today() + timedelta(days=7)
+        driver_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.worker_connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        transport_url = (
+            f"/employer/support/transport/?organization={self.organization.public_id}"
+        )
+
+        page = self.client.get(transport_url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Transport 1")
+
+        created = self.client.post(
+            transport_url,
+            {
+                "action": "route_create",
+                "driver_vehicle_assignment_id": str(driver_assignment.public_id),
+                "internal_name": "Morning route 1",
+                "worksite_id": "",
+                "starts_on": starts_on.isoformat(),
+                "ends_on": "",
+                "departure_time": "",
+            },
+            follow=True,
+        )
+        self.assertEqual(created.status_code, 200)
+        route = TransportRoute.objects.get(
+            organization=self.organization,
+            internal_name="Morning route 1",
+        )
+        self.assertEqual(route.state, TransportRoute.STATE_DRAFT)
+        self.assertContains(created, "The route draft was created.")
+
+        for sequence, kind, label in (
+            (1, "pickup", "Lelystad meeting point"),
+            (2, "dropoff", "Flevosap entrance"),
+        ):
+            response = self.client.post(
+                transport_url,
+                {
+                    "action": "route_stop_create",
+                    "route_id": str(route.public_id),
+                    "sequence": str(sequence),
+                    "kind": kind,
+                    "label": label,
+                    "housing_site_id": "",
+                },
+                follow=True,
+            )
+            self.assertEqual(response.status_code, 200)
+
+        route.refresh_from_db()
+        stops = list(route.stops.order_by("sequence"))
+        passenger_response = self.client.post(
+            transport_url,
+            {
+                "action": "route_passenger_create",
+                "route_id": str(route.public_id),
+                "connection_id": str(passenger_connection.public_id),
+                "pickup_stop_id": str(stops[0].public_id),
+                "dropoff_stop_id": str(stops[1].public_id),
+                "boarding_order": "1",
+            },
+            follow=True,
+        )
+        self.assertEqual(passenger_response.status_code, 200)
+        self.assertContains(
+            passenger_response,
+            "The passenger was added and a seat was temporarily reserved.",
+        )
+
+        published = self.client.post(
+            transport_url,
+            {"action": "route_publish", "route_id": str(route.public_id)},
+            follow=True,
+        )
+        self.assertEqual(published.status_code, 200)
+        route.refresh_from_db()
+        driver_assignment.refresh_from_db()
+        self.assertEqual(route.state, TransportRoute.STATE_PUBLISHED)
+        self.assertEqual(driver_assignment.state, DriverVehicleAssignment.STATE_PUBLISHED)
+        recipients = set(
+            NotificationOutbox.objects.filter(
+                notification_code="transport.route_published",
+                target_public_id=route.public_id,
+            ).values_list("recipient_id", flat=True)
+        )
+        self.assertEqual(recipients, {self.worker_connection.candidate_id, passenger_user.id})
+        self.assertContains(
+            published,
+            "The route was published. The driver and passengers will receive a notification.",
+        )
+
+    @override_settings(SUPPORT_FEATURE_ENABLED=False)
+    def test_workspace_stays_hidden_when_feature_flag_is_off(self):
+        self.client.force_login(self.owner)
+
+        response = self.client.get("/employer/support/")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            self.client.get("/employer/support/registries/").status_code,
+            404,
+        )

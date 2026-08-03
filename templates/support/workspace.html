@@ -1,0 +1,129 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_workspace_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .support-hero { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px; align-items:start; }
+  .support-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .support-organization-form { min-width:min(100%, 270px); display:grid; grid-template-columns:minmax(160px,1fr) auto; gap:8px; align-items:end; }
+  .support-organization-form label { grid-column:1 / -1; color:var(--muted); font-size:12px; font-weight:800; }
+  .support-note { margin:20px 0; padding:13px 15px; border-radius:16px; border:1px solid rgba(110,199,255,.28); color:#ccecff; background:rgba(110,199,255,.08); line-height:1.45; }
+  .support-overview { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:18px 0 26px; }
+  .support-stat { min-height:145px; padding:18px; border:1px solid var(--line); border-radius:18px; background:rgba(5,22,36,.33); }
+  .support-stat strong { display:block; margin:10px 0 5px; color:var(--green); font-size:36px; line-height:1; }
+  .support-stat h2 { margin:0; font-size:16px; }
+  .support-stat p { margin:8px 0 0; color:var(--muted); line-height:1.35; }
+  .support-section { margin-top:22px; padding-top:22px; border-top:1px solid var(--line); }
+  .support-section h2 { margin:0 0 5px; font-size:21px; }
+  .support-section > p { margin:0 0 14px; color:var(--muted); line-height:1.4; }
+  .support-readiness { display:grid; gap:5px; min-width:132px; }
+  .support-readiness span { display:block; font-size:11px; font-weight:800; }
+  .support-ready { color:#a8ffc7; }
+  .support-waiting { color:var(--muted); }
+  .support-operation-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+  .support-operation { padding:16px; border-radius:16px; border:1px solid var(--line); background:rgba(5,22,36,.33); }
+  .support-operation span { color:var(--muted); font-size:12px; font-weight:800; }
+  .support-operation strong { display:block; margin-top:6px; color:var(--gold); font-size:27px; }
+  @media (max-width:760px) { .support-hero { grid-template-columns:1fr; } .support-organization-form { width:100%; } .support-overview, .support-operation-list { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <section class="jh-card">
+    <div class="support-hero">
+      <div>
+        <p class="support-kicker">JobHub Support · {{ organization.display_name }}</p>
+        <h1 class="jh-title">{{ employer_t.support_workspace_title }}</h1>
+        <p class="jh-subtitle">{{ employer_t.support_workspace_subtitle }}</p>
+      </div>
+      {% if memberships|length > 1 %}
+        <form class="support-organization-form" method="get">
+          <label for="support-organization">{{ employer_t.support_workspace_select_organization }}</label>
+          <select class="jh-input" id="support-organization" name="organization">
+            {% for item in memberships %}
+              <option value="{{ item.organization.public_id }}"{% if item.public_id == membership.public_id %} selected{% endif %}>{{ item.organization.display_name }}</option>
+            {% endfor %}
+          </select>
+          <button class="jh-btn" type="submit">{{ employer_t.support_workspace_open }}</button>
+        </form>
+      {% endif %}
+    </div>
+
+    <div class="support-note">{{ employer_t.support_workspace_read_only }}</div>
+    {% if registry_url or transport_url or team_url or time_url or requests_url %}<div class="jh-actions" style="margin-top:-5px">{% if requests_url %}<a class="jh-btn primary" href="{{ requests_url }}">{{ employer_t.support_requests_workspace_link }}</a>{% endif %}{% if time_url %}<a class="jh-btn primary" href="{{ time_url }}">{{ employer_t.support_time_workspace_link }}</a>{% endif %}{% if team_url %}<a class="jh-btn" href="{{ team_url }}">{{ employer_t.support_team_workspace_link }}</a>{% endif %}{% if registry_url %}<a class="jh-btn primary" href="{{ registry_url }}">{{ employer_t.support_workspace_registries }}</a>{% endif %}{% if transport_url %}<a class="jh-btn" href="{{ transport_url }}">{{ employer_t.support_transport_builder }}</a>{% endif %}</div>{% endif %}
+
+    <div class="support-overview">
+      {% if permissions.pipeline %}
+        <article class="support-stat">
+          <h2>{{ employer_t.support_workspace_candidates }}</h2>
+          <strong>{{ application_count }}</strong>
+          <p>{{ employer_t.support_workspace_candidates_subtitle }}</p>
+        </article>
+      {% endif %}
+      {% if permissions.workers %}
+        <article class="support-stat">
+          <h2>{{ employer_t.support_workspace_workers }}</h2>
+          <strong>{{ worker_count }}</strong>
+          <p>{{ employer_t.support_workspace_workers_subtitle }}</p>
+        </article>
+      {% endif %}
+      {% if operation_cards %}
+        <article class="support-stat">
+          <h2>{{ employer_t.support_workspace_drafts }}</h2>
+          <strong>{% for item in operation_cards %}{{ item.count }}{% if not forloop.last %} · {% endif %}{% endfor %}</strong>
+          <p>{{ employer_t.support_workspace_drafts_subtitle }}</p>
+        </article>
+      {% endif %}
+    </div>
+
+    {% if permissions.pipeline %}
+      <section class="support-section">
+        <h2>{{ employer_t.support_workspace_candidates }}</h2>
+        <p>{{ employer_t.support_workspace_candidates_subtitle }}</p>
+        {% if application_rows %}
+          <div class="jh-table-wrap">
+            <table class="jh-table">
+              <thead><tr><th>{{ employer_t.support_workspace_candidate_name }}</th><th>{{ employer_t.support_workspace_vacancy }}</th><th>{{ employer_t.support_workspace_application_status }}</th><th>{{ employer_t.support_workspace_submitted_at }}</th></tr></thead>
+              <tbody>{% for item in application_rows %}<tr><td><strong>{{ item.candidate_name }}</strong></td><td>{{ item.vacancy_title }}</td><td><span class="jh-status info">{{ item.status_label }}</span></td><td>{{ item.submitted_at|date:"d.m.Y H:i" }}</td></tr>{% endfor %}</tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="jh-empty">{{ employer_t.support_workspace_no_candidates }}</div>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if permissions.workers %}
+      <section class="support-section">
+        <h2>{{ employer_t.support_workspace_workers }}</h2>
+        <p>{{ employer_t.support_workspace_workers_subtitle }}</p>
+        {% if worker_rows %}
+          <div class="jh-table-wrap">
+            <table class="jh-table">
+              <thead><tr><th>{{ employer_t.support_workspace_candidate_name }}</th><th>{{ employer_t.support_workspace_vacancy }}</th><th>{{ employer_t.support_workspace_stage }}</th><th>{{ employer_t.support_workspace_housing }}</th><th>{{ employer_t.support_workspace_work }}</th><th>{{ employer_t.support_workspace_transport }}</th></tr></thead>
+              <tbody>{% for item in worker_rows %}<tr>
+                <td><strong><a href="{{ item.detail_url }}">{{ item.candidate_name }}</a></strong></td><td>{{ item.vacancy_title }}</td><td><span class="jh-status success">{{ item.stage_label }}</span></td>
+                <td class="support-readiness"><span class="{% if item.housing_ready %}support-ready{% else %}support-waiting{% endif %}">{% if item.housing_ready %}{{ employer_t.support_workspace_ready }}{% else %}{{ employer_t.support_workspace_waiting }}{% endif %}</span></td>
+                <td class="support-readiness"><span class="{% if item.work_ready %}support-ready{% else %}support-waiting{% endif %}">{% if item.work_ready %}{{ employer_t.support_workspace_ready }}{% else %}{{ employer_t.support_workspace_waiting }}{% endif %}</span></td>
+                <td class="support-readiness"><span class="{% if item.transport_ready %}support-ready{% else %}support-waiting{% endif %}">{% if item.transport_ready %}{{ employer_t.support_workspace_ready }}{% else %}{{ employer_t.support_workspace_waiting }}{% endif %}</span></td>
+              </tr>{% endfor %}</tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="jh-empty">{{ employer_t.support_workspace_no_workers }}</div>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    <section class="support-section">
+      <h2>{{ employer_t.support_workspace_drafts }}</h2>
+      <p>{{ employer_t.support_workspace_drafts_subtitle }}</p>
+      {% if operation_cards %}
+        <div class="support-operation-list">{% for item in operation_cards %}<article class="support-operation"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></article>{% endfor %}</div>
+      {% else %}
+        <div class="jh-empty">{{ employer_t.support_workspace_no_operations }}</div>
+      {% endif %}
+    </section>
+  </section>
+{% endblock %}

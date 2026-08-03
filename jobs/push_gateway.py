@@ -89,10 +89,29 @@ def _format_send_exception(exc):
     return "; ".join(parts)
 
 
-def send_push_message(*, token, title, body, data=None, platform=""):
+def send_push_message(
+    *,
+    token,
+    title,
+    body,
+    data=None,
+    platform="",
+    collapse_key="",
+    notification_tag="",
+):
+    """Send a notification with an optional stable native grouping key.
+
+    ``collapse_key`` coalesces repeat notifications for the same target at the
+    provider.  ``notification_tag`` lets the Android client remove exactly the
+    delivered notifications for an opened target instead of clearing the
+    user's whole notification tray.
+    """
+
     provider = (getattr(settings, "PUSH_PROVIDER", "") or "").strip().lower()
     token = (token or "").strip()
     platform = (platform or "").strip().lower()
+    collapse_key = (collapse_key or "").strip()[:64]
+    notification_tag = (notification_tag or "").strip()[:180]
     if not token:
         return "failed", "", "device_token_missing"
 
@@ -115,17 +134,28 @@ def send_push_message(*, token, title, body, data=None, platform=""):
         android_config = None
         apns_config = None
         if platform in ("", "android"):
-            android_config = messaging.AndroidConfig(
-                priority="high",
-                notification=messaging.AndroidNotification(sound="default"),
-            )
+            android_notification_kwargs = {"sound": "default"}
+            if notification_tag:
+                android_notification_kwargs["tag"] = notification_tag
+            android_config_kwargs = {
+                "priority": "high",
+                "notification": messaging.AndroidNotification(
+                    **android_notification_kwargs
+                ),
+            }
+            if collapse_key:
+                android_config_kwargs["collapse_key"] = collapse_key
+            android_config = messaging.AndroidConfig(**android_config_kwargs)
         if platform in ("", "ios"):
             # iOS delivery is more reliable when APNs alert headers are explicit.
+            apns_headers = {
+                "apns-priority": "10",
+                "apns-push-type": "alert",
+            }
+            if collapse_key:
+                apns_headers["apns-collapse-id"] = collapse_key
             apns_config = messaging.APNSConfig(
-                headers={
-                    "apns-priority": "10",
-                    "apns-push-type": "alert",
-                },
+                headers=apns_headers,
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(
                         alert=messaging.ApsAlert(title=title, body=body),
@@ -163,6 +193,10 @@ def send_push_message(*, token, title, body, data=None, platform=""):
         },
         "data": payload_data,
     }
+    if collapse_key:
+        body_payload["collapse_key"] = collapse_key
+    if notification_tag:
+        body_payload["notification"]["tag"] = notification_tag
     req = urllib_request.Request(
         "https://fcm.googleapis.com/fcm/send",
         data=json.dumps(body_payload).encode("utf-8"),

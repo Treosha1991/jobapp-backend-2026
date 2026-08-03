@@ -1,0 +1,110 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_transport_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .transport-back { margin-bottom:16px; }
+  .transport-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .transport-section { margin-top:25px; padding-top:23px; border-top:1px solid var(--line); }
+  .transport-section h2 { margin:0 0 5px; font-size:21px; }
+  .transport-section > p { margin:0 0 15px; color:var(--muted); line-height:1.45; }
+  .transport-form { margin-top:14px; padding:15px; border:1px solid rgba(24,223,103,.28); border-radius:17px; background:linear-gradient(135deg,rgba(24,223,103,.07),rgba(5,22,36,.25)); }
+  .transport-form h3 { margin:0; font-size:16px; }
+  .transport-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; margin-top:13px; }
+  .transport-form .jh-actions { margin-top:14px; }
+  .transport-route { margin-top:14px; padding:16px; border:1px solid var(--line); border-radius:18px; background:rgba(5,22,36,.28); }
+  .transport-route-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .transport-route h3 { margin:0; font-size:17px; }
+  .transport-route p { margin:6px 0 0; color:var(--muted); line-height:1.45; }
+  .transport-route-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:14px; }
+  .transport-route-block { padding:12px; border:1px solid var(--line); border-radius:14px; background:rgba(5,22,36,.22); }
+  .transport-route-block h4 { margin:0; color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+  .transport-route-block ul { margin:9px 0 0; padding-left:18px; line-height:1.5; }
+  .transport-empty { padding:16px; color:var(--muted); border:1px dashed var(--line); border-radius:15px; text-align:center; }
+  .transport-note { margin:18px 0; padding:13px 15px; border:1px solid rgba(110,199,255,.28); border-radius:16px; color:#ccecff; background:rgba(110,199,255,.08); line-height:1.45; }
+  .transport-wide { grid-column:1 / -1; }
+  @media (max-width:850px) { .transport-route-grid, .transport-form-grid { grid-template-columns:1fr; } .transport-wide { grid-column:auto; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions transport-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a><a class="jh-btn" href="{{ registry_url }}">{{ employer_t.support_workspace_registries }}</a></div>
+  <section class="jh-card">
+    <p class="transport-kicker">JobHub Support · {{ organization.display_name }}</p>
+    <h1 class="jh-title">{{ employer_t.support_transport_title }}</h1>
+    <p class="jh-subtitle">{{ employer_t.support_transport_subtitle }}</p>
+    <div class="transport-note">{{ employer_t.support_transport_note }}</div>
+
+    <section class="transport-section">
+      <h2>{{ employer_t.support_transport_create }}</h2>
+      <p>{{ employer_t.support_transport_create_text }}</p>
+      {% if driver_assignments %}
+        <form class="transport-form" method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="route_create">
+          <h3>{{ employer_t.support_transport_new_route }}</h3>
+          <div class="transport-form-grid">
+            <label class="jh-field transport-wide"><span>{{ employer_t.support_transport_driver_vehicle }}</span><select class="jh-input" name="driver_vehicle_assignment_id" required>{% for item in driver_assignments %}<option value="{{ item.public_id }}">{{ item.driver_connection.candidate.get_full_name|default:item.driver_connection.candidate.username }} · {{ item.vehicle.internal_name }} · {{ item.vehicle.registration_identifier }} · {{ item.vehicle.seat_capacity }}</option>{% endfor %}</select></label>
+            <label class="jh-field"><span>{{ employer_t.support_transport_route_name }}</span><input class="jh-input" name="internal_name" maxlength="160" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_transport_worksite }}</span><select class="jh-input" name="worksite_id"><option value="">{{ employer_t.support_transport_no_worksite }}</option>{% for item in worksites %}<option value="{{ item.public_id }}">{{ item.internal_name }}</option>{% endfor %}</select></label>
+            <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" name="starts_on" type="date" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_on" type="date"></label>
+            <label class="jh-field"><span>{{ employer_t.support_transport_departure }}</span><input class="jh-input" name="departure_time" type="time"></label>
+          </div>
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
+        </form>
+      {% else %}<div class="transport-empty">{{ employer_t.support_transport_no_driver_drafts }}</div>{% endif %}
+    </section>
+
+    <section class="transport-section">
+      <h2>{{ employer_t.support_transport_routes }}</h2>
+      <p>{{ employer_t.support_transport_routes_text }}</p>
+      {% for route in routes %}
+        <article class="transport-route">
+          <div class="transport-route-head">
+            <div><h3>{{ route.internal_name }}</h3><p>{{ employer_t.support_transport_driver }}: {{ route.driver_vehicle_assignment.driver_connection.candidate.get_full_name|default:route.driver_vehicle_assignment.driver_connection.candidate.username }} · {{ route.driver_vehicle_assignment.vehicle.internal_name }} · {{ route.driver_vehicle_assignment.vehicle.registration_identifier }}<br>{{ employer_t.support_transport_total_seats }}: {{ route.driver_vehicle_assignment.vehicle.seat_capacity }} · {{ employer_t.support_transport_free_seats }}: {{ route.available_seat_count }}{% if route.worksite %}<br>{{ employer_t.support_transport_worksite }}: {{ route.worksite.internal_name }}{% endif %}{% if route.departure_time %}<br>{{ employer_t.support_transport_departure }}: {{ route.departure_time|time:"H:i" }}{% endif %}</p></div>
+            <span class="jh-status {% if route.state == 'published' %}success{% else %}warning{% endif %}">{{ route.state_label }}</span>
+          </div>
+
+          <div class="transport-route-grid">
+            <div class="transport-route-block"><h4>{{ employer_t.support_transport_stops }}</h4>{% if route.stops_for_builder %}<ul>{% for item in route.stops_for_builder %}<li>{{ item.kind_label }} · {{ item.label }}</li>{% endfor %}</ul>{% else %}<p>{{ employer_t.support_transport_no_stops }}</p>{% endif %}</div>
+            <div class="transport-route-block"><h4>{{ employer_t.support_transport_passengers }}</h4>{% if route.passengers_for_builder %}<ul>{% for item in route.passengers_for_builder %}<li>{{ item.connection.candidate.get_full_name|default:item.connection.candidate.username }}</li>{% endfor %}</ul>{% else %}<p>{{ employer_t.support_transport_no_passengers }}</p>{% endif %}</div>
+            <div class="transport-route-block"><h4>{{ employer_t.support_transport_reservation }}</h4>{% if route.state == 'draft' %}<p>{{ route.reservation_expires_at|date:"d.m.Y H:i" }}</p>{% else %}<p>{{ route.published_at|date:"d.m.Y H:i" }}</p>{% endif %}</div>
+          </div>
+
+          {% if route.state == 'draft' and route.is_reservation_active %}
+            <form class="transport-form" method="post">
+              {% csrf_token %}<input type="hidden" name="action" value="route_stop_create"><input type="hidden" name="route_id" value="{{ route.public_id }}">
+              <h3>{{ employer_t.support_transport_add_stop }}</h3>
+              <div class="transport-form-grid">
+                <label class="jh-field"><span>{{ employer_t.support_transport_stop_kind }}</span><select class="jh-input" name="kind" required><option value="pickup">{{ employer_t.support_transport_stop_pickup }}</option><option value="dropoff">{{ employer_t.support_transport_stop_dropoff }}</option></select></label>
+                <label class="jh-field"><span>{{ employer_t.support_transport_stop_name }}</span><input class="jh-input" name="label" maxlength="160" required></label>
+                <label class="jh-field"><span>{{ employer_t.support_transport_housing_site }}</span><select class="jh-input" name="housing_site_id"><option value="">{{ employer_t.support_transport_no_housing_site }}</option>{% for item in housing_sites %}<option value="{{ item.public_id }}">{{ item.internal_name }}</option>{% endfor %}</select></label>
+                <label class="jh-field"><span>{{ employer_t.support_transport_stop_order }}</span><input class="jh-input" name="sequence" type="number" min="1" max="500" value="{{ route.stops_for_builder|length|add:1 }}" required></label>
+              </div>
+              <div class="jh-actions"><button class="jh-btn" type="submit">{{ employer_t.support_transport_add_stop }}</button></div>
+            </form>
+
+            {% if route.pickup_stops and route.dropoff_stops and route.passenger_choices and route.available_seat_count %}
+              <form class="transport-form" method="post">
+                {% csrf_token %}<input type="hidden" name="action" value="route_passenger_create"><input type="hidden" name="route_id" value="{{ route.public_id }}">
+                <h3>{{ employer_t.support_transport_add_passenger }}</h3>
+                <div class="transport-form-grid">
+                  <label class="jh-field"><span>{{ employer_t.support_workspace_workers }}</span><select class="jh-input" name="connection_id" required>{% for item in route.passenger_choices %}<option value="{{ item.public_id }}">{{ item.candidate.get_full_name|default:item.candidate.username }} · {{ item.vacancy.internal_title }}</option>{% endfor %}</select></label>
+                  <label class="jh-field"><span>{{ employer_t.support_transport_pickup }}</span><select class="jh-input" name="pickup_stop_id" required>{% for item in route.pickup_stops %}<option value="{{ item.public_id }}">{{ item.label }}</option>{% endfor %}</select></label>
+                  <label class="jh-field"><span>{{ employer_t.support_transport_dropoff }}</span><select class="jh-input" name="dropoff_stop_id" required>{% for item in route.dropoff_stops %}<option value="{{ item.public_id }}">{{ item.label }}</option>{% endfor %}</select></label>
+                  <label class="jh-field"><span>{{ employer_t.support_transport_boarding_order }}</span><input class="jh-input" name="boarding_order" type="number" min="1" max="500" value="{{ route.next_boarding_order }}" required></label>
+                </div>
+                <div class="jh-actions"><button class="jh-btn" type="submit">{{ employer_t.support_transport_add_passenger }}</button></div>
+              </form>
+            {% endif %}
+            {% if route.pickup_stops and route.dropoff_stops %}
+              <form class="jh-actions" method="post" style="margin-top:14px">{% csrf_token %}<input type="hidden" name="action" value="route_publish"><input type="hidden" name="route_id" value="{{ route.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_publish }}</button></form>
+            {% endif %}
+          {% elif route.state == 'draft' %}<div class="transport-note">{{ employer_t.support_transport_reservation_expired }}</div>{% endif %}
+          {% if route.state != 'cancelled' %}<form class="jh-actions" method="post" style="margin-top:14px">{% csrf_token %}<input type="hidden" name="action" value="route_cancel"><input type="hidden" name="route_id" value="{{ route.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_transport_cancel }}</button></form>{% endif %}
+        </article>
+      {% empty %}<div class="transport-empty">{{ employer_t.support_transport_no_routes }}</div>{% endfor %}
+    </section>
+  </section>
+{% endblock %}

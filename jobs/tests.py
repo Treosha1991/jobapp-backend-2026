@@ -22,6 +22,7 @@ from .models import (
     VacancyModerationAttempt,
 )
 from .board_publishing import accept_authorization, request_authorization, revoke_authorization
+from .chat_notifications import notify_user_about_chat_message
 from .service_sources import SERVICE_BOARD_USERNAME
 
 
@@ -1029,3 +1030,50 @@ class EmployerBoardPublishingAPITests(TestCase):
         self.assertEqual(response.data["status"], "revoked")
         authorization.refresh_from_db()
         self.assertIsNotNone(authorization.revoked_at)
+
+
+class ChatNotificationReconciliationTests(TestCase):
+    def test_legacy_chat_push_has_a_stable_target_tag_and_collapse_key(self):
+        candidate = User.objects.create_user(
+            username="push-candidate",
+            email="push-candidate@example.com",
+            password="password",
+        )
+        employer = User.objects.create_user(
+            username="push-employer",
+            email="push-employer@example.com",
+            password="password",
+        )
+        conversation = ChatConversation.objects.create(
+            candidate=candidate,
+            employer=employer,
+        )
+        message = ChatMessage.objects.create(
+            conversation=conversation,
+            sender=employer,
+            body="A normal public-chat message.",
+        )
+        PushDevice.objects.create(
+            user=candidate,
+            token="legacy-chat-device-token",
+            platform="android",
+            app_language="en",
+        )
+
+        with patch(
+            "jobs.chat_notifications.send_push_message",
+            return_value=("sent", "provider-message", ""),
+        ) as sender:
+            summary = notify_user_about_chat_message(
+                message,
+                recipient=candidate,
+                sender_name="Employer",
+            )
+
+        target = f"chat:{conversation.id}"
+        self.assertEqual(summary["sent"], 1)
+        payload = sender.call_args.kwargs
+        self.assertEqual(payload["collapse_key"], target)
+        self.assertEqual(payload["notification_tag"], f"jobhub:{target}")
+        self.assertEqual(payload["data"]["notification_target"], target)
+        self.assertEqual(payload["data"]["notification_namespace"], "chat")

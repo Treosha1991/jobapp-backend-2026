@@ -1,0 +1,145 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_registry_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .registry-back { margin-bottom:16px; }
+  .registry-header { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; flex-wrap:wrap; }
+  .registry-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .registry-section { margin-top:25px; padding-top:23px; border-top:1px solid var(--line); }
+  .registry-section h2 { margin:0 0 5px; font-size:21px; }
+  .registry-section > p { margin:0 0 15px; color:var(--muted); line-height:1.45; }
+  .registry-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; }
+  .registry-item, .registry-form { padding:15px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); }
+  .registry-item h3, .registry-form h3 { margin:0; font-size:16px; }
+  .registry-item p { margin:7px 0 0; color:var(--muted); line-height:1.45; }
+  .registry-form { margin-top:14px; border-color:rgba(24,223,103,.28); background:linear-gradient(135deg,rgba(24,223,103,.07),rgba(5,22,36,.25)); }
+  .registry-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; margin-top:13px; }
+  .registry-form .jh-actions { margin-top:14px; }
+  .registry-empty { padding:16px; color:var(--muted); border:1px dashed var(--line); border-radius:15px; text-align:center; }
+  .registry-wide { grid-column:1 / -1; }
+  @media (max-width:760px) { .registry-grid, .registry-form-grid { grid-template-columns:1fr; } .registry-wide { grid-column:auto; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions registry-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a></div>
+  <section class="jh-card">
+    <div class="registry-header">
+      <div>
+        <p class="registry-kicker">JobHub Support · {{ organization.display_name }}</p>
+        <h1 class="jh-title">{{ employer_t.support_registry_title }}</h1>
+        <p class="jh-subtitle">{{ employer_t.support_registry_subtitle }}</p>
+      </div>
+    </div>
+
+    {% if permissions.housing %}
+      <section class="registry-section">
+        <h2>{{ employer_t.support_registry_housing }}</h2>
+        <p>{{ employer_t.support_registry_housing_text }}</p>
+        {% if housing_sites %}
+          <div class="registry-grid">
+            {% for site in housing_sites %}
+              <article class="registry-item"><h3>{{ site.internal_name }}</h3><p>{{ site.country_code }} · {{ site.city }}{% if site.postal_code %} · {{ site.postal_code }}{% endif %}<br>{{ site.street }} {{ site.building }}</p></article>
+            {% endfor %}
+          </div>
+        {% else %}<div class="registry-empty">{{ employer_t.support_registry_empty }}</div>{% endif %}
+        <form class="registry-form" method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="housing_site_create">
+          <h3>{{ employer_t.support_registry_add_housing_site }}</h3>
+          <div class="registry-form-grid">
+            <label class="jh-field"><span>{{ employer_t.support_registry_internal_name }}</span><input class="jh-input" name="internal_name" maxlength="160" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" placeholder="NL" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20"></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" required></label>
+          </div>
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
+        </form>
+
+        {% if housing_sites %}
+          <form class="registry-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="housing_room_create">
+            <h3>{{ employer_t.support_registry_add_room }}</h3>
+            <div class="registry-form-grid">
+              <label class="jh-field"><span>{{ employer_t.support_registry_housing_site }}</span><select class="jh-input" name="site_id" required>{% for site in housing_sites %}<option value="{{ site.public_id }}">{{ site.internal_name }}</option>{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_room }}</span><input class="jh-input" name="label" maxlength="80" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_capacity }}</span><input class="jh-input" name="capacity" type="number" min="1" max="50" value="1" required></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
+          </form>
+        {% endif %}
+
+        {% if housing_rooms %}
+          <form class="registry-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="housing_place_create">
+            <h3>{{ employer_t.support_registry_add_place }}</h3>
+            <div class="registry-form-grid">
+              <label class="jh-field"><span>{{ employer_t.support_registry_room }}</span><select class="jh-input" name="room_id" required>{% for room in housing_rooms %}<option value="{{ room.public_id }}">{{ room.site.internal_name }} · {{ room.label }} ({{ room.places.all|length }}/{{ room.capacity }})</option>{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_place }}</span><input class="jh-input" name="label" maxlength="80" required></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
+          </form>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if permissions.work %}
+      <section class="registry-section">
+        <h2>{{ employer_t.support_registry_work }}</h2>
+        <p>{{ employer_t.support_registry_work_text }}</p>
+        {% if worksites %}
+          <div class="registry-grid">
+            {% for item in worksites %}<article class="registry-item"><h3>{{ item.internal_name }}</h3><p>{{ item.country_code }} · {{ item.city }}{% if item.postal_code %} · {{ item.postal_code }}{% endif %}<br>{{ item.street }} {{ item.building }}</p></article>{% endfor %}
+          </div>
+        {% else %}<div class="registry-empty">{{ employer_t.support_registry_empty }}</div>{% endif %}
+        <form class="registry-form" method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="worksite_create">
+          <h3>{{ employer_t.support_registry_add_worksite }}</h3>
+          <div class="registry-form-grid">
+            <label class="jh-field"><span>{{ employer_t.support_registry_internal_name }}</span><input class="jh-input" name="internal_name" maxlength="160" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" placeholder="NL" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20"></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" required></label>
+          </div>
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
+        </form>
+        {% if worksites %}
+          <form class="registry-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="work_project_create">
+            <h3>{{ employer_t.support_registry_add_project }}</h3>
+            <div class="registry-form-grid">
+              <label class="jh-field"><span>{{ employer_t.support_registry_worksite }}</span><select class="jh-input" name="worksite_id" required>{% for item in worksites %}<option value="{{ item.public_id }}">{{ item.internal_name }}</option>{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_internal_name }}</span><input class="jh-input" name="internal_name" maxlength="160" required></label>
+              <label class="jh-field registry-wide"><span>{{ employer_t.support_registry_worker_name }}</span><input class="jh-input" name="worker_visible_name" maxlength="160" required></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
+          </form>
+        {% endif %}
+        {% if work_projects %}<div class="registry-grid" style="margin-top:13px">{% for item in work_projects %}<article class="registry-item"><h3>{{ item.internal_name }}</h3><p>{{ employer_t.support_registry_worker_name }}: {{ item.worker_visible_name }}<br>{{ item.worksite.internal_name }}</p></article>{% endfor %}</div>{% endif %}
+      </section>
+    {% endif %}
+
+    {% if permissions.transport %}
+      <section class="registry-section">
+        <h2>{{ employer_t.support_registry_transport }}</h2>
+        <p>{{ employer_t.support_registry_transport_text }}</p>
+        {% if vehicles %}<div class="registry-grid">{% for item in vehicles %}<article class="registry-item"><h3>{{ item.internal_name }}</h3><p>{{ item.registration_identifier }}<br>{{ employer_t.support_registry_capacity }}: {{ item.seat_capacity }}</p></article>{% endfor %}</div>{% else %}<div class="registry-empty">{{ employer_t.support_registry_empty }}</div>{% endif %}
+        <form class="registry-form" method="post">
+          {% csrf_token %}<input type="hidden" name="action" value="vehicle_create">
+          <h3>{{ employer_t.support_registry_add_vehicle }}</h3>
+          <div class="registry-form-grid">
+            <label class="jh-field"><span>{{ employer_t.support_registry_internal_name }}</span><input class="jh-input" name="internal_name" maxlength="120" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_registration }}</span><input class="jh-input" name="registration_identifier" maxlength="64" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_registry_capacity }}</span><input class="jh-input" name="seat_capacity" type="number" min="2" max="100" required></label>
+          </div>
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
+        </form>
+      </section>
+    {% endif %}
+  </section>
+{% endblock %}

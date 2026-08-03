@@ -1,0 +1,121 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_team_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .team-back { margin-bottom:16px; }
+  .team-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; flex-wrap:wrap; }
+  .team-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .team-note { margin:18px 0 0; padding:13px 15px; border:1px solid rgba(110,199,255,.34); border-radius:16px; color:#caedff; background:rgba(110,199,255,.08); line-height:1.45; }
+  .team-layout { display:grid; grid-template-columns:minmax(220px,.72fr) minmax(0,1.28fr); gap:18px; margin-top:22px; }
+  .team-panel { padding:16px; border:1px solid var(--line); border-radius:18px; background:rgba(5,22,36,.28); }
+  .team-panel h2 { margin:0 0 5px; font-size:19px; }
+  .team-panel > p { margin:0 0 14px; color:var(--muted); line-height:1.42; }
+  .team-member-list { display:grid; gap:8px; }
+  .team-member { display:block; padding:12px; border:1px solid var(--line); border-radius:14px; text-decoration:none; background:rgba(5,22,36,.28); }
+  .team-member:hover, .team-member.selected { border-color:rgba(24,223,103,.62); background:rgba(24,223,103,.08); }
+  .team-member strong, .team-member span { display:block; }
+  .team-member span { margin-top:4px; color:var(--muted); font-size:12px; line-height:1.35; }
+  .team-member .team-count { color:#bafbd2; font-weight:800; }
+  .team-selected-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; margin-bottom:16px; }
+  .team-selected-head h2 { margin:0; }
+  .team-selected-head p { margin:5px 0 0; color:var(--muted); }
+  .team-scope-list { display:grid; gap:9px; margin-top:14px; }
+  .team-scope { display:flex; gap:12px; justify-content:space-between; align-items:center; padding:12px; border:1px solid var(--line); border-radius:14px; background:rgba(5,22,36,.28); }
+  .team-scope strong, .team-scope span { display:block; }
+  .team-scope span { margin-top:4px; color:var(--muted); font-size:12px; }
+  .team-form { margin-top:17px; padding:15px; border:1px solid rgba(24,223,103,.32); border-radius:16px; background:linear-gradient(135deg,rgba(24,223,103,.08),rgba(5,22,36,.28)); }
+  .team-form h3 { margin:0 0 8px; font-size:16px; }
+  .team-form p { margin:0 0 12px; color:var(--muted); line-height:1.4; }
+  .team-full-access { padding:15px; border:1px solid rgba(24,223,103,.32); border-radius:16px; color:#c6ffd9; background:rgba(24,223,103,.08); line-height:1.45; }
+  .team-empty { padding:18px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; }
+  @media (max-width:760px) { .team-layout { grid-template-columns:1fr; } .team-scope { align-items:flex-start; flex-direction:column; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions team-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a></div>
+  <section class="jh-card">
+    <div class="team-hero">
+      <div>
+        <p class="team-kicker">JobHub Support · {{ organization.display_name }}</p>
+        <h1 class="jh-title">{{ employer_t.support_team_title }}</h1>
+        <p class="jh-subtitle">{{ employer_t.support_team_subtitle }}</p>
+      </div>
+    </div>
+    <div class="team-note">{{ employer_t.support_team_notice }}</div>
+
+    <div class="team-layout">
+      <aside class="team-panel">
+        <h2>{{ employer_t.support_team_staff }}</h2>
+        <p>{{ employer_t.support_team_staff_text }}</p>
+        <div class="team-member-list">
+          {% for item in staff_memberships %}
+            <a class="team-member{% if item.public_id == selected_membership.public_id %} selected{% endif %}" href="?organization={{ organization.public_id }}&member={{ item.public_id }}">
+              <strong>{{ item.display_name }}</strong>
+              <span>{% if item.is_owner %}{{ employer_t.support_team_owner }}{% elif item.display_role %}{{ item.display_role }}{% else %}{{ employer_t.support_team_staff_member }}{% endif %}</span>
+              {% if item.is_owner %}<span class="team-count">{{ employer_t.support_team_full_access }}</span>{% else %}<span class="team-count">{{ employer_t.support_team_scope_count }}: {{ item.active_scope_count }}</span>{% endif %}
+            </a>
+          {% empty %}
+            <div class="team-empty">{{ employer_t.support_team_no_staff }}</div>
+          {% endfor %}
+        </div>
+      </aside>
+
+      <section class="team-panel">
+        {% if selected_membership %}
+          <div class="team-selected-head">
+            <div>
+              <h2>{{ selected_membership.display_name }}</h2>
+              <p>{% if selected_membership.is_owner %}{{ employer_t.support_team_owner }}{% elif selected_membership.display_role %}{{ selected_membership.display_role }}{% else %}{{ employer_t.support_team_staff_member }}{% endif %}</p>
+            </div>
+            {% if selected_has_full_access %}<span class="jh-status success">{{ employer_t.support_team_full_access }}</span>{% endif %}
+          </div>
+
+          {% if selected_has_full_access %}
+            <div class="team-full-access">{{ employer_t.support_team_full_access_text }}</div>
+          {% else %}
+            <h3>{{ employer_t.support_team_scoped_workers }}</h3>
+            <p class="jh-muted">{{ employer_t.support_team_scoped_workers_text }}</p>
+            <div class="team-scope-list">
+              {% for scope in selected_scopes %}
+                <article class="team-scope">
+                  <div>
+                    <strong>{{ scope.connection.display_name }}</strong>
+                    <span>{{ scope.connection.vacancy.internal_title }}</span>
+                  </div>
+                  <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="scope_revoke">
+                    <input type="hidden" name="membership_id" value="{{ selected_membership.public_id }}">
+                    <input type="hidden" name="scope_id" value="{{ scope.public_id }}">
+                    <button class="jh-btn danger" type="submit">{{ employer_t.support_team_remove_access }}</button>
+                  </form>
+                </article>
+              {% empty %}
+                <div class="team-empty">{{ employer_t.support_team_no_scopes }}</div>
+              {% endfor %}
+            </div>
+
+            {% if available_workers %}
+              <form class="team-form" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="scope_grant">
+                <input type="hidden" name="membership_id" value="{{ selected_membership.public_id }}">
+                <h3>{{ employer_t.support_team_add_scope }}</h3>
+                <p>{{ employer_t.support_team_add_scope_text }}</p>
+                <label class="jh-field"><span>{{ employer_t.support_team_worker }}</span><select class="jh-input" name="connection_id" required>{% for worker in available_workers %}<option value="{{ worker.public_id }}">{{ worker.scope_label }}</option>{% endfor %}</select></label>
+                <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_team_grant_access }}</button></div>
+              </form>
+            {% else %}
+              <div class="team-empty" style="margin-top:17px">{{ employer_t.support_team_no_available_workers }}</div>
+            {% endif %}
+          {% endif %}
+        {% else %}
+          <div class="team-empty">{{ employer_t.support_team_no_staff }}</div>
+        {% endif %}
+      </section>
+    </div>
+  </section>
+{% endblock %}

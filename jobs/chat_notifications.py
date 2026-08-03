@@ -51,6 +51,7 @@ def notify_user_about_chat_message(message, *, recipient, sender_name):
         summary["skipped_no_device"] = 1
         return summary
 
+    notification_target = f"chat:{message.conversation_id}"
     for device in devices:
         summary["devices"] += 1
         push_status, _, error_text = send_push_message(
@@ -62,7 +63,12 @@ def notify_user_about_chat_message(message, *, recipient, sender_name):
                 "type": "chat_message",
                 "conversation_id": message.conversation_id,
                 "message_id": message.id,
+                "notification_event_id": f"chat:{message.id}",
+                "notification_namespace": "chat",
+                "notification_target": notification_target,
             },
+            collapse_key=notification_target,
+            notification_tag=f"jobhub:{notification_target}",
         )
         if push_status == "sent":
             summary["sent"] += 1
