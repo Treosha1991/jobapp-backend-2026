@@ -315,12 +315,12 @@ class SupportWorkspaceWebTests(TestCase):
         room = HousingRoom.objects.create(site=site, label="Room 3", capacity=1)
         place = HousingPlace.objects.create(room=room, label="Bed 1")
         self.client.force_login(self.owner)
-        card_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
+        card_url = f"/employer/support/workers/{self.worker_connection.public_id}/?tab=housing"
 
         card = self.client.get(card_url)
         self.assertEqual(card.status_code, 200)
         self.assertContains(card, "Lelystad home")
-        self.assertNotContains(card, "Blauwe Slank")
+        self.assertContains(card, "Blauwe Slank")
 
         drafted = self.client.post(
             card_url,
@@ -517,12 +517,18 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertEqual(vehicle.seat_capacity, 8)
 
-        card = self.client.get(
-            f"/employer/support/workers/{self.worker_connection.public_id}/"
+        company_card = self.client.get(
+            f"/employer/support/workers/{self.worker_connection.public_id}/?tab=company"
         )
-        self.assertContains(card, "Lelystad home")
-        self.assertContains(card, "Flevosap line A")
-        self.assertContains(card, "Transport 1")
+        housing_card = self.client.get(
+            f"/employer/support/workers/{self.worker_connection.public_id}/?tab=housing"
+        )
+        transport_card = self.client.get(
+            f"/employer/support/workers/{self.worker_connection.public_id}/?tab=transport"
+        )
+        self.assertContains(company_card, "Flevosap line A")
+        self.assertContains(housing_card, "Lelystad home")
+        self.assertContains(transport_card, "Transport 1")
 
     def test_transport_staff_builds_and_publishes_one_complete_route(self):
         vehicle = Vehicle.objects.create(

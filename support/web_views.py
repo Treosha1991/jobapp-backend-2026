@@ -81,6 +81,7 @@ from .services.timekeeping import (
     create_scheduled_shift,
     edit_work_time_entry,
     publish_scheduled_shift,
+    replace_scheduled_shift,
     request_work_time_correction,
 )
 from .services.worker_requests import decide_worker_request
@@ -260,11 +261,21 @@ def _operation_date(value, *, required=True):
     return parsed
 
 
-def _worker_card_redirect(connection):
-    return redirect(
+def _worker_card_redirect(connection, *, tab=None, month=None, site=None):
+    """Return to the same focused worker tab after a safe POST operation."""
+
+    query = {}
+    if tab in {"company", "transport", "housing"}:
+        query["tab"] = tab
+    if month:
+        query["month"] = month
+    if site:
+        query["site"] = site
+    base_url = reverse(
         "support:worker-card",
-        connection_public_id=connection.public_id,
+        kwargs={"connection_public_id": connection.public_id},
     )
+    return redirect(f"{base_url}?{urlencode(query)}" if query else base_url)
 
 
 def _registry_redirect(organization):
@@ -400,6 +411,60 @@ def _worker_card_operation(request, *, snapshot):
                 ends_on=ends_on,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
+        elif action == "scheduled_shift_create":
+            work_date = _operation_date(request.POST.get("work_date"))
+            starts_at = _aware_datetime(request.POST.get("starts_at"))
+            ends_at = _aware_datetime(request.POST.get("ends_at"))
+            create_scheduled_shift(
+                actor=request.user,
+                organization=organization,
+                connection=connection,
+                work_date=work_date,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                break_minutes=int(request.POST.get("break_minutes") or 0),
+                worker_label=(request.POST.get("worker_label") or "").strip(),
+                work_assignment=None,
+            )
+            messages.success(request, tr(request, "support_worker_draft_created"))
+        elif action == "scheduled_shift_publish":
+            shift = get_object_or_404(
+                ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                ),
+                public_id=request.POST.get("shift_id"),
+            )
+            publish_scheduled_shift(actor=request.user, shift=shift)
+            messages.success(request, tr(request, "support_worker_assignment_published"))
+        elif action == "scheduled_shift_cancel":
+            shift = get_object_or_404(
+                ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                ),
+                public_id=request.POST.get("shift_id"),
+            )
+            cancel_scheduled_shift(actor=request.user, shift=shift)
+            messages.success(request, tr(request, "support_worker_assignment_cancelled"))
+        elif action == "scheduled_shift_replace":
+            shift = get_object_or_404(
+                ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                ),
+                public_id=request.POST.get("shift_id"),
+            )
+            replace_scheduled_shift(
+                actor=request.user,
+                shift=shift,
+                work_date=_operation_date(request.POST.get("work_date")),
+                starts_at=_aware_datetime(request.POST.get("starts_at")),
+                ends_at=_aware_datetime(request.POST.get("ends_at")),
+                break_minutes=int(request.POST.get("break_minutes") or 0),
+                worker_label=(request.POST.get("worker_label") or "").strip(),
+            )
+            messages.success(request, tr(request, "support_worker_schedule_updated"))
         elif action == "publish_housing":
             assignment = get_object_or_404(
                 HousingAssignment.objects.filter(
@@ -444,7 +509,12 @@ def _worker_card_operation(request, *, snapshot):
             raise ValueError("operation_unknown")
     except (APIException, ValueError):
         messages.error(request, tr(request, "support_worker_operation_error"))
-    return _worker_card_redirect(connection)
+    return _worker_card_redirect(
+        connection,
+        tab=request.POST.get("return_tab"),
+        month=request.POST.get("return_month"),
+        site=request.POST.get("return_site"),
+    )
 
 
 @login_required(login_url="employer:login")
@@ -454,6 +524,8 @@ def worker_card(request, connection_public_id):
     snapshot = worker_card_snapshot(
         user=request.user,
         connection_public_id=connection_public_id,
+        calendar_month=request.GET.get("month"),
+        housing_site_public_id=request.GET.get("site"),
     )
     if request.method == "POST":
         return _worker_card_operation(request, snapshot=snapshot)
@@ -480,6 +552,8 @@ def worker_card(request, connection_public_id):
         assignment.state_label = tr(request, f"support_worker_state_{assignment.state}")
     for assignment in snapshot["work_assignments"]:
         assignment.state_label = tr(request, f"support_worker_state_{assignment.state}")
+    for shift in snapshot["scheduled_shifts"]:
+        shift.state_label = tr(request, f"support_worker_state_{shift.state}")
     for assignment in snapshot["driver_assignments"]:
         assignment.state_label = tr(request, f"support_worker_state_{assignment.state}")
     for assignment in snapshot["passenger_routes"]:
@@ -494,28 +568,48 @@ def worker_card(request, connection_public_id):
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
-    if any(
-        (
-            snapshot["permissions"]["housing"],
-            snapshot["permissions"]["work"],
-            snapshot["permissions"]["transport"],
+    requested_tab = (request.GET.get("tab") or "company").strip()
+    visible_tabs = {
+        "company": snapshot["permissions"]["work"],
+        "transport": snapshot["permissions"]["transport"],
+        "housing": snapshot["permissions"]["housing"],
+    }
+    if not visible_tabs.get(requested_tab):
+        requested_tab = next(
+            (key for key, allowed in visible_tabs.items() if allowed),
+            "company",
         )
-    ):
-        snapshot["registry_url"] = (
-            f"{reverse('support:registries')}?organization={snapshot['organization'].public_id}"
-        )
-    if snapshot["permissions"]["transport"]:
-        snapshot["transport_url"] = (
-            f"{reverse('support:transport')}?organization={snapshot['organization'].public_id}"
-        )
-    if snapshot["permissions"]["organization_manage"]:
-        snapshot["team_url"] = (
-            f"{reverse('support:team')}?organization={snapshot['organization'].public_id}"
-        )
-    if snapshot["permissions"]["time_view"] or snapshot["permissions"]["schedule"]:
-        snapshot["time_url"] = (
-            f"{reverse('support:time')}?organization={snapshot['organization'].public_id}"
-        )
+    worker_base_url = reverse(
+        "support:worker-card",
+        kwargs={"connection_public_id": snapshot["connection"].public_id},
+    )
+    selected_calendar_date = snapshot["selected_calendar_date"]
+    snapshot.update(
+        {
+            "active_tab": requested_tab,
+            "worker_base_url": worker_base_url,
+            "company_url": f"{worker_base_url}?tab=company",
+            "transport_tab_url": f"{worker_base_url}?tab=transport",
+            "housing_tab_url": f"{worker_base_url}?tab=housing",
+            "calendar_month": (
+                selected_calendar_date.strftime("%Y-%m")
+                if selected_calendar_date
+                else ""
+            ),
+            "calendar_previous_url": (
+                f"{worker_base_url}?tab=company&month="
+                f"{snapshot['calendar_previous_month'].strftime('%Y-%m')}"
+                if snapshot["calendar_previous_month"]
+                else None
+            ),
+            "calendar_next_url": (
+                f"{worker_base_url}?tab=company&month="
+                f"{snapshot['calendar_next_month'].strftime('%Y-%m')}"
+                if snapshot["calendar_next_month"]
+                else None
+            ),
+        }
+    )
     return render(request, "support/worker_card.html", snapshot)
 
 

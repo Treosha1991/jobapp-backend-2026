@@ -5,9 +5,11 @@ membership.  Views and templates must not construct broader querysets and then
 hide columns, because that would still expose data through a direct URL.
 """
 
-from datetime import timedelta
+from calendar import monthrange
+from datetime import date, timedelta
 
 from django.http import Http404
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
@@ -425,7 +427,7 @@ def conversation_workspace_snapshot(*, user, organization_public_id=None):
     }
 
 
-def worker_card_snapshot(*, user, connection_public_id):
+def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, housing_site_public_id=None):
     """Return one worker card without expanding access beyond its organization.
 
     A specialized coordinator may open the card with their operational right
@@ -468,6 +470,9 @@ def worker_card_snapshot(*, user, connection_public_id):
 
     housing_assignments = []
     housing_places = []
+    housing_sites = []
+    selected_housing_site = None
+    selected_housing_rooms = []
     if permissions["housing"]:
         housing_assignments = list(
             HousingAssignment.objects.filter(connection=connection)
@@ -484,9 +489,89 @@ def worker_card_snapshot(*, user, connection_public_id):
             .select_related("room__site")
             .order_by("room__site__internal_name", "room__label", "label", "id")
         )
+        housing_sites = list(
+            HousingSite.objects.filter(
+                organization=organization,
+                is_active=True,
+            ).order_by("internal_name", "id")
+        )
+        if housing_site_public_id:
+            selected_housing_site = next(
+                (
+                    item
+                    for item in housing_sites
+                    if str(item.public_id) == str(housing_site_public_id)
+                ),
+                None,
+            )
+            if selected_housing_site is None:
+                raise Http404("support_housing_site_not_found")
+        elif housing_sites:
+            selected_housing_site = housing_sites[0]
+
+        if selected_housing_site is not None:
+            # A housing manager needs an occupancy map to allocate a bed.  The
+            # names are still limited to workers in the manager's own scope;
+            # an occupied bed outside that scope is never exposed as a name.
+            allowed_worker_ids = set(
+                worker_connection_queryset_for(
+                    user=user,
+                    organization=organization,
+                    queryset=SupportConnection.objects.filter(is_archived=False),
+                ).values_list("id", flat=True)
+            )
+            selected_housing_rooms = list(
+                HousingRoom.objects.filter(
+                    site=selected_housing_site,
+                    is_active=True,
+                )
+                .prefetch_related("places")
+                .order_by("label", "id")
+            )
+            now = timezone.now()
+            occupancy_by_place_id = {}
+            for assignment in (
+                HousingAssignment.objects.filter(
+                    place__room__site=selected_housing_site,
+                    state__in=(
+                        HousingAssignment.STATE_DRAFT,
+                        HousingAssignment.STATE_PUBLISHED,
+                    ),
+                    check_in_at__lte=now,
+                )
+                .filter(
+                    Q(check_out_at__isnull=True) | Q(check_out_at__gt=now)
+                )
+                .select_related("connection__candidate")
+                .order_by("-check_in_at", "-id")
+            ):
+                occupancy_by_place_id.setdefault(assignment.place_id, assignment)
+            for room in selected_housing_rooms:
+                room.places_for_layout = []
+                for place in room.places.all():
+                    assignment = occupancy_by_place_id.get(place.id)
+                    place.occupancy_state = "free" if assignment is None else "occupied"
+                    place.occupancy_label = (
+                        ""
+                        if assignment is None
+                        else (
+                            _display_name(assignment.connection.candidate)
+                            if assignment.connection_id in allowed_worker_ids
+                            else None
+                        )
+                    )
+                    place.is_selected_worker_place = bool(
+                        assignment is not None and assignment.connection_id == connection.id
+                    )
+                    room.places_for_layout.append(place)
 
     work_assignments = []
     work_projects = []
+    scheduled_shifts = []
+    calendar_days = []
+    selected_calendar_date = None
+    calendar_previous_month = None
+    calendar_next_month = None
     if permissions["work"]:
         work_assignments = list(
             WorkerProjectAssignment.objects.filter(connection=connection)
@@ -502,19 +587,99 @@ def worker_card_snapshot(*, user, connection_public_id):
             .select_related("worksite")
             .order_by("internal_name", "id")
         )
+        try:
+            year, month = [int(item) for item in (calendar_month or "").split("-", 1)]
+            month_start = date(year, month, 1)
+        except (TypeError, ValueError):
+            today = timezone.localdate()
+            month_start = date(today.year, today.month, 1)
+        month_end = date(
+            month_start.year,
+            month_start.month,
+            monthrange(month_start.year, month_start.month)[1],
+        )
+        scheduled_shifts = list(
+            ScheduledWorkShift.objects.filter(
+                connection=connection,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
+                work_date__range=(month_start, month_end),
+            ).select_related("work_assignment__project").order_by("work_date", "starts_at", "id")
+        )
+        shifts_by_date = {item.work_date: item for item in scheduled_shifts}
+        first_weekday, days_in_month = monthrange(month_start.year, month_start.month)
+        calendar_days = [None] * first_weekday
+        for day_number in range(1, days_in_month + 1):
+            current_date = date(month_start.year, month_start.month, day_number)
+            calendar_days.append(
+                {
+                    "date": current_date,
+                    "shift": shifts_by_date.get(current_date),
+                    "is_today": current_date == timezone.localdate(),
+                }
+            )
+        selected_calendar_date = month_start
+        calendar_previous_month = (
+            date(month_start.year - 1, 12, 1)
+            if month_start.month == 1
+            else date(month_start.year, month_start.month - 1, 1)
+        )
+        calendar_next_month = (
+            date(month_start.year + 1, 1, 1)
+            if month_start.month == 12
+            else date(month_start.year, month_start.month + 1, 1)
+        )
 
     driver_assignments = []
+    driver_routes = []
     passenger_routes = []
     vehicles = []
     if permissions["transport"]:
         driver_assignments = list(
-            DriverVehicleAssignment.objects.filter(driver_connection=connection)
+            DriverVehicleAssignment.objects.filter(
+                driver_connection=connection,
+                state__in=(
+                    DriverVehicleAssignment.STATE_DRAFT,
+                    DriverVehicleAssignment.STATE_PUBLISHED,
+                ),
+            )
             .select_related("vehicle")
             .order_by("-starts_on", "-id")
         )
+        driver_routes = list(
+            TransportRoute.objects.filter(
+                driver_vehicle_assignment__driver_connection=connection,
+                state__in=(
+                    TransportRoute.STATE_DRAFT,
+                    TransportRoute.STATE_PUBLISHED,
+                ),
+            )
+            .select_related(
+                "driver_vehicle_assignment__vehicle",
+                "worksite",
+            )
+            .prefetch_related(
+                "stops",
+                "passenger_assignments__connection__candidate",
+            )
+            .order_by("-starts_on", "-id")
+        )
         passenger_routes = list(
-            TransportPassengerAssignment.objects.filter(connection=connection)
-            .select_related("route__driver_vehicle_assignment__vehicle")
+            TransportPassengerAssignment.objects.filter(
+                connection=connection,
+                route__state__in=(
+                    TransportRoute.STATE_DRAFT,
+                    TransportRoute.STATE_PUBLISHED,
+                ),
+            )
+            .select_related(
+                "route__driver_vehicle_assignment__vehicle",
+                "route__driver_vehicle_assignment__driver_connection__candidate",
+                "pickup_stop",
+                "dropoff_stop",
+            )
             .order_by("-route__starts_on", "-id")
         )
         vehicles = list(
@@ -522,6 +687,19 @@ def worker_card_snapshot(*, user, connection_public_id):
                 "internal_name", "id"
             )
         )
+        for route in driver_routes:
+            route.passengers_for_driver = list(route.passenger_assignments.all())
+            route.occupied_seat_count = min(
+                route.driver_vehicle_assignment.vehicle.seat_capacity,
+                1 + len(route.passengers_for_driver),
+            )
+            route.free_seat_count = max(
+                0,
+                route.driver_vehicle_assignment.vehicle.seat_capacity
+                - route.occupied_seat_count,
+            )
+        for passenger_assignment in passenger_routes:
+            passenger_assignment.is_selected_worker = True
 
     document_packages = []
     if permissions["document_request"]:
@@ -543,9 +721,18 @@ def worker_card_snapshot(*, user, connection_public_id):
         },
         "housing_assignments": housing_assignments,
         "housing_places": housing_places,
+        "housing_sites": housing_sites,
+        "selected_housing_site": selected_housing_site,
+        "selected_housing_rooms": selected_housing_rooms,
         "work_assignments": work_assignments,
         "work_projects": work_projects,
+        "scheduled_shifts": scheduled_shifts,
+        "calendar_days": calendar_days,
+        "selected_calendar_date": selected_calendar_date,
+        "calendar_previous_month": calendar_previous_month,
+        "calendar_next_month": calendar_next_month,
         "driver_assignments": driver_assignments,
+        "driver_routes": driver_routes,
         "passenger_routes": passenger_routes,
         "vehicles": vehicles,
         "document_packages": document_packages,

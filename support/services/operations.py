@@ -341,6 +341,12 @@ def create_driver_vehicle_assignment(*, actor, organization, driver_connection, 
         _require_same_organization(organization=organization, vehicle=vehicle)
         if not vehicle.is_active:
             raise ValidationError({"vehicle": "vehicle_not_available"})
+        if _connection_has_active_passenger_route(
+            connection=driver_connection,
+            starts_on=starts_on,
+            ends_on=ends_on,
+        ):
+            raise ValidationError({"driver_connection": "driver_already_has_passenger_route"})
         assignment = DriverVehicleAssignment.objects.create(
             organization=organization,
             driver_connection=driver_connection,
@@ -482,6 +488,43 @@ def _route_passenger_conflict(*, connection, route):
     ).exists()
 
 
+def _connection_has_active_passenger_route(*, connection, starts_on, ends_on):
+    """A worker may belong to one active transport crew only."""
+
+    current_time = timezone.now()
+    routes = TransportPassengerAssignment.objects.select_for_update().filter(
+        connection=connection,
+        route__state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
+    ).filter(
+        Q(route__state=TransportRoute.STATE_PUBLISHED)
+        | Q(route__reservation_expires_at__gt=current_time)
+    )
+    return _period_overlaps(
+        routes,
+        starts_field="route__starts_on",
+        ends_field="route__ends_on",
+        starts_at=starts_on,
+        ends_at=ends_on,
+    ).exists()
+
+
+def _connection_has_driver_assignment_for_route(*, connection, route):
+    assignments = DriverVehicleAssignment.objects.select_for_update().filter(
+        driver_connection=connection,
+        state__in=(
+            DriverVehicleAssignment.STATE_DRAFT,
+            DriverVehicleAssignment.STATE_PUBLISHED,
+        ),
+    )
+    return _period_overlaps(
+        assignments,
+        starts_field="starts_on",
+        ends_field="ends_on",
+        starts_at=route.starts_on,
+        ends_at=route.ends_on,
+    ).exists()
+
+
 def add_route_passenger(*, actor, route, connection, pickup_stop, dropoff_stop, boarding_order):
     organization = route.organization
     require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
@@ -509,6 +552,8 @@ def add_route_passenger(*, actor, route, connection, pickup_stop, dropoff_stop, 
         )
         if connection.pk == route.driver_vehicle_assignment.driver_connection_id:
             raise ValidationError({"connection": "driver_cannot_be_route_passenger"})
+        if _connection_has_driver_assignment_for_route(connection=connection, route=route):
+            raise ValidationError({"connection": "driver_already_has_vehicle_assignment"})
         if pickup_stop.route_id != route.id or dropoff_stop.route_id != route.id:
             raise ValidationError({"stop": "transport_stop_not_in_route"})
         if pickup_stop.kind != RouteStop.KIND_PICKUP or dropoff_stop.kind != RouteStop.KIND_DROPOFF:
@@ -610,6 +655,11 @@ def publish_transport_route(*, actor, route):
             require_worker_connection_access(
                 user=actor, organization=organization, connection=passenger.connection
             )
+            if _connection_has_driver_assignment_for_route(
+                connection=passenger.connection,
+                route=route,
+            ):
+                raise ValidationError({"route": "passenger_has_driver_assignment_conflict"})
             if (
                 passenger.pickup_stop_id not in pickup_stop_ids
                 or passenger.dropoff_stop_id not in dropoff_stop_ids

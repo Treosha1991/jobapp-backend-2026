@@ -35,6 +35,11 @@ from support.services.organizations import (
     grant_permission,
     grant_worker_access_scope,
 )
+from support.services.timekeeping import (
+    create_scheduled_shift,
+    publish_scheduled_shift,
+    replace_scheduled_shift,
+)
 
 
 @override_settings(SUPPORT_FEATURE_ENABLED=True)
@@ -155,6 +160,55 @@ class TimekeepingTests(TestCase):
     @staticmethod
     def _iso(value):
         return value.isoformat()
+
+    def test_replacing_published_shift_preserves_history_and_publishes_update(self):
+        now = timezone.now().replace(second=0, microsecond=0)
+        starts_at = now + timedelta(days=1, hours=1)
+        ends_at = starts_at + timedelta(hours=8)
+        work_date = timezone.localtime(starts_at).date()
+        original = create_scheduled_shift(
+            actor=self.accountant,
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=30,
+            worker_label="Morning shift",
+        )
+        publish_scheduled_shift(actor=self.accountant, shift=original)
+
+        replacement = replace_scheduled_shift(
+            actor=self.accountant,
+            shift=original,
+            work_date=work_date,
+            starts_at=starts_at + timedelta(hours=1),
+            ends_at=ends_at + timedelta(hours=1),
+            break_minutes=45,
+            worker_label="Late shift",
+        )
+
+        original.refresh_from_db()
+        self.assertEqual(original.state, ScheduledWorkShift.STATE_CANCELLED)
+        self.assertEqual(replacement.state, ScheduledWorkShift.STATE_PUBLISHED)
+        self.assertEqual(replacement.work_date, work_date)
+        self.assertEqual(replacement.worker_label, "Late shift")
+        self.assertEqual(replacement.break_minutes, 45)
+        self.assertEqual(
+            ScheduledWorkShift.objects.filter(
+                connection=self.connection,
+                work_date=work_date,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            NotificationOutbox.objects.filter(
+                notification_code="schedule.shift_published",
+                recipient=self.worker,
+            ).count(),
+            2,
+        )
 
     def test_worker_staff_timekeeping_flow_keeps_minutes_revisions_and_scope(self):
         now = timezone.now().replace(second=0, microsecond=0)

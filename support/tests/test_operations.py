@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
 from support.models import (
@@ -20,7 +21,11 @@ from support.models import (
     Vehicle,
     WorkerProjectAssignment,
 )
-from support.services.operations import publish_transport_route
+from support.services.operations import (
+    add_route_passenger,
+    create_driver_vehicle_assignment,
+    publish_transport_route,
+)
 from support.services.organizations import create_organization
 
 
@@ -383,6 +388,82 @@ class SupportOperationsTests(TestCase):
         )
         self.assertEqual(notifications.count(), 1)
         self.assertEqual(notifications.get().recipient, self.candidate)
+
+    def test_worker_cannot_be_driver_and_passenger_in_the_same_period(self):
+        starts_on = date.today() + timedelta(days=3)
+        driver_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Driver vehicle",
+            registration_identifier="JH-CREW-01",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        passenger_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Passenger vehicle",
+            registration_identifier="JH-CREW-02",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        driver_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.connection,
+            vehicle=driver_vehicle,
+            starts_on=starts_on,
+            created_by=self.owner,
+        )
+        route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Crew rule route",
+            driver_vehicle_assignment=driver_assignment,
+            starts_on=starts_on,
+            reservation_expires_at=timezone.now() + timedelta(hours=1),
+            created_by=self.owner,
+        )
+        pickup = RouteStop.objects.create(
+            route=route,
+            sequence=1,
+            kind=RouteStop.KIND_PICKUP,
+            label="Pickup",
+        )
+        dropoff = RouteStop.objects.create(
+            route=route,
+            sequence=2,
+            kind=RouteStop.KIND_DROPOFF,
+            label="Drop-off",
+        )
+        create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.passenger_connection,
+            vehicle=passenger_vehicle,
+            starts_on=starts_on,
+        )
+        with self.assertRaises(ValidationError):
+            add_route_passenger(
+                actor=self.owner,
+                route=route,
+                connection=self.passenger_connection,
+                pickup_stop=pickup,
+                dropoff_stop=dropoff,
+                boarding_order=1,
+            )
+
+        TransportPassengerAssignment.objects.create(
+            route=route,
+            connection=self.passenger_connection,
+            pickup_stop=pickup,
+            dropoff_stop=dropoff,
+            boarding_order=1,
+        )
+        with self.assertRaises(ValidationError):
+            create_driver_vehicle_assignment(
+                actor=self.owner,
+                organization=self.organization,
+                driver_connection=self.passenger_connection,
+                vehicle=passenger_vehicle,
+                starts_on=starts_on,
+            )
 
     def test_transport_workspace_api_exposes_only_transport_builder_data(self):
         self.organization.status = "active"

@@ -819,6 +819,112 @@ def cancel_scheduled_shift(*, actor, shift):
     return shift
 
 
+def replace_scheduled_shift(
+    *,
+    actor,
+    shift,
+    work_date,
+    starts_at,
+    ends_at,
+    break_minutes,
+    worker_label="",
+):
+    """Replace one planned shift while preserving the old audit record.
+
+    A published shift must not be mutated in place: the previous version stays
+    in history as cancelled, while the replacement keeps its published state
+    and sends one consolidated update to the worker.
+    """
+
+    organization = shift.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    with transaction.atomic():
+        shift = (
+            ScheduledWorkShift.objects.select_for_update()
+            .select_related("organization", "connection__candidate", "work_assignment")
+            .get(pk=shift.pk)
+        )
+        if shift.state == ScheduledWorkShift.STATE_CANCELLED:
+            raise ValidationError({"shift": "scheduled_shift_already_cancelled"})
+        _require_operational_connection(connection=shift.connection, organization=organization)
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=shift.connection,
+        )
+        _worked_minutes(
+            started_at=starts_at,
+            ended_at=ends_at,
+            break_minutes=break_minutes,
+        )
+        conflict_exists = (
+            ScheduledWorkShift.objects.select_for_update()
+            .filter(
+                connection=shift.connection,
+                work_date=work_date,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
+            )
+            .exclude(pk=shift.pk)
+            .exists()
+        )
+        if conflict_exists:
+            raise ValidationError({"work_date": "current_scheduled_shift_already_exists"})
+
+        previous_state = shift.state
+        now = timezone.now()
+        shift.state = ScheduledWorkShift.STATE_CANCELLED
+        shift.cancelled_at = now
+        shift.save(update_fields=["state", "cancelled_at", "updated_at"])
+        replacement = ScheduledWorkShift.objects.create(
+            organization=organization,
+            connection=shift.connection,
+            work_assignment=shift.work_assignment,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=break_minutes,
+            worker_label=(worker_label or "").strip(),
+            state=previous_state,
+            created_by=actor,
+            published_by=actor if previous_state == ScheduledWorkShift.STATE_PUBLISHED else None,
+            published_at=now if previous_state == ScheduledWorkShift.STATE_PUBLISHED else None,
+        )
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="schedule.shift_replaced",
+            target=replacement,
+            details={
+                "previous_shift": str(shift.public_id),
+                "connection": str(shift.connection.public_id),
+                "work_date": work_date.isoformat(),
+            },
+        )
+        if previous_state == ScheduledWorkShift.STATE_PUBLISHED:
+            enqueue_support_notification(
+                organization=organization,
+                recipient=shift.connection.candidate,
+                notification_code="schedule.shift_published",
+                target_kind="scheduled_shift",
+                target_public_id=replacement.public_id,
+                target_key=f"support:scheduled-shift:{replacement.public_id}",
+                collapse_key=(
+                    f"support:schedule:{shift.connection.public_id}:{work_date.isoformat()}"
+                ),
+                dedupe_key=(
+                    f"schedule.shift.replaced:{replacement.public_id}:{now.isoformat()}"
+                ),
+            )
+    return replacement
+
+
 def submit_work_time_entry(
     *,
     worker,
