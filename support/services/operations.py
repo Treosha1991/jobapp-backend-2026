@@ -492,6 +492,50 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
     return assignment
 
 
+def edit_driver_vehicle_assignment_draft(*, actor, assignment, driver_connection, starts_on, ends_on=None):
+    """Edit an unpublished vehicle assignment before it is shared with a worker."""
+
+    organization = assignment.organization
+    require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
+    with transaction.atomic():
+        assignment = DriverVehicleAssignment.objects.select_for_update().get(pk=assignment.pk)
+        driver_connection = SupportConnection.objects.select_for_update().get(pk=driver_connection.pk)
+        if assignment.state != DriverVehicleAssignment.STATE_DRAFT:
+            raise ValidationError({"driver_vehicle_assignment": "driver_vehicle_assignment_not_draft"})
+        if TransportRoute.objects.filter(driver_vehicle_assignment=assignment).exists():
+            raise ValidationError({"driver_vehicle_assignment": "edit_route_before_driver_vehicle_assignment"})
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=assignment.driver_connection,
+        )
+        _require_connection_for_operations(connection=driver_connection, organization=organization)
+        require_worker_connection_access(
+            user=actor, organization=organization, connection=driver_connection
+        )
+        if _connection_has_active_passenger_route(
+            connection=driver_connection, starts_on=starts_on, ends_on=ends_on
+        ):
+            raise ValidationError({"driver_connection": "driver_already_has_passenger_route"})
+        previous_driver_id = assignment.driver_connection_id
+        assignment.driver_connection = driver_connection
+        assignment.starts_on = starts_on
+        assignment.ends_on = ends_on
+        assignment.save(update_fields=["driver_connection", "starts_on", "ends_on", "updated_at"])
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.driver_vehicle_draft_updated",
+            target=assignment,
+            details={
+                "previous_driver_connection": str(previous_driver_id),
+                "driver_connection": str(driver_connection.public_id),
+                "vehicle": str(assignment.vehicle.public_id),
+            },
+        )
+    return assignment
+
+
 def delete_driver_vehicle_assignment_draft(*, actor, assignment):
     """Remove an unshared driver--vehicle draft that has no route yet."""
 

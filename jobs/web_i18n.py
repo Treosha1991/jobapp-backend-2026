@@ -1950,9 +1950,11 @@ TRANSLATIONS["ru"].update({
     "support_fleet_open": "Открыть",
     "support_fleet_history": "История закреплений",
     "support_fleet_assign_driver": "Назначить или изменить водителя",
+    "support_fleet_edit_draft": "Редактировать черновик",
     "support_fleet_driver": "Водитель",
     "support_fleet_license_only": "В списке только работники с подтверждённым водительским удостоверением.",
     "support_fleet_draft_created": "Черновик закрепления автомобиля создан. Опубликуйте его в карточке выбранного водителя.",
+    "support_fleet_draft_updated": "Черновик закрепления автомобиля обновлён.",
     "support_fleet_operation_error": "Не удалось создать черновик. Проверьте даты, доступность водителя и автомобиля.",
 })
 TRANSLATIONS["en"].update({
@@ -2000,9 +2002,11 @@ TRANSLATIONS["en"].update({
     "support_fleet_open": "Open",
     "support_fleet_history": "Assignment history",
     "support_fleet_assign_driver": "Assign or change driver",
+    "support_fleet_edit_draft": "Edit draft",
     "support_fleet_driver": "Driver",
     "support_fleet_license_only": "Only workers with a verified driving licence are listed.",
     "support_fleet_draft_created": "The vehicle assignment draft was created. Publish it from the selected driver's card.",
+    "support_fleet_draft_updated": "The vehicle assignment draft was updated.",
     "support_fleet_operation_error": "The draft could not be created. Check dates and driver and vehicle availability.",
 })
 TRANSLATIONS["pl"].update({
@@ -2050,9 +2054,11 @@ TRANSLATIONS["pl"].update({
     "support_fleet_open": "Otwórz",
     "support_fleet_history": "Historia przypisań",
     "support_fleet_assign_driver": "Przypisz lub zmień kierowcę",
+    "support_fleet_edit_draft": "Edytuj szkic",
     "support_fleet_driver": "Kierowca",
     "support_fleet_license_only": "Na liście są tylko pracownicy z potwierdzonym prawem jazdy.",
     "support_fleet_draft_created": "Utworzono szkic przypisania pojazdu. Opublikuj go na karcie wybranego kierowcy.",
+    "support_fleet_draft_updated": "Szkic przypisania pojazdu został zaktualizowany.",
     "support_fleet_operation_error": "Nie udało się utworzyć szkicu. Sprawdź daty oraz dostępność kierowcy i pojazdu.",
 })
 TRANSLATIONS["uk"].update({
@@ -2100,9 +2106,11 @@ TRANSLATIONS["uk"].update({
     "support_fleet_open": "Відкрити",
     "support_fleet_history": "Історія призначень",
     "support_fleet_assign_driver": "Призначити або змінити водія",
+    "support_fleet_edit_draft": "Редагувати чернетку",
     "support_fleet_driver": "Водій",
     "support_fleet_license_only": "У списку лише працівники з підтвердженим водійським посвідченням.",
     "support_fleet_draft_created": "Створено чернетку призначення автомобіля. Опублікуйте її в картці вибраного водія.",
+    "support_fleet_draft_updated": "Чернетку призначення автомобіля оновлено.",
     "support_fleet_operation_error": "Не вдалося створити чернетку. Перевірте дати та доступність водія й автомобіля.",
 })
 

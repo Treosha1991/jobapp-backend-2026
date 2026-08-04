@@ -74,6 +74,7 @@ from .services.operations import (
     cancel_worker_project_assignment,
     create_transport_route,
     delete_driver_vehicle_assignment_draft,
+    edit_driver_vehicle_assignment_draft,
     delete_housing_assignment_draft,
     delete_transport_route_draft,
     delete_worker_project_assignment_draft,
@@ -1156,27 +1157,67 @@ def fleet_workspace(request):
     organization = snapshot["organization"]
     if request.method == "POST":
         try:
-            data = _validated_post(DriverVehicleAssignmentCreateSerializer, request)
-            vehicle = get_object_or_404(
-                Vehicle, organization=organization, public_id=data.pop("vehicle_id")
-            )
-            driver = get_object_or_404(
-                SupportConnection, organization=organization, public_id=data.pop("driver_connection_id")
-            )
-            eligible_ids = {item.id for item in snapshot["eligible_drivers"]}
-            if driver.id not in eligible_ids:
-                raise ValueError("driver_license_not_verified")
-            create_driver_vehicle_assignment(
-                actor=request.user,
-                organization=organization,
-                driver_connection=driver,
-                vehicle=vehicle,
-                **data,
-            )
+            action = (request.POST.get("action") or "driver_vehicle_draft_create").strip()
+            if action == "driver_vehicle_draft_publish":
+                assignment = get_object_or_404(
+                    DriverVehicleAssignment,
+                    organization=organization,
+                    public_id=request.POST.get("assignment_id"),
+                )
+                publish_driver_vehicle_assignment(actor=request.user, assignment=assignment)
+                success_key = "support_transport_driver_vehicle_published"
+            elif action == "driver_vehicle_draft_delete":
+                assignment = get_object_or_404(
+                    DriverVehicleAssignment,
+                    organization=organization,
+                    public_id=request.POST.get("assignment_id"),
+                )
+                delete_driver_vehicle_assignment_draft(actor=request.user, assignment=assignment)
+                success_key = "support_draft_deleted"
+            else:
+                data = _validated_post(
+                    DriverVehicleAssignmentCreateSerializer,
+                    request,
+                    ignored_fields=("assignment_id",),
+                )
+                vehicle = get_object_or_404(
+                    Vehicle, organization=organization, public_id=data.pop("vehicle_id")
+                )
+                driver = get_object_or_404(
+                    SupportConnection, organization=organization, public_id=data.pop("driver_connection_id")
+                )
+                eligible_ids = {item.id for item in snapshot["eligible_drivers"]}
+                if driver.id not in eligible_ids:
+                    raise ValueError("driver_license_not_verified")
+                if action == "driver_vehicle_draft_edit":
+                    assignment = get_object_or_404(
+                        DriverVehicleAssignment,
+                        organization=organization,
+                        vehicle=vehicle,
+                        public_id=request.POST.get("assignment_id"),
+                    )
+                    edit_driver_vehicle_assignment_draft(
+                        actor=request.user,
+                        assignment=assignment,
+                        driver_connection=driver,
+                        **data,
+                    )
+                    success_key = "support_fleet_draft_updated"
+                elif action == "driver_vehicle_draft_create":
+                    create_driver_vehicle_assignment(
+                        actor=request.user,
+                        organization=organization,
+                        driver_connection=driver,
+                        vehicle=vehicle,
+                        **data,
+                    )
+                    success_key = "support_fleet_draft_created"
+                else:
+                    raise ValueError("fleet_operation_unknown")
         except (APIException, ValueError):
             messages.error(request, tr(request, "support_fleet_operation_error"))
         else:
-            messages.success(request, tr(request, "support_fleet_draft_created"))
+            messages.success(request, tr(request, success_key))
         query = urlencode({"organization": organization.public_id, "vehicle": request.POST.get("vehicle_id", "")})
         return redirect(f"{reverse('support:fleet')}?{query}")
     snapshot["workspace_url"] = f"{reverse('support:workspace')}?organization={organization.public_id}"

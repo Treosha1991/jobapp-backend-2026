@@ -27,6 +27,7 @@ from support.services.operations import (
     create_driver_vehicle_assignment,
     create_transport_route,
     delete_transport_route_draft,
+    edit_driver_vehicle_assignment_draft,
     publish_driver_vehicle_assignment,
     publish_transport_route,
 )
@@ -453,6 +454,35 @@ class SupportOperationsTests(TestCase):
             starts_on=starts_on,
         )
         self.assertEqual(route.state, TransportRoute.STATE_DRAFT)
+
+    def test_driver_vehicle_draft_can_be_edited_before_publication(self):
+        starts_on = date.today() + timedelta(days=4)
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Editable fleet car",
+            registration_identifier="JH-EDIT-01",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+            created_by=self.owner,
+        )
+
+        updated = edit_driver_vehicle_assignment_draft(
+            actor=self.owner,
+            assignment=assignment,
+            driver_connection=self.connection,
+            starts_on=starts_on + timedelta(days=1),
+            ends_on=starts_on + timedelta(days=4),
+        )
+
+        self.assertEqual(updated.state, DriverVehicleAssignment.STATE_DRAFT)
+        self.assertEqual(updated.starts_on, starts_on + timedelta(days=1))
+        self.assertEqual(updated.ends_on, starts_on + timedelta(days=4))
 
     def test_transport_draft_can_be_deleted_without_deleting_vehicle_assignment(self):
         starts_on = date.today() + timedelta(days=3)
