@@ -555,8 +555,6 @@ def delete_driver_vehicle_assignment_draft(*, actor, assignment):
                 driver_vehicle_assignment=assignment
             )
         )
-        if any(route.state != TransportRoute.STATE_DRAFT for route in routes):
-            raise ValidationError({"driver_vehicle_assignment": "cannot_delete_published_route"})
         for route in routes:
             record_audit_event(
                 organization=organization,

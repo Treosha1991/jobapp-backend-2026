@@ -1956,6 +1956,7 @@ TRANSLATIONS["ru"].update({
     "support_fleet_draft_created": "Черновик закрепления автомобиля создан. Опубликуйте его в карточке выбранного водителя.",
     "support_fleet_draft_updated": "Черновик закрепления автомобиля обновлён.",
     "support_fleet_operation_error": "Не удалось создать черновик. Проверьте даты, доступность водителя и автомобиля.",
+    "support_fleet_delete_error": "Не удалось удалить черновик автомобиля.",
 })
 TRANSLATIONS["en"].update({
     "support_registry_title": "Company registries",
@@ -2008,6 +2009,7 @@ TRANSLATIONS["en"].update({
     "support_fleet_draft_created": "The vehicle assignment draft was created. Publish it from the selected driver's card.",
     "support_fleet_draft_updated": "The vehicle assignment draft was updated.",
     "support_fleet_operation_error": "The draft could not be created. Check dates and driver and vehicle availability.",
+    "support_fleet_delete_error": "The vehicle draft could not be deleted.",
 })
 TRANSLATIONS["pl"].update({
     "support_registry_title": "Rejestry firmy",
@@ -2060,6 +2062,7 @@ TRANSLATIONS["pl"].update({
     "support_fleet_draft_created": "Utworzono szkic przypisania pojazdu. Opublikuj go na karcie wybranego kierowcy.",
     "support_fleet_draft_updated": "Szkic przypisania pojazdu został zaktualizowany.",
     "support_fleet_operation_error": "Nie udało się utworzyć szkicu. Sprawdź daty oraz dostępność kierowcy i pojazdu.",
+    "support_fleet_delete_error": "Nie udało się usunąć szkicu pojazdu.",
 })
 TRANSLATIONS["uk"].update({
     "support_registry_title": "Реєстри компанії",
@@ -2112,6 +2115,7 @@ TRANSLATIONS["uk"].update({
     "support_fleet_draft_created": "Створено чернетку призначення автомобіля. Опублікуйте її в картці вибраного водія.",
     "support_fleet_draft_updated": "Чернетку призначення автомобіля оновлено.",
     "support_fleet_operation_error": "Не вдалося створити чернетку. Перевірте дати та доступність водія й автомобіля.",
+    "support_fleet_delete_error": "Не вдалося видалити чернетку автомобіля.",
 })
 
 

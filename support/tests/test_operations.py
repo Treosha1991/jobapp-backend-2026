@@ -535,6 +535,7 @@ class SupportOperationsTests(TestCase):
             internal_name="Draft route removed with driver",
             driver_vehicle_assignment=assignment,
             starts_on=starts_on,
+            state=TransportRoute.STATE_PUBLISHED,
             reservation_expires_at=timezone.now() + timedelta(hours=1),
             created_by=self.owner,
         )

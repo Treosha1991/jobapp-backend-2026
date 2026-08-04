@@ -1156,8 +1156,8 @@ def fleet_workspace(request):
     )
     organization = snapshot["organization"]
     if request.method == "POST":
+        action = (request.POST.get("action") or "driver_vehicle_draft_create").strip()
         try:
-            action = (request.POST.get("action") or "driver_vehicle_draft_create").strip()
             if action == "driver_vehicle_draft_publish":
                 assignment = get_object_or_404(
                     DriverVehicleAssignment,
@@ -1215,7 +1215,15 @@ def fleet_workspace(request):
                 else:
                     raise ValueError("fleet_operation_unknown")
         except (APIException, ValueError):
-            messages.error(request, tr(request, "support_fleet_operation_error"))
+            messages.error(
+                request,
+                tr(
+                    request,
+                    "support_fleet_delete_error"
+                    if action == "driver_vehicle_draft_delete"
+                    else "support_fleet_operation_error",
+                ),
+            )
         else:
             messages.success(request, tr(request, success_key))
         query = urlencode({"organization": organization.public_id, "vehicle": request.POST.get("vehicle_id", "")})
