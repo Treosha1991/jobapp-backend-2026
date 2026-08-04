@@ -493,8 +493,10 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
 
         now = timezone.now()
         # Publishing a new draft for the same car deliberately replaces its
-        # previous driver.  Routes belong to the car's crew, so they move with
-        # the car instead of disappearing when the driver is changed.
+        # previous driver. Driver appointments are open-ended: their history
+        # is defined by the next appointment, not by a manually entered end.
+        # Routes belong to the car's crew, so they move with the car instead
+        # of disappearing when the driver is changed.
         for previous_assignment in replacement_assignments:
             routes = list(
                 TransportRoute.objects.select_for_update()
@@ -502,24 +504,12 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
                 .exclude(state=TransportRoute.STATE_CANCELLED)
             )
             for route in routes:
-                route_fits_new_assignment = (
-                    route.starts_on >= assignment.starts_on
-                    and (
-                        assignment.ends_on is None
-                        or (
-                            route.ends_on is not None
-                            and route.ends_on <= assignment.ends_on
-                        )
-                    )
-                )
-                if not route_fits_new_assignment:
-                    raise ValidationError({"driver_vehicle_assignment": "replacement_period_does_not_cover_route"})
-            for route in routes:
                 route.driver_vehicle_assignment = assignment
                 route.save(update_fields=["driver_vehicle_assignment", "updated_at"])
             previous_assignment.state = DriverVehicleAssignment.STATE_CANCELLED
             previous_assignment.cancelled_at = now
-            previous_assignment.save(update_fields=["state", "cancelled_at", "updated_at"])
+            previous_assignment.ends_on = None
+            previous_assignment.save(update_fields=["state", "cancelled_at", "ends_on", "updated_at"])
             record_audit_event(
                 organization=organization,
                 actor=actor,
@@ -533,7 +523,8 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
         assignment.state = DriverVehicleAssignment.STATE_PUBLISHED
         assignment.published_by = actor
         assignment.published_at = now
-        assignment.save(update_fields=["state", "published_by", "published_at", "updated_at"])
+        assignment.ends_on = None
+        assignment.save(update_fields=["state", "published_by", "published_at", "ends_on", "updated_at"])
         record_audit_event(
             organization=organization,
             actor=actor,

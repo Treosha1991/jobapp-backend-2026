@@ -518,6 +518,7 @@ class SupportOperationsTests(TestCase):
             driver_connection=self.passenger_connection,
             vehicle=vehicle,
             starts_on=starts_on,
+            ends_on=starts_on + timedelta(days=1),
         )
 
         published = publish_driver_vehicle_assignment(actor=self.owner, assignment=replacement)
@@ -525,7 +526,9 @@ class SupportOperationsTests(TestCase):
         previous_assignment.refresh_from_db()
         route.refresh_from_db()
         self.assertEqual(published.state, DriverVehicleAssignment.STATE_PUBLISHED)
+        self.assertIsNone(published.ends_on)
         self.assertEqual(previous_assignment.state, DriverVehicleAssignment.STATE_CANCELLED)
+        self.assertIsNone(previous_assignment.ends_on)
         self.assertEqual(route.driver_vehicle_assignment, published)
 
     def test_transport_draft_can_be_deleted_without_deleting_vehicle_assignment(self):

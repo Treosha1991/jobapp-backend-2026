@@ -1961,7 +1961,7 @@ TRANSLATIONS["ru"].update({
     "support_fleet_operation_error": "Не удалось создать черновик. Проверьте даты, доступность водителя и автомобиля.",
     "support_fleet_delete_error": "Не удалось удалить черновик автомобиля.",
     "support_fleet_publish_error": "Нельзя опубликовать закрепление: водитель или автомобиль уже заняты в пересекающийся период. Выберите другого водителя либо измените даты.",
-    "support_fleet_replacement_period_error": "Нельзя заменить водителя: новый период короче действующего маршрута. В черновике укажите даты, которые покрывают весь маршрут, затем опубликуйте его.",
+    "support_fleet_replaced_on": "Заменён",
     "support_fleet_edit_error": "Не удалось сохранить изменения черновика. Проверьте даты и выбранного водителя.",
 })
 TRANSLATIONS["en"].update({
@@ -2020,7 +2020,7 @@ TRANSLATIONS["en"].update({
     "support_fleet_operation_error": "The draft could not be created. Check dates and driver and vehicle availability.",
     "support_fleet_delete_error": "The vehicle draft could not be deleted.",
     "support_fleet_publish_error": "The assignment cannot be published: the driver or vehicle is already assigned for an overlapping period. Choose another driver or change the dates.",
-    "support_fleet_replacement_period_error": "The driver cannot be replaced because the new period is shorter than the active route. Set draft dates that cover the whole route, then publish it.",
+    "support_fleet_replaced_on": "Replaced",
     "support_fleet_edit_error": "The draft changes could not be saved. Check the dates and selected driver.",
 })
 TRANSLATIONS["pl"].update({
@@ -2079,7 +2079,7 @@ TRANSLATIONS["pl"].update({
     "support_fleet_operation_error": "Nie udało się utworzyć szkicu. Sprawdź daty oraz dostępność kierowcy i pojazdu.",
     "support_fleet_delete_error": "Nie udało się usunąć szkicu pojazdu.",
     "support_fleet_publish_error": "Nie można opublikować przypisania: kierowca lub pojazd jest już zajęty w nakładającym się okresie. Wybierz innego kierowcę albo zmień daty.",
-    "support_fleet_replacement_period_error": "Nie można zmienić kierowcy: nowy okres jest krótszy niż aktywna trasa. Ustaw w szkicu daty obejmujące całą trasę, a następnie go opublikuj.",
+    "support_fleet_replaced_on": "Zastąpiono",
     "support_fleet_edit_error": "Nie udało się zapisać zmian szkicu. Sprawdź daty i wybranego kierowcę.",
 })
 TRANSLATIONS["uk"].update({
@@ -2138,7 +2138,7 @@ TRANSLATIONS["uk"].update({
     "support_fleet_operation_error": "Не вдалося створити чернетку. Перевірте дати та доступність водія й автомобіля.",
     "support_fleet_delete_error": "Не вдалося видалити чернетку автомобіля.",
     "support_fleet_publish_error": "Не можна опублікувати призначення: водій або автомобіль уже зайнятий у період, що перетинається. Виберіть іншого водія або змініть дати.",
-    "support_fleet_replacement_period_error": "Не можна змінити водія: новий період коротший за активний маршрут. У чернетці вкажіть дати, що покривають увесь маршрут, а потім опублікуйте її.",
+    "support_fleet_replaced_on": "Замінено",
     "support_fleet_edit_error": "Не вдалося зберегти зміни чернетки. Перевірте дати та вибраного водія.",
 })
 

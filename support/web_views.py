@@ -434,16 +434,13 @@ def _worker_card_operation(request, *, snapshot):
                 public_id=request.POST.get("vehicle_id"),
             )
             starts_on = _operation_date(request.POST.get("starts_on"))
-            ends_on = _operation_date(request.POST.get("ends_on"), required=False)
-            if ends_on is not None and ends_on <= starts_on:
-                raise ValueError("period_invalid")
             create_driver_vehicle_assignment(
                 actor=request.user,
                 organization=organization,
                 driver_connection=connection,
                 vehicle=vehicle,
                 starts_on=starts_on,
-                ends_on=ends_on,
+                ends_on=None,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
         elif action == "driver_vehicle_publish":
@@ -1214,8 +1211,7 @@ def fleet_workspace(request):
                     success_key = "support_fleet_draft_created"
                 else:
                     raise ValueError("fleet_operation_unknown")
-        except (APIException, ValueError) as error:
-            error_text = str(getattr(error, "detail", error))
+        except (APIException, ValueError):
             message_key = (
                 "support_fleet_delete_error"
                 if action == "driver_vehicle_draft_delete"
@@ -1225,11 +1221,6 @@ def fleet_workspace(request):
                 if action == "driver_vehicle_draft_edit"
                 else "support_fleet_operation_error"
             )
-            if (
-                action == "driver_vehicle_draft_publish"
-                and "replacement_period_does_not_cover_route" in error_text
-            ):
-                message_key = "support_fleet_replacement_period_error"
             messages.error(
                 request,
                 tr(request, message_key),
