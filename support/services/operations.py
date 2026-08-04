@@ -116,6 +116,90 @@ def create_housing_assignment(*, actor, organization, connection, place, check_i
     return assignment
 
 
+def edit_housing_assignment_draft(*, actor, assignment, check_in_at):
+    """Change the check-in date of an unpublished housing draft only."""
+
+    organization = assignment.organization
+    require_permission(user=actor, organization=organization, permission_code=HOUSING_MANAGE)
+    with transaction.atomic():
+        assignment = HousingAssignment.objects.select_for_update().get(pk=assignment.pk)
+        if assignment.state != HousingAssignment.STATE_DRAFT:
+            raise ValidationError({"assignment": "housing_assignment_not_draft"})
+        _require_connection_for_operations(
+            connection=assignment.connection,
+            organization=organization,
+        )
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=assignment.connection,
+        )
+        assignment.check_in_at = check_in_at
+        # A check-out date is intentionally never collected for a housing draft.
+        assignment.check_out_at = None
+        assignment.save(update_fields=["check_in_at", "check_out_at", "updated_at"])
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="housing.assignment_draft_updated",
+            target=assignment,
+            details={"connection": str(assignment.connection.public_id)},
+        )
+    return assignment
+
+
+def schedule_housing_check_out(*, actor, assignment, check_out_at):
+    """Set or change the departure date of a published housing assignment."""
+
+    organization = assignment.organization
+    require_permission(user=actor, organization=organization, permission_code=HOUSING_MANAGE)
+    with transaction.atomic():
+        assignment = (
+            HousingAssignment.objects.select_for_update()
+            .select_related("connection__candidate", "organization")
+            .get(pk=assignment.pk)
+        )
+        if assignment.state != HousingAssignment.STATE_PUBLISHED:
+            raise ValidationError({"assignment": "housing_assignment_not_published"})
+        _require_connection_for_operations(
+            connection=assignment.connection,
+            organization=organization,
+        )
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=assignment.connection,
+        )
+        if check_out_at <= assignment.check_in_at:
+            raise ValidationError({"check_out_at": "period_end_must_be_after_start"})
+        assignment.check_out_at = check_out_at
+        assignment.save(update_fields=["check_out_at", "updated_at"])
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="housing.assignment_check_out_scheduled",
+            target=assignment,
+            details={
+                "connection": str(assignment.connection.public_id),
+                "check_out_at": check_out_at.isoformat(),
+            },
+        )
+        enqueue_support_notification(
+            organization=organization,
+            recipient=assignment.connection.candidate,
+            notification_code="housing.assignment_published",
+            target_kind="housing_assignment",
+            target_public_id=assignment.public_id,
+            target_key=f"support:housing-assignment:{assignment.public_id}",
+            collapse_key=f"support:housing:{assignment.connection.public_id}",
+            dedupe_key=(
+                "housing.assignment.check_out_scheduled:"
+                f"{assignment.public_id}:{check_out_at.isoformat()}"
+            ),
+        )
+    return assignment
+
+
 def publish_housing_assignment(*, actor, assignment):
     organization = assignment.organization
     require_permission(user=actor, organization=organization, permission_code=HOUSING_MANAGE)

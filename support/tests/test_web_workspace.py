@@ -322,20 +322,22 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(card.status_code, 200)
         self.assertContains(card, "Lelystad home")
         self.assertContains(card, "Blauwe Slank")
+        self.assertContains(card, 'name="check_in_on" type="date"')
+        self.assertNotContains(card, 'name="check_out_at"')
 
         drafted = self.client.post(
             card_url,
             {
                 "action": "housing_draft",
                 "place_id": str(place.public_id),
-                "check_in_at": "2026-09-01T10:00",
-                "check_out_at": "",
+                "check_in_on": "2026-09-01",
             },
             follow=True,
         )
         self.assertEqual(drafted.status_code, 200)
         assignment = HousingAssignment.objects.get(connection=self.worker_connection)
         self.assertEqual(assignment.state, HousingAssignment.STATE_DRAFT)
+        self.assertEqual(assignment.check_in_at.date(), date(2026, 9, 1))
         self.assertFalse(
             NotificationOutbox.objects.filter(
                 notification_code="housing.assignment_published"
@@ -343,9 +345,30 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertContains(drafted, "The draft was saved. The worker cannot see it yet.")
 
+        edited = self.client.post(
+            card_url,
+            {
+                "action": "housing_draft_edit",
+                "assignment_id": str(assignment.public_id),
+                "check_in_on": "2026-09-02",
+                "return_tab": "housing",
+                "return_site": str(site.public_id),
+            },
+            follow=True,
+        )
+        self.assertEqual(edited.status_code, 200)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.check_in_at.date(), date(2026, 9, 2))
+        self.assertIsNone(assignment.check_out_at)
+
         published = self.client.post(
             card_url,
-            {"action": "publish_housing", "assignment_id": str(assignment.public_id)},
+            {
+                "action": "publish_housing",
+                "assignment_id": str(assignment.public_id),
+                "return_tab": "housing",
+                "return_site": str(site.public_id),
+            },
             follow=True,
         )
         self.assertEqual(published.status_code, 200)
@@ -358,6 +381,30 @@ class SupportWorkspaceWebTests(TestCase):
             ).exists()
         )
         self.assertContains(published, "The assignment was published. The worker will receive a notification.")
+        self.assertContains(published, "Set check-out date")
+
+        checked_out = self.client.post(
+            card_url,
+            {
+                "action": "housing_check_out",
+                "assignment_id": str(assignment.public_id),
+                "check_out_on": "2026-09-10",
+                "return_tab": "housing",
+                "return_site": str(site.public_id),
+            },
+            follow=True,
+        )
+        self.assertEqual(checked_out.status_code, 200)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.check_out_at.date(), date(2026, 9, 10))
+        self.assertEqual(
+            NotificationOutbox.objects.filter(
+                notification_code="housing.assignment_published",
+                recipient=self.worker_connection.candidate,
+            ).count(),
+            2,
+        )
+        self.assertContains(checked_out, "The check-out date was saved.")
 
         cancelled = self.client.post(
             card_url,
@@ -872,7 +919,7 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(created.status_code, 200)
         self.assertContains(created, "The route draft was created.")
         route = TransportRoute.objects.get(organization=self.organization, internal_name="Card route")
-        self.assertEqual(route.ends_on, starts_on + timedelta(days=14))
+        self.assertIsNone(route.ends_on)
 
         for sequence, kind, label in (
             (1, "pickup", "Home"),

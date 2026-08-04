@@ -69,6 +69,11 @@
   .worker-bed small { display:block; margin-top:3px; color:var(--muted); }
   .worker-bed small.draft { color:#ccecff; }
   .worker-bed small.occupied { color:#ffe7ae; }
+  .worker-checkout { display:block; margin-top:6px; color:var(--muted); }
+  .worker-checkout summary { cursor:pointer; color:#ffe7ae; font-size:12px; }
+  .worker-checkout form { display:grid; gap:6px; margin-top:7px; }
+  .worker-checkout .jh-input { min-height:34px; font-size:12px; }
+  .worker-checkout .jh-btn { justify-self:start; padding:7px 10px; font-size:12px; }
   .worker-form small { display:block; margin-top:7px; color:var(--muted); line-height:1.35; }
   @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map { grid-template-columns:1fr; } .worker-item { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-calendar { gap:5px; } .worker-calendar-day { min-height:55px; padding:6px; } .worker-calendar-time { font-size:10px; } }
 </style>
@@ -209,9 +214,84 @@
     {% if active_tab == 'housing' and permissions.housing %}
       <section class="worker-section"><h2>{{ employer_t.support_worker_housing_map }}</h2><p>{{ employer_t.support_worker_housing_map_text }}</p>
         <div class="worker-site-list">{% for site in housing_sites %}<a class="worker-site-link {% if selected_housing_site.id == site.id %}active{% endif %}" href="{{ worker_base_url }}?tab=housing&site={{ site.public_id }}"><strong>{{ site.internal_name }}</strong><span>{{ site.city }} · {{ site.street }} {{ site.building }}</span></a>{% endfor %}</div>
-        {% if selected_housing_site %}<h3 style="margin-top:20px">{{ selected_housing_site.internal_name }}</h3><div class="worker-housing-map">{% for room in selected_housing_rooms %}<article class="worker-room"><h3>{{ room.label }}</h3>{% for place in room.places_for_layout %}<span class="worker-bed {{ place.occupancy_state }} {% if place.is_selected_worker_place %}selected{% endif %}"><strong>{{ place.label }}</strong>{% if place.assignments_for_layout %}{% for assignment in place.assignments_for_layout %}<small class="{% if assignment.state == 'draft' %}draft{% else %}occupied{% endif %}">{% if assignment.state == 'draft' %}{{ employer_t.support_worker_state_draft }}{% else %}{{ employer_t.support_worker_occupied_place }}{% endif %}{% if assignment.layout_label %} · {{ assignment.layout_label }}{% endif %}{% if assignment.is_selected_worker_assignment %} · {{ employer_t.support_worker_selected_worker }}{% endif %}</small>{% endfor %}{% else %}<small>{{ employer_t.support_worker_free_place }}</small>{% endif %}</span>{% endfor %}</article>{% endfor %}</div>{% endif %}
-        {% for item in housing_assignments %}<article class="worker-item"><div><h3>{{ item.place.room.site.internal_name }} · {{ item.place.room.label }} · {{ item.place.label }}</h3><p>{{ employer_t.support_worker_check_in }}: {{ item.check_in_at|date:"d.m.Y H:i" }}{% if item.check_out_at %}<br>{{ employer_t.support_worker_check_out }}: {{ item.check_out_at|date:"d.m.Y H:i" }}{% endif %}</p></div><div class="worker-status"><span class="jh-status {% if item.state == 'published' %}success{% else %}warning{% endif %}">{{ item.state_label }}</span>{% if item.state == 'draft' and can_operate %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="publish_housing"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="housing"><input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form><form method="post" onsubmit="return confirm('{{ employer_t.support_draft_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="housing_draft_delete"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="housing"><input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_draft_delete }}</button></form>{% elif item.state != 'cancelled' and can_operate %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="cancel_housing"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="housing"><input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_worker_cancel }}</button></form>{% endif %}</div></article>{% empty %}<div class="worker-empty">{{ employer_t.support_worker_no_assignments }}</div>{% endfor %}
-        {% if can_operate and housing_places %}<form class="worker-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="housing_draft"><input type="hidden" name="return_tab" value="housing"><input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}"><h3>{{ employer_t.support_worker_create_housing }}</h3><div class="worker-form-grid"><label class="jh-field"><span>{% if selected_housing_rooms|length == 1 and selected_housing_rooms.0.capacity == 1 %}{{ employer_t.support_registry_room }}{% else %}{{ employer_t.support_worker_place }}{% endif %}</span><select class="jh-input" name="place_id" required>{% for item in housing_places %}{% if item.room.site_id == selected_housing_site.id %}<option value="{{ item.public_id }}">{{ item.room.label }}{% if item.room.capacity > 1 %} · {{ employer_t.support_worker_place }} {{ item.label }}{% endif %}</option>{% endif %}{% endfor %}</select></label><label class="jh-field"><span>{{ employer_t.support_worker_check_in }}</span><input class="jh-input" name="check_in_at" type="datetime-local" required></label><label class="jh-field"><span>{{ employer_t.support_worker_check_out }}</span><input class="jh-input" name="check_out_at" type="datetime-local"></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div></form>{% endif %}
+        {% if selected_housing_site %}
+          <h3 style="margin-top:20px">{{ selected_housing_site.internal_name }}</h3>
+          <div class="worker-housing-map">
+            {% for room in selected_housing_rooms %}
+              <article class="worker-room"><h3>{{ room.label }}</h3>
+                {% for place in room.places_for_layout %}
+                  <div class="worker-bed {{ place.occupancy_state }} {% if place.is_selected_worker_place %}selected{% endif %}">
+                    <strong>{{ place.label }}</strong>
+                    {% if place.assignments_for_layout %}
+                      {% for assignment in place.assignments_for_layout %}
+                        <small class="{% if assignment.state == 'draft' %}draft{% else %}occupied{% endif %}">{% if assignment.state == 'draft' %}{{ employer_t.support_worker_state_draft }}{% else %}{{ employer_t.support_worker_occupied_place }}{% endif %}{% if assignment.layout_label %} · {{ assignment.layout_label }}{% endif %}{% if assignment.is_selected_worker_assignment %} · {{ employer_t.support_worker_selected_worker }}{% endif %}</small>
+                        {% if assignment.state == 'published' and assignment.layout_label and can_operate %}
+                          <details class="worker-checkout">
+                            <summary>{% if assignment.check_out_at %}{{ employer_t.support_worker_change_check_out }}{% else %}{{ employer_t.support_worker_add_check_out }}{% endif %}</summary>
+                            <form method="post">
+                              {% csrf_token %}
+                              <input type="hidden" name="action" value="housing_check_out">
+                              <input type="hidden" name="assignment_id" value="{{ assignment.public_id }}">
+                              <input type="hidden" name="return_tab" value="housing">
+                              <input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}">
+                              <label class="jh-field"><span>{{ employer_t.support_worker_check_out }}</span><input class="jh-input" name="check_out_on" type="date"{% if assignment.check_out_at %} value="{{ assignment.check_out_at|date:'Y-m-d' }}"{% endif %} required></label>
+                              <button class="jh-btn primary" type="submit">{{ employer_t.support_worker_save_check_out }}</button>
+                            </form>
+                          </details>
+                        {% endif %}
+                      {% endfor %}
+                    {% else %}
+                      <small>{{ employer_t.support_worker_free_place }}</small>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </article>
+            {% endfor %}
+          </div>
+        {% endif %}
+        {% for item in housing_assignments %}
+          <article class="worker-item">
+            <div>
+              <h3>{{ item.place.room.site.internal_name }} · {{ item.place.room.label }} · {{ item.place.label }}</h3>
+              <p>{{ employer_t.support_worker_check_in }}: {{ item.check_in_at|date:"d.m.Y" }}{% if item.check_out_at %}<br>{{ employer_t.support_worker_check_out }}: {{ item.check_out_at|date:"d.m.Y" }}{% endif %}</p>
+            </div>
+            <div class="worker-status">
+              <span class="jh-status {% if item.state == 'published' %}success{% else %}warning{% endif %}">{{ item.state_label }}</span>
+              {% if item.state == 'draft' and can_operate %}
+                <details class="worker-edit">
+                  <summary>{{ employer_t.support_worker_edit_draft }}</summary>
+                  <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="housing_draft_edit">
+                    <input type="hidden" name="assignment_id" value="{{ item.public_id }}">
+                    <input type="hidden" name="return_tab" value="housing">
+                    <input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}">
+                    <label class="jh-field"><span>{{ employer_t.support_worker_check_in }}</span><input class="jh-input" name="check_in_on" type="date" value="{{ item.check_in_at|date:'Y-m-d' }}" required></label>
+                    <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_save_draft }}</button></div>
+                  </form>
+                </details>
+                <form method="post">{% csrf_token %}<input type="hidden" name="action" value="publish_housing"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="housing"><input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form>
+                <form method="post" onsubmit="return confirm('{{ employer_t.support_draft_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="housing_draft_delete"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="housing"><input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_draft_delete }}</button></form>
+              {% elif item.state != 'cancelled' and can_operate %}
+                <form method="post">{% csrf_token %}<input type="hidden" name="action" value="cancel_housing"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="housing"><input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_worker_cancel }}</button></form>
+              {% endif %}
+            </div>
+          </article>
+        {% empty %}<div class="worker-empty">{{ employer_t.support_worker_no_assignments }}</div>{% endfor %}
+        {% if can_operate and housing_places %}
+          <form class="worker-form" method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="housing_draft">
+            <input type="hidden" name="return_tab" value="housing">
+            <input type="hidden" name="return_site" value="{{ selected_housing_site.public_id }}">
+            <h3>{{ employer_t.support_worker_create_housing }}</h3>
+            <div class="worker-form-grid">
+              <label class="jh-field"><span>{% if selected_housing_rooms|length == 1 and selected_housing_rooms.0.capacity == 1 %}{{ employer_t.support_registry_room }}{% else %}{{ employer_t.support_worker_place }}{% endif %}</span><select class="jh-input" name="place_id" required>{% for item in housing_places %}{% if item.room.site_id == selected_housing_site.id %}<option value="{{ item.public_id }}">{{ item.room.label }}{% if item.room.capacity > 1 %} · {{ employer_t.support_worker_place }} {{ item.label }}{% endif %}</option>{% endif %}{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_check_in }}</span><input class="jh-input" name="check_in_on" type="date" required></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
+          </form>
+        {% endif %}
       </section>
     {% endif %}
   </section>

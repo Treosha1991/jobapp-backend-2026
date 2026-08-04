@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -79,11 +80,13 @@ from .services.operations import (
     delete_transport_route_draft,
     delete_worker_project_assignment_draft,
     edit_route_stop,
+    edit_housing_assignment_draft,
     publish_housing_assignment,
     publish_driver_vehicle_assignment,
     publish_transport_route,
     publish_worker_project_assignment,
     set_worker_driving_license,
+    schedule_housing_check_out,
 )
 from .services.timekeeping import (
     cancel_scheduled_shift,
@@ -272,6 +275,18 @@ def _operation_date(value, *, required=True):
     return parsed
 
 
+def _operation_date_start(value, *, required=True):
+    """Turn a date-only Support field into the local start of that day."""
+
+    parsed = _operation_date(value, required=required)
+    if parsed is None:
+        return None
+    return timezone.make_aware(
+        datetime.combine(parsed, datetime.min.time()),
+        timezone.get_current_timezone(),
+    )
+
+
 def _worker_card_redirect(connection, *, tab=None, month=None, site=None):
     """Return to the same focused worker tab after a safe POST operation."""
 
@@ -379,19 +394,27 @@ def _worker_card_operation(request, *, snapshot):
                 HousingPlace.objects.filter(room__site__organization=organization),
                 public_id=request.POST.get("place_id"),
             )
-            check_in_at = _aware_datetime(request.POST.get("check_in_at"))
-            check_out_at = _aware_datetime(request.POST.get("check_out_at"), required=False)
-            if check_out_at is not None and check_out_at <= check_in_at:
-                raise ValueError("period_invalid")
+            check_in_at = _operation_date_start(request.POST.get("check_in_on"))
             create_housing_assignment(
                 actor=request.user,
                 organization=organization,
                 connection=connection,
                 place=place,
                 check_in_at=check_in_at,
-                check_out_at=check_out_at,
+                check_out_at=None,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
+        elif action == "housing_draft_edit":
+            assignment = get_object_or_404(
+                HousingAssignment.objects.filter(organization=organization, connection=connection),
+                public_id=request.POST.get("assignment_id"),
+            )
+            edit_housing_assignment_draft(
+                actor=request.user,
+                assignment=assignment,
+                check_in_at=_operation_date_start(request.POST.get("check_in_on")),
+            )
+            messages.success(request, tr(request, "support_worker_housing_draft_updated"))
         elif action == "housing_draft_delete":
             assignment = get_object_or_404(
                 HousingAssignment.objects.filter(organization=organization, connection=connection),
@@ -729,6 +752,17 @@ def _worker_card_operation(request, *, snapshot):
             )
             cancel_housing_assignment(actor=request.user, assignment=assignment)
             messages.success(request, tr(request, "support_worker_assignment_cancelled"))
+        elif action == "housing_check_out":
+            assignment = get_object_or_404(
+                HousingAssignment.objects.filter(organization=organization, connection=connection),
+                public_id=request.POST.get("assignment_id"),
+            )
+            schedule_housing_check_out(
+                actor=request.user,
+                assignment=assignment,
+                check_out_at=_operation_date_start(request.POST.get("check_out_on")),
+            )
+            messages.success(request, tr(request, "support_worker_housing_check_out_updated"))
         elif action == "publish_work":
             assignment = get_object_or_404(
                 WorkerProjectAssignment.objects.filter(
@@ -752,7 +786,12 @@ def _worker_card_operation(request, *, snapshot):
         else:
             raise ValueError("operation_unknown")
     except (APIException, ValueError):
-        messages.error(request, tr(request, "support_worker_operation_error"))
+        message_key = (
+            "support_worker_housing_check_out_error"
+            if action == "housing_check_out"
+            else "support_worker_operation_error"
+        )
+        messages.error(request, tr(request, message_key))
     return _worker_card_redirect(
         connection,
         tab=request.POST.get("return_tab"),
