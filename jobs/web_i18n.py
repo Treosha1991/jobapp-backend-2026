@@ -2422,6 +2422,7 @@ TRANSLATIONS["ru"].update({
     "support_worker_general_passengers": "Показаны работники по выбранному фильтру.",
     "support_worker_no_housing_passengers": "В выбранном доме пока нет доступных жильцов.",
     "support_worker_stop_updated": "Остановка обновлена.",
+    "support_worker_route_needs_dropoff": "Добавьте остановку «Высадка» — после этого можно будет назначить пассажиров.",
 })
 TRANSLATIONS["en"].update({
     "support_worker_company": "Company",
@@ -2461,6 +2462,7 @@ TRANSLATIONS["en"].update({
     "support_worker_general_passengers": "Workers are shown using the selected filter.",
     "support_worker_no_housing_passengers": "There are no available residents in the selected housing site yet.",
     "support_worker_stop_updated": "Stop updated.",
+    "support_worker_route_needs_dropoff": "Add a drop-off stop to assign passengers.",
 })
 TRANSLATIONS["pl"].update({
     "support_worker_company": "Firma",
@@ -2500,6 +2502,7 @@ TRANSLATIONS["pl"].update({
     "support_worker_general_passengers": "Pokazano pracowników według wybranego filtra.",
     "support_worker_no_housing_passengers": "W wybranym obiekcie nie ma jeszcze dostępnych mieszkańców.",
     "support_worker_stop_updated": "Przystanek zaktualizowany.",
+    "support_worker_route_needs_dropoff": "Dodaj przystanek wysiadania, aby przypisać pasażerów.",
 })
 TRANSLATIONS["uk"].update({
     "support_worker_company": "Компанія",
@@ -2539,6 +2542,7 @@ TRANSLATIONS["uk"].update({
     "support_worker_general_passengers": "Показані працівники за вибраним фільтром.",
     "support_worker_no_housing_passengers": "У вибраному житлі поки немає доступних мешканців.",
     "support_worker_stop_updated": "Зупинку оновлено.",
+    "support_worker_route_needs_dropoff": "Додайте зупинку висадки, після цього можна призначити пасажирів.",
 })
 
 

@@ -125,7 +125,9 @@
               <div class="jh-actions"><button class="jh-btn" type="submit">{{ employer_t.support_transport_add_stop }}</button></div>
             </form>
 
-            {% if route.pickup_stops and route.dropoff_stops and route.passenger_candidates and route.available_seat_count %}
+            {% if route.pickup_stops and not route.dropoff_stops %}
+              <div class="transport-note">{{ employer_t.support_worker_route_needs_dropoff }}</div>
+            {% elif route.pickup_stops and route.dropoff_stops and route.passenger_candidates and route.available_seat_count %}
               <form class="transport-form" method="post" data-route-passenger-form>
                 {% csrf_token %}<input type="hidden" name="action" value="route_passenger_create"><input type="hidden" name="route_id" value="{{ route.public_id }}">
                 <h3>{{ employer_t.support_transport_add_passenger }}</h3>
