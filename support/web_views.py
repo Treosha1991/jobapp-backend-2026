@@ -82,6 +82,7 @@ from .services.operations import (
     publish_driver_vehicle_assignment,
     publish_transport_route,
     publish_worker_project_assignment,
+    set_worker_driving_license,
 )
 from .services.timekeeping import (
     cancel_scheduled_shift,
@@ -316,7 +317,14 @@ def _worker_card_operation(request, *, snapshot):
     organization = snapshot["organization"]
     action = (request.POST.get("action") or "").strip()
     try:
-        if action == "document_package_create":
+        if action == "driving_license_set":
+            set_worker_driving_license(
+                actor=request.user,
+                connection=connection,
+                has_driving_license=request.POST.get("has_driving_license") == "1",
+            )
+            messages.success(request, tr(request, "support_worker_driving_license_updated"))
+        elif action == "document_package_create":
             requested_items = []
             for document_type in request.POST.getlist("document_type"):
                 normalized = document_type.strip()

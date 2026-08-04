@@ -312,6 +312,7 @@ class Command(BaseCommand):
                 "stage": stage,
                 "visible_stage": visible_stage,
                 "is_archived": False,
+                "has_driving_license": email == "support-demo-worker-08@jobhub.test",
             }.items():
                 if getattr(demo_connection, field) != value:
                     setattr(demo_connection, field, value)

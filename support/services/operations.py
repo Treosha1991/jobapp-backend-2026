@@ -64,6 +64,28 @@ def _require_same_organization(*, organization, **objects):
             raise ValidationError({field: "operation_related_record_not_in_organization"})
 
 
+def set_worker_driving_license(*, actor, connection, has_driving_license):
+    """Store only the employer's operational licence confirmation, never a scan."""
+
+    organization = connection.organization
+    require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
+    with transaction.atomic():
+        connection = SupportConnection.objects.select_for_update().get(pk=connection.pk)
+        require_worker_connection_access(user=actor, organization=organization, connection=connection)
+        value = bool(has_driving_license)
+        if connection.has_driving_license != value:
+            connection.has_driving_license = value
+            connection.save(update_fields=["has_driving_license", "updated_at"])
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="transport.driving_license_marked",
+                target=connection,
+                details={"has_driving_license": value},
+            )
+    return connection
+
+
 def create_housing_assignment(*, actor, organization, connection, place, check_in_at, check_out_at=None):
     require_permission(user=actor, organization=organization, permission_code=HOUSING_MANAGE)
     with transaction.atomic():

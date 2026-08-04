@@ -1279,15 +1279,8 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
             ).select_related("candidate"),
         ).order_by("candidate__first_name", "candidate__last_name", "candidate__username")
     )
-    license_connection_ids = set()
-    for package in DocumentRequestPackage.objects.filter(
-        organization=organization,
-        status=DocumentRequestPackage.STATUS_COMPLETED,
-    ).only("connection_id", "requested_items"):
-        if any(item.get("type") == "driving_license" for item in package.requested_items):
-            license_connection_ids.add(package.connection_id)
     for worker in workers:
-        worker.has_verified_driving_license = worker.id in license_connection_ids
+        worker.has_verified_driving_license = worker.has_driving_license
         worker.display_name = _display_name(worker.candidate)
     eligible_drivers = [item for item in workers if item.has_verified_driving_license]
 

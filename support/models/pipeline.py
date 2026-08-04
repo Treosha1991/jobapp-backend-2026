@@ -362,6 +362,7 @@ class SupportConnection(models.Model):
     )
     stage = models.CharField(max_length=32, choices=STAGE_CHOICES, default=STAGE_AWAITING_SUPPORT)
     visible_stage = models.CharField(max_length=80, blank=True, default="")
+    has_driving_license = models.BooleanField(default=False)
     is_archived = models.BooleanField(default=False)
     archived_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

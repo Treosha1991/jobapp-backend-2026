@@ -396,6 +396,29 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "FLEET-123")
         self.assertContains(response, "workspace-active-worker")
 
+    def test_transport_manager_can_toggle_worker_driving_license_mark(self):
+        self.client.force_login(self.owner)
+        url = f"/employer/support/workers/{self.worker_connection.public_id}/?tab=transport"
+
+        enabled = self.client.post(
+            url,
+            {"action": "driving_license_set", "has_driving_license": "1", "return_tab": "transport"},
+            follow=True,
+        )
+        self.assertEqual(enabled.status_code, 200)
+        self.worker_connection.refresh_from_db()
+        self.assertTrue(self.worker_connection.has_driving_license)
+        self.assertContains(enabled, "Driving licence")
+
+        disabled = self.client.post(
+            url,
+            {"action": "driving_license_set", "return_tab": "transport"},
+            follow=True,
+        )
+        self.assertEqual(disabled.status_code, 200)
+        self.worker_connection.refresh_from_db()
+        self.assertFalse(self.worker_connection.has_driving_license)
+
     def test_housing_layout_marks_another_workers_draft_without_marking_it_occupied(self):
         site = HousingSite.objects.create(
             organization=self.organization,

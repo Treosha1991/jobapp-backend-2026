@@ -12,6 +12,8 @@
   .worker-meta span { display:block; color:var(--muted); font-size:11px; font-weight:800; }
   .worker-meta strong { display:block; margin-top:5px; font-size:13px; }
   .worker-tabs { display:flex; flex-wrap:wrap; gap:9px; margin:20px 0 4px; padding-top:20px; border-top:1px solid var(--line); }
+  .worker-license-toggle { margin-left:auto; display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--line); border-radius:11px; color:var(--muted); font-size:12px; font-weight:800; }
+  .worker-license-toggle input { width:36px; height:20px; margin:0; accent-color:var(--green); cursor:pointer; }
   .worker-warning { margin:19px 0; padding:13px 15px; border:1px solid rgba(255,211,106,.35); border-radius:16px; color:#ffe7ae; background:rgba(255,211,106,.08); line-height:1.45; }
   .worker-section { margin-top:24px; padding-top:23px; border-top:1px solid var(--line); }
   .worker-section h2 { margin:0 0 5px; font-size:21px; }
@@ -131,6 +133,7 @@
       {% if permissions.work %}<a class="jh-btn {% if active_tab == 'company' %}primary{% endif %}" href="{{ company_url }}">{{ employer_t.support_worker_company }}</a>{% endif %}
       {% if permissions.transport %}<a class="jh-btn {% if active_tab == 'transport' %}primary{% endif %}" href="{{ transport_tab_url }}">{{ employer_t.support_worker_transport }}</a>{% endif %}
       {% if permissions.housing %}<a class="jh-btn {% if active_tab == 'housing' %}primary{% endif %}" href="{{ housing_tab_url }}">{{ employer_t.support_worker_housing }}</a>{% endif %}
+      {% if permissions.transport %}<form class="worker-license-toggle" method="post"><input type="hidden" name="action" value="driving_license_set"><input type="hidden" name="return_tab" value="{{ active_tab }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="return_site" value="{% if selected_housing_site %}{{ selected_housing_site.public_id }}{% endif %}"><label><input type="checkbox" name="has_driving_license" value="1"{% if connection.has_driving_license %} checked{% endif %} onchange="this.form.submit()"> {{ employer_t.support_worker_driving_license }}</label></form>{% endif %}
     </nav>
 
     {% if not can_operate %}<div class="worker-warning">{{ employer_t.support_worker_not_ready }}</div>{% endif %}
