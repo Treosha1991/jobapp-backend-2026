@@ -720,6 +720,37 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                 ).select_related("candidate", "vacancy"),
             ).order_by("candidate__first_name", "candidate__last_name", "candidate__username")
         )
+        transport_worker_ids = {item.id for item in transport_workers}
+        now = timezone.now()
+        current_housing_by_connection_id = {}
+        for assignment in (
+            HousingAssignment.objects.filter(
+                organization=organization,
+                connection_id__in=transport_worker_ids,
+                state__in=(HousingAssignment.STATE_DRAFT, HousingAssignment.STATE_PUBLISHED),
+                check_in_at__lte=now,
+            )
+            .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
+            .select_related("place__room__site")
+            .order_by("-check_in_at", "-id")
+        ):
+            current_housing_by_connection_id.setdefault(assignment.connection_id, assignment)
+        current_work_by_connection_id = {}
+        for assignment in (
+            WorkerProjectAssignment.objects.filter(
+                organization=organization,
+                connection_id__in=transport_worker_ids,
+                state__in=(
+                    WorkerProjectAssignment.STATE_DRAFT,
+                    WorkerProjectAssignment.STATE_PUBLISHED,
+                ),
+                starts_at__lte=now,
+            )
+            .filter(Q(ends_at__isnull=True) | Q(ends_at__gt=now))
+            .select_related("project")
+            .order_by("-starts_at", "-id")
+        ):
+            current_work_by_connection_id.setdefault(assignment.connection_id, assignment)
         for route in driver_routes:
             route.passengers_for_driver = list(route.passenger_assignments.all())
             route.occupied_seat_count = min(
@@ -748,55 +779,96 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
             assigned_passenger_ids = {
                 item.connection_id for item in route.passengers_for_driver
             }
-            occupied_elsewhere_ids = set(
-                TransportPassengerAssignment.objects.filter(
-                    route__organization=organization,
-                    route__state__in=(
-                        TransportRoute.STATE_DRAFT,
-                        TransportRoute.STATE_PUBLISHED,
-                    ),
+            active_passenger_rows = TransportPassengerAssignment.objects.filter(
+                route__organization=organization,
+                route__state__in=(
+                    TransportRoute.STATE_DRAFT,
+                    TransportRoute.STATE_PUBLISHED,
+                ),
+            ).exclude(route=route).filter(
+                _date_period_overlaps(
+                    starts_field="route__starts_on",
+                    ends_field="route__ends_on",
+                    starts_on=route.starts_on,
+                    ends_on=route.ends_on,
                 )
-                .exclude(route=route)
-                .filter(
-                    Q(route__state=TransportRoute.STATE_PUBLISHED)
-                    | Q(route__reservation_expires_at__gt=timezone.now())
-                )
-                .filter(
-                    _date_period_overlaps(
-                        starts_field="route__starts_on",
-                        ends_field="route__ends_on",
-                        starts_on=route.starts_on,
-                        ends_on=route.ends_on,
-                    )
-                )
-                .values_list("connection_id", flat=True)
             )
-            driver_ids = set(
-                DriverVehicleAssignment.objects.filter(
-                    organization=organization,
-                    state__in=(
-                        DriverVehicleAssignment.STATE_DRAFT,
-                        DriverVehicleAssignment.STATE_PUBLISHED,
-                    ),
-                )
-                .filter(
-                    _date_period_overlaps(
-                        starts_field="starts_on",
-                        ends_field="ends_on",
-                        starts_on=route.starts_on,
-                        ends_on=route.ends_on,
-                    )
-                )
-                .values_list("driver_connection_id", flat=True)
+            reserved_passenger_ids = set(
+                active_passenger_rows.filter(
+                    route__state=TransportRoute.STATE_DRAFT,
+                    route__reservation_expires_at__gt=now,
+                ).values_list("connection_id", flat=True)
             )
-            route.passenger_choices = [
-                item
-                for item in transport_workers
-                if item.id != route.driver_vehicle_assignment.driver_connection_id
-                and item.id not in assigned_passenger_ids
-                and item.id not in occupied_elsewhere_ids
-                and item.id not in driver_ids
-            ]
+            published_passenger_ids = set(
+                active_passenger_rows.filter(
+                    route__state=TransportRoute.STATE_PUBLISHED,
+                ).values_list("connection_id", flat=True)
+            )
+            active_driver_rows = DriverVehicleAssignment.objects.filter(
+                organization=organization,
+                state__in=(
+                    DriverVehicleAssignment.STATE_DRAFT,
+                    DriverVehicleAssignment.STATE_PUBLISHED,
+                ),
+            ).filter(
+                _date_period_overlaps(
+                    starts_field="starts_on",
+                    ends_field="ends_on",
+                    starts_on=route.starts_on,
+                    ends_on=route.ends_on,
+                )
+            )
+            reserved_driver_ids = set(
+                active_driver_rows.filter(
+                    state=DriverVehicleAssignment.STATE_DRAFT,
+                ).values_list("driver_connection_id", flat=True)
+            )
+            published_driver_ids = set(
+                active_driver_rows.filter(
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                ).values_list("driver_connection_id", flat=True)
+            )
+            occupied_elsewhere_ids = (
+                reserved_passenger_ids
+                | published_passenger_ids
+                | reserved_driver_ids
+                | published_driver_ids
+            )
+            route.passenger_candidates = []
+            for item in transport_workers:
+                if (
+                    item.id == route.driver_vehicle_assignment.driver_connection_id
+                    or item.id in assigned_passenger_ids
+                ):
+                    continue
+                housing = current_housing_by_connection_id.get(item.id)
+                work = current_work_by_connection_id.get(item.id)
+                item.transport_housing_site_id = (
+                    str(housing.place.room.site.public_id) if housing else ""
+                )
+                item.transport_housing_label = (
+                    f"{housing.place.room.label} · {housing.place.label}" if housing else ""
+                )
+                item.transport_company_label = (
+                    work.project.worker_visible_name if work else ""
+                )
+                if item.id in reserved_passenger_ids or item.id in reserved_driver_ids:
+                    item.transport_filter = "draft"
+                elif (
+                    item.id in published_passenger_ids
+                    or item.id in published_driver_ids
+                    or item.stage == SupportConnection.STAGE_ACTIVE_WORKER
+                ):
+                    item.transport_filter = "working"
+                else:
+                    item.transport_filter = "free"
+                item.transport_can_board = item.id not in occupied_elsewhere_ids
+                item.transport_option_label = _display_name(item.candidate)
+                if item.transport_housing_label:
+                    item.transport_option_label += f" · {item.transport_housing_label}"
+                if item.transport_company_label:
+                    item.transport_option_label += f" · {item.transport_company_label}"
+                route.passenger_candidates.append(item)
         for passenger_assignment in passenger_routes:
             passenger_assignment.is_selected_worker = True
         routes_by_driver_assignment_id = {
@@ -948,6 +1020,36 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
         )
     )
     worker_ids = {item.id for item in workers}
+    now = timezone.now()
+    current_housing_by_connection_id = {}
+    for assignment in (
+        HousingAssignment.objects.filter(
+            organization=organization,
+            connection_id__in=worker_ids,
+            state__in=(HousingAssignment.STATE_DRAFT, HousingAssignment.STATE_PUBLISHED),
+            check_in_at__lte=now,
+        )
+        .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
+        .select_related("place__room__site")
+        .order_by("-check_in_at", "-id")
+    ):
+        current_housing_by_connection_id.setdefault(assignment.connection_id, assignment)
+    current_work_by_connection_id = {}
+    for assignment in (
+        WorkerProjectAssignment.objects.filter(
+            organization=organization,
+            connection_id__in=worker_ids,
+            state__in=(
+                WorkerProjectAssignment.STATE_DRAFT,
+                WorkerProjectAssignment.STATE_PUBLISHED,
+            ),
+            starts_at__lte=now,
+        )
+        .filter(Q(ends_at__isnull=True) | Q(ends_at__gt=now))
+        .select_related("project")
+        .order_by("-starts_at", "-id")
+    ):
+        current_work_by_connection_id.setdefault(assignment.connection_id, assignment)
     routes = list(
         TransportRoute.objects.filter(
             organization=organization,
@@ -973,7 +1075,6 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
             for passenger in route.passenger_assignments.all()
         )
     ]
-    now = timezone.now()
     route_driver_assignment_ids = [
         item.driver_vehicle_assignment_id
         for item in routes
@@ -1024,12 +1125,96 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
         passenger_connection_ids = {
             item.connection_id for item in route.passengers_for_builder
         }
-        route.passenger_choices = [
-            item
-            for item in workers
-            if item.id != route.driver_vehicle_assignment.driver_connection_id
-            and item.id not in passenger_connection_ids
-        ]
+        active_passenger_rows = TransportPassengerAssignment.objects.filter(
+            route__organization=organization,
+            route__state__in=(
+                TransportRoute.STATE_DRAFT,
+                TransportRoute.STATE_PUBLISHED,
+            ),
+        ).exclude(route=route).filter(
+            _date_period_overlaps(
+                starts_field="route__starts_on",
+                ends_field="route__ends_on",
+                starts_on=route.starts_on,
+                ends_on=route.ends_on,
+            )
+        )
+        reserved_passenger_ids = set(
+            active_passenger_rows.filter(
+                route__state=TransportRoute.STATE_DRAFT,
+                route__reservation_expires_at__gt=now,
+            ).values_list("connection_id", flat=True)
+        )
+        published_passenger_ids = set(
+            active_passenger_rows.filter(
+                route__state=TransportRoute.STATE_PUBLISHED,
+            ).values_list("connection_id", flat=True)
+        )
+        active_driver_rows = DriverVehicleAssignment.objects.filter(
+            organization=organization,
+            state__in=(
+                DriverVehicleAssignment.STATE_DRAFT,
+                DriverVehicleAssignment.STATE_PUBLISHED,
+            ),
+        ).filter(
+            _date_period_overlaps(
+                starts_field="starts_on",
+                ends_field="ends_on",
+                starts_on=route.starts_on,
+                ends_on=route.ends_on,
+            )
+        )
+        reserved_driver_ids = set(
+            active_driver_rows.filter(
+                state=DriverVehicleAssignment.STATE_DRAFT,
+            ).values_list("driver_connection_id", flat=True)
+        )
+        published_driver_ids = set(
+            active_driver_rows.filter(
+                state=DriverVehicleAssignment.STATE_PUBLISHED,
+            ).values_list("driver_connection_id", flat=True)
+        )
+        occupied_elsewhere_ids = (
+            reserved_passenger_ids
+            | published_passenger_ids
+            | reserved_driver_ids
+            | published_driver_ids
+        )
+        route.passenger_candidates = []
+        for item in workers:
+            if (
+                item.id == route.driver_vehicle_assignment.driver_connection_id
+                or item.id in passenger_connection_ids
+            ):
+                continue
+            housing = current_housing_by_connection_id.get(item.id)
+            work = current_work_by_connection_id.get(item.id)
+            item.transport_housing_site_id = (
+                str(housing.place.room.site.public_id) if housing else ""
+            )
+            item.transport_housing_label = (
+                f"{housing.place.room.label} · {housing.place.label}" if housing else ""
+            )
+            item.transport_company_label = (
+                work.project.worker_visible_name if work and work.project else ""
+            )
+            if item.id in reserved_passenger_ids or item.id in reserved_driver_ids:
+                item.transport_filter = "draft"
+            elif (
+                item.id in published_passenger_ids
+                or item.id in published_driver_ids
+                or item.stage == SupportConnection.STAGE_ACTIVE_WORKER
+            ):
+                item.transport_filter = "working"
+            else:
+                item.transport_filter = "free"
+            item.transport_can_board = item.id not in occupied_elsewhere_ids
+            item.transport_option_label = _display_name(item.candidate)
+            if item.transport_housing_label:
+                item.transport_option_label += f" · {item.transport_housing_label}"
+            if item.transport_company_label:
+                item.transport_option_label += f" · {item.transport_company_label}"
+            route.passenger_candidates.append(item)
         route.available_seat_count = max(
             0,
             route.driver_vehicle_assignment.vehicle.seat_capacity

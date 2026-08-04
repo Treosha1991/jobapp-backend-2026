@@ -71,6 +71,7 @@ from .services.operations import (
     cancel_transport_route,
     cancel_worker_project_assignment,
     create_transport_route,
+    edit_route_stop,
     publish_housing_assignment,
     publish_transport_route,
     publish_worker_project_assignment,
@@ -521,6 +522,48 @@ def _worker_card_operation(request, *, snapshot):
                 **data,
             )
             messages.success(request, tr(request, "support_transport_passenger_added"))
+        elif action == "route_stop_edit":
+            route = get_object_or_404(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    driver_vehicle_assignment__driver_connection=connection,
+                ),
+                public_id=request.POST.get("route_id"),
+            )
+            stop = get_object_or_404(
+                RouteStop.objects.filter(route=route),
+                public_id=request.POST.get("stop_id"),
+            )
+            data = _validated_post(
+                RouteStopCreateSerializer,
+                request,
+                nullable_fields=("housing_site_id",),
+                ignored_fields=(
+                    "route_id",
+                    "stop_id",
+                    "return_tab",
+                    "return_month",
+                    "return_site",
+                ),
+            )
+            housing_site_id = data.pop("housing_site_id")
+            housing_site = (
+                get_object_or_404(
+                    HousingSite,
+                    organization=organization,
+                    public_id=housing_site_id,
+                )
+                if housing_site_id
+                else None
+            )
+            edit_route_stop(
+                actor=request.user,
+                stop=stop,
+                kind=data["kind"],
+                label=data["label"],
+                housing_site=housing_site,
+            )
+            messages.success(request, tr(request, "support_worker_stop_updated"))
         elif action == "route_publish":
             route = get_object_or_404(
                 TransportRoute.objects.filter(
@@ -902,6 +945,41 @@ def _transport_operation(request, *, snapshot):
                 **data,
             )
             success_key = "support_transport_stop_added"
+        elif action == "route_stop_edit":
+            route = get_object_or_404(
+                TransportRoute,
+                organization=organization,
+                public_id=request.POST.get("route_id"),
+            )
+            stop = get_object_or_404(
+                RouteStop,
+                route=route,
+                public_id=request.POST.get("stop_id"),
+            )
+            data = _validated_post(
+                RouteStopCreateSerializer,
+                request,
+                nullable_fields=("housing_site_id",),
+                ignored_fields=("route_id", "stop_id"),
+            )
+            housing_site_id = data.pop("housing_site_id")
+            housing_site = (
+                get_object_or_404(
+                    HousingSite,
+                    organization=organization,
+                    public_id=housing_site_id,
+                )
+                if housing_site_id
+                else None
+            )
+            edit_route_stop(
+                actor=request.user,
+                stop=stop,
+                kind=data["kind"],
+                label=data["label"],
+                housing_site=housing_site,
+            )
+            success_key = "support_worker_stop_updated"
         elif action == "route_passenger_create":
             route = get_object_or_404(
                 TransportRoute,

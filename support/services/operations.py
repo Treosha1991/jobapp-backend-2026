@@ -445,6 +445,8 @@ def add_route_stop(*, actor, route, sequence, kind, label, housing_site=None):
         )
         if route.state != TransportRoute.STATE_DRAFT:
             raise ValidationError({"route": "transport_route_not_draft"})
+        if route.reservation_expires_at is None or route.reservation_expires_at <= timezone.now():
+            raise ValidationError({"route": "transport_route_reservation_expired"})
         require_worker_connection_access(
             user=actor,
             organization=organization,
@@ -470,6 +472,48 @@ def add_route_stop(*, actor, route, sequence, kind, label, housing_site=None):
             action="transport.stop_added",
             target=stop,
             details={"route": str(route.public_id), "kind": kind, "sequence": sequence},
+        )
+    return stop
+
+
+def edit_route_stop(*, actor, stop, kind, label, housing_site=None):
+    """Edit a draft stop without breaking the route's ordered itinerary."""
+
+    organization = stop.route.organization
+    require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
+    with transaction.atomic():
+        stop = (
+            RouteStop.objects.select_for_update()
+            .select_related("route__driver_vehicle_assignment__driver_connection")
+            .get(pk=stop.pk)
+        )
+        route = stop.route
+        if route.state != TransportRoute.STATE_DRAFT:
+            raise ValidationError({"route": "transport_route_not_draft"})
+        if route.reservation_expires_at is None or route.reservation_expires_at <= timezone.now():
+            raise ValidationError({"route": "transport_route_reservation_expired"})
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=route.driver_vehicle_assignment.driver_connection,
+        )
+        normalized_label = (label or "").strip()
+        if not normalized_label:
+            raise ValidationError({"label": "route_stop_label_required"})
+        if housing_site is not None:
+            _require_same_organization(organization=organization, housing_site=housing_site)
+            if not housing_site.is_active:
+                raise ValidationError({"housing_site": "housing_site_not_available"})
+        stop.kind = kind
+        stop.label = normalized_label
+        stop.housing_site = housing_site
+        stop.save(update_fields=["kind", "label", "housing_site", "updated_at"])
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.stop_edited",
+            target=stop,
+            details={"route": str(route.public_id), "sequence": stop.sequence},
         )
     return stop
 

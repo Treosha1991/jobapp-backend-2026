@@ -620,6 +620,23 @@ class SupportWorkspaceWebTests(TestCase):
 
         route.refresh_from_db()
         stops = list(route.stops.order_by("sequence"))
+        edited_stop = self.client.post(
+            transport_url,
+            {
+                "action": "route_stop_edit",
+                "route_id": str(route.public_id),
+                "stop_id": str(stops[0].public_id),
+                "sequence": "1",
+                "kind": "pickup",
+                "label": "Updated meeting point",
+                "housing_site_id": "",
+            },
+            follow=True,
+        )
+        self.assertEqual(edited_stop.status_code, 200)
+        self.assertContains(edited_stop, "Stop updated.")
+        stops[0].refresh_from_db()
+        self.assertEqual(stops[0].label, "Updated meeting point")
         passenger_response = self.client.post(
             transport_url,
             {
@@ -742,6 +759,24 @@ class SupportWorkspaceWebTests(TestCase):
             self.assertEqual(response.status_code, 200)
 
         stops = list(RouteStop.objects.filter(route=route).order_by("sequence"))
+        edited_stop = self.client.post(
+            card_url,
+            {
+                "action": "route_stop_edit",
+                "route_id": str(route.public_id),
+                "stop_id": str(stops[0].public_id),
+                "sequence": "1",
+                "kind": "pickup",
+                "label": "Home updated",
+                "housing_site_id": "",
+                "return_tab": "transport",
+            },
+            follow=True,
+        )
+        self.assertEqual(edited_stop.status_code, 200)
+        self.assertContains(edited_stop, "Stop updated.")
+        stops[0].refresh_from_db()
+        self.assertEqual(stops[0].label, "Home updated")
         passenger_added = self.client.post(
             card_url,
             {
