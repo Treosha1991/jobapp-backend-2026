@@ -422,7 +422,20 @@ class SupportWorkspaceWebTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Draft · Victoria Draft")
-        self.assertNotContains(response, "Occupied · Victoria Draft")
+        published = HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            place=place,
+            check_in_at=timezone.now() + timedelta(days=1),
+            state=HousingAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        response = self.client.get(
+            f"/employer/support/workers/{self.worker_connection.public_id}/?tab=housing&site={site.public_id}"
+        )
+        self.assertContains(response, "Occupied · workspace-active-worker · Selected worker")
+        self.assertContains(response, "Draft · Victoria Draft")
+        self.assertEqual(published.state, HousingAssignment.STATE_PUBLISHED)
 
     def test_owner_creates_work_draft_from_worker_card(self):
         worksite = Worksite.objects.create(

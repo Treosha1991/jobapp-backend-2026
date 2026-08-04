@@ -524,9 +524,10 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
             selected_housing_site = housing_sites[0]
 
         if selected_housing_site is not None:
-            # A housing manager needs an occupancy map to allocate a bed.  The
-            # names are still limited to workers in the manager's own scope;
-            # an occupied bed outside that scope is never exposed as a name.
+            # A housing manager needs a plan of every current or upcoming
+            # placement. Names are still limited to workers in the manager's
+            # own scope; an assignment outside that scope is never exposed as
+            # a name.
             allowed_worker_ids = set(
                 worker_connection_queryset_for(
                     user=user,
@@ -543,7 +544,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                 .order_by("label", "id")
             )
             now = timezone.now()
-            occupancy_by_place_id = {}
+            assignments_by_place_id = {}
             for assignment in (
                 HousingAssignment.objects.filter(
                     place__room__site=selected_housing_site,
@@ -551,41 +552,37 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                         HousingAssignment.STATE_DRAFT,
                         HousingAssignment.STATE_PUBLISHED,
                     ),
-                    check_in_at__lte=now,
                 )
                 .filter(
                     Q(check_out_at__isnull=True) | Q(check_out_at__gt=now)
                 )
                 .select_related("connection__candidate")
-                # A published assignment always wins over a staff-only draft
-                # when a stale/parallel draft exists for the same place.
-                .order_by("-state", "-check_in_at", "-id")
+                .order_by("-state", "check_in_at", "id")
             ):
-                occupancy_by_place_id.setdefault(assignment.place_id, assignment)
+                assignments_by_place_id.setdefault(assignment.place_id, []).append(assignment)
             for room in selected_housing_rooms:
                 room.places_for_layout = []
                 for place in room.places.all():
-                    assignment = occupancy_by_place_id.get(place.id)
+                    assignments = assignments_by_place_id.get(place.id, [])
                     place.occupancy_state = (
                         "free"
-                        if assignment is None
-                        else (
-                            "draft"
-                            if assignment.state == HousingAssignment.STATE_DRAFT
-                            else "occupied"
-                        )
+                        if not assignments
+                        else "occupied"
                     )
-                    place.occupancy_label = (
-                        ""
-                        if assignment is None
-                        else (
+                    place.assignments_for_layout = []
+                    for assignment in assignments:
+                        assignment.layout_label = (
                             _display_name(assignment.connection.candidate)
                             if assignment.connection_id in allowed_worker_ids
                             else None
                         )
-                    )
-                    place.is_selected_worker_place = bool(
-                        assignment is not None and assignment.connection_id == connection.id
+                        assignment.is_selected_worker_assignment = (
+                            assignment.connection_id == connection.id
+                        )
+                        place.assignments_for_layout.append(assignment)
+                    place.is_selected_worker_place = any(
+                        item.is_selected_worker_assignment
+                        for item in place.assignments_for_layout
                     )
                     room.places_for_layout.append(place)
 
