@@ -36,7 +36,7 @@
         <form method="post" class="fleet-form">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_create">
           <input type="hidden" name="vehicle_id" value="{{ selected_vehicle.public_id }}">
           <label class="jh-field wide"><span>{{ employer_t.support_fleet_assign_driver }}</span><select class="jh-input" name="driver_connection_id" required>{% for worker in eligible_drivers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% empty %}<option value="" disabled>{{ employer_t.support_fleet_license_only }}</option>{% endfor %}</select><small>{{ employer_t.support_fleet_license_only }}</small></label>
-          <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="date" name="starts_on" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="date" name="starts_on" data-default-current required></label>
           <div class="jh-actions wide"><button class="jh-btn primary" type="submit"{% if not eligible_drivers %} disabled{% endif %}>{{ employer_t.support_fleet_create_new_draft }}</button></div>
         </form>
       </section>

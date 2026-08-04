@@ -68,8 +68,8 @@
               <label class="jh-field"><span>{{ employer_t.support_time_worker }}</span><select class="jh-input" name="connection_id" required>{% for worker in workers %}<option value="{{ worker.public_id }}">{{ worker.time_label }}</option>{% endfor %}</select></label>
               <label class="jh-field"><span>{{ employer_t.support_time_work_date }}</span><input class="jh-input" type="date" name="work_date" value="{{ date_to|date:'Y-m-d' }}" required></label>
               <label class="jh-field"><span>{{ employer_t.support_time_label }}</span><input class="jh-input" name="worker_label" maxlength="160"></label>
-              <label class="jh-field"><span>{{ employer_t.support_time_start }}</span><input class="jh-input" type="datetime-local" name="starts_at" required></label>
-              <label class="jh-field"><span>{{ employer_t.support_time_end }}</span><input class="jh-input" type="datetime-local" name="ends_at" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_time_start }}</span><input class="jh-input" type="datetime-local" name="starts_at" data-default-current required></label>
+              <label class="jh-field"><span>{{ employer_t.support_time_end }}</span><input class="jh-input" type="datetime-local" name="ends_at" data-default-current required></label>
               <label class="jh-field"><span>{{ employer_t.support_time_break }}</span><input class="jh-input" type="number" name="break_minutes" min="0" max="720" value="0" required></label>
             </div>
             <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>

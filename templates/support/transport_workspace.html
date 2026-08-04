@@ -87,9 +87,9 @@
             <label class="jh-field transport-wide"><span>{{ employer_t.support_transport_driver_vehicle }}</span><select class="jh-input" name="driver_vehicle_assignment_id" required>{% for item in driver_assignments %}<option value="{{ item.public_id }}">{{ item.driver_connection.candidate.get_full_name|default:item.driver_connection.candidate.username }} · {{ item.vehicle.internal_name }} · {{ item.vehicle.registration_identifier }} · {{ item.vehicle.seat_capacity }}</option>{% endfor %}</select></label>
             <label class="jh-field"><span>{{ employer_t.support_transport_route_name }}</span><input class="jh-input" name="internal_name" maxlength="160" required></label>
             <label class="jh-field"><span>{{ employer_t.support_transport_worksite }}</span><select class="jh-input" name="worksite_id"><option value="">{{ employer_t.support_transport_no_worksite }}</option>{% for item in worksites %}<option value="{{ item.public_id }}">{{ item.internal_name }}</option>{% endfor %}</select></label>
-            <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" name="starts_on" type="date" required></label>
-            <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_on" type="date"></label>
-            <label class="jh-field"><span>{{ employer_t.support_transport_departure }}</span><input class="jh-input" name="departure_time" type="time"></label>
+            <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" name="starts_on" type="date" data-default-current required></label>
+            <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_on" type="date" data-default-current></label>
+            <label class="jh-field"><span>{{ employer_t.support_transport_departure }}</span><input class="jh-input" name="departure_time" type="time" data-default-current></label>
           </div>
           <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
         </form>
