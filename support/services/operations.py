@@ -537,7 +537,7 @@ def edit_driver_vehicle_assignment_draft(*, actor, assignment, driver_connection
 
 
 def delete_driver_vehicle_assignment_draft(*, actor, assignment):
-    """Remove an unshared driver--vehicle draft that has no route yet."""
+    """Remove an unshared driver--vehicle draft and its draft route, if any."""
 
     organization = assignment.organization
     require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
@@ -550,14 +550,31 @@ def delete_driver_vehicle_assignment_draft(*, actor, assignment):
             organization=organization,
             connection=assignment.driver_connection,
         )
-        if TransportRoute.objects.filter(driver_vehicle_assignment=assignment).exists():
-            raise ValidationError({"driver_vehicle_assignment": "delete_route_before_driver_vehicle_assignment"})
+        routes = list(
+            TransportRoute.objects.select_for_update().filter(
+                driver_vehicle_assignment=assignment
+            )
+        )
+        if any(route.state != TransportRoute.STATE_DRAFT for route in routes):
+            raise ValidationError({"driver_vehicle_assignment": "cannot_delete_published_route"})
+        for route in routes:
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="transport.route_draft_deleted_with_driver_vehicle",
+                target=route,
+                details={"driver_vehicle_assignment": str(assignment.public_id)},
+            )
+            route.delete()
         record_audit_event(
             organization=organization,
             actor=actor,
             action="transport.driver_vehicle_draft_deleted",
             target=assignment,
-            details={"driver_connection": str(assignment.driver_connection.public_id)},
+            details={
+                "driver_connection": str(assignment.driver_connection.public_id),
+                "deleted_draft_route_count": len(routes),
+            },
         )
         assignment.delete()
 

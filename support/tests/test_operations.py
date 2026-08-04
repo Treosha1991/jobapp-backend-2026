@@ -27,6 +27,7 @@ from support.services.operations import (
     create_driver_vehicle_assignment,
     create_transport_route,
     delete_transport_route_draft,
+    delete_driver_vehicle_assignment_draft,
     edit_driver_vehicle_assignment_draft,
     publish_driver_vehicle_assignment,
     publish_transport_route,
@@ -512,6 +513,36 @@ class SupportOperationsTests(TestCase):
 
         self.assertFalse(TransportRoute.objects.filter(pk=route.pk).exists())
         self.assertTrue(DriverVehicleAssignment.objects.filter(pk=assignment.pk).exists())
+
+    def test_driver_vehicle_draft_deletes_its_draft_route(self):
+        starts_on = date.today() + timedelta(days=3)
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Delete whole draft car",
+            registration_identifier="JH-DELETE-WHOLE-01",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+            created_by=self.owner,
+        )
+        route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Draft route removed with driver",
+            driver_vehicle_assignment=assignment,
+            starts_on=starts_on,
+            reservation_expires_at=timezone.now() + timedelta(hours=1),
+            created_by=self.owner,
+        )
+
+        delete_driver_vehicle_assignment_draft(actor=self.owner, assignment=assignment)
+
+        self.assertFalse(TransportRoute.objects.filter(pk=route.pk).exists())
+        self.assertFalse(DriverVehicleAssignment.objects.filter(pk=assignment.pk).exists())
 
     def test_worker_cannot_be_driver_and_passenger_in_the_same_period(self):
         starts_on = date.today() + timedelta(days=3)
