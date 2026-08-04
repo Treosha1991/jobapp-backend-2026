@@ -697,6 +697,7 @@ class SupportWorkspaceWebTests(TestCase):
             driver_connection=self.worker_connection,
             vehicle=vehicle,
             starts_on=starts_on,
+            ends_on=starts_on + timedelta(days=14),
             created_by=self.owner,
         )
         card_url = f"/employer/support/workers/{self.worker_connection.public_id}/?tab=transport"
@@ -719,6 +720,7 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(created.status_code, 200)
         self.assertContains(created, "The route draft was created.")
         route = TransportRoute.objects.get(organization=self.organization, internal_name="Card route")
+        self.assertEqual(route.ends_on, starts_on + timedelta(days=14))
 
         for sequence, kind, label in (
             (1, "pickup", "Home"),

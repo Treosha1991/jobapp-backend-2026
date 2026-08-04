@@ -800,7 +800,10 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         for passenger_assignment in passenger_routes:
             passenger_assignment.is_selected_worker = True
         routes_by_driver_assignment_id = {
-            route.driver_vehicle_assignment_id: route for route in driver_routes
+            route.driver_vehicle_assignment_id: route
+            for route in driver_routes
+            if route.state == TransportRoute.STATE_PUBLISHED
+            or route.is_reservation_active
         }
         for assignment in driver_assignments:
             assignment.route_for_driver = routes_by_driver_assignment_id.get(assignment.id)

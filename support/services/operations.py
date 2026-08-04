@@ -382,6 +382,11 @@ def create_transport_route(*, actor, organization, internal_name, driver_vehicle
         )
         if driver_assignment.state == DriverVehicleAssignment.STATE_CANCELLED:
             raise ValidationError({"driver_vehicle_assignment": "driver_vehicle_assignment_cancelled"})
+        # A route never outlives the vehicle assignment.  In the employer
+        # form the end date is optional, so a finite vehicle assignment is
+        # also the natural end date of an otherwise open-ended route.
+        if ends_on is None and driver_assignment.ends_on is not None:
+            ends_on = driver_assignment.ends_on
         if ends_on is not None and ends_on <= starts_on:
             raise ValidationError({"ends_on": "period_end_must_be_after_start"})
         if worksite is not None:
