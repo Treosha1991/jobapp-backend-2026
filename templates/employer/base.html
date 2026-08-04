@@ -234,7 +234,25 @@
           }
         });
       };
-      document.addEventListener("DOMContentLoaded", setCurrentDefaults);
+      const openPickerFromIcon = (event) => {
+        const field = event.target;
+        if (!(field instanceof HTMLInputElement) || !field.matches('.jh-input[type="date"], .jh-input[type="time"], .jh-input[type="datetime-local"]')) return;
+        const box = field.getBoundingClientRect();
+        // The right-hand 48px is the visible calendar/clock icon.  The rest
+        // of the input keeps normal native editing of individual digits.
+        if (event.clientX < box.right - 48 || typeof field.showPicker !== "function") return;
+        event.preventDefault();
+        field.focus({ preventScroll: true });
+        try {
+          field.showPicker();
+        } catch (_) {
+          // Older browsers retain their normal native input behaviour.
+        }
+      };
+      document.addEventListener("DOMContentLoaded", () => {
+        setCurrentDefaults();
+        document.addEventListener("pointerdown", openPickerFromIcon);
+      });
     })();
   </script>
   {% block extra_body %}{% endblock %}
