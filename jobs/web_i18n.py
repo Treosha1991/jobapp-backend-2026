@@ -1957,6 +1957,7 @@ TRANSLATIONS["ru"].update({
     "support_fleet_draft_updated": "Черновик закрепления автомобиля обновлён.",
     "support_fleet_operation_error": "Не удалось создать черновик. Проверьте даты, доступность водителя и автомобиля.",
     "support_fleet_delete_error": "Не удалось удалить черновик автомобиля.",
+    "support_fleet_publish_error": "Нельзя опубликовать закрепление: водитель или автомобиль уже заняты в пересекающийся период. Выберите другого водителя либо измените даты.",
 })
 TRANSLATIONS["en"].update({
     "support_registry_title": "Company registries",
@@ -2010,6 +2011,7 @@ TRANSLATIONS["en"].update({
     "support_fleet_draft_updated": "The vehicle assignment draft was updated.",
     "support_fleet_operation_error": "The draft could not be created. Check dates and driver and vehicle availability.",
     "support_fleet_delete_error": "The vehicle draft could not be deleted.",
+    "support_fleet_publish_error": "The assignment cannot be published: the driver or vehicle is already assigned for an overlapping period. Choose another driver or change the dates.",
 })
 TRANSLATIONS["pl"].update({
     "support_registry_title": "Rejestry firmy",
@@ -2063,6 +2065,7 @@ TRANSLATIONS["pl"].update({
     "support_fleet_draft_updated": "Szkic przypisania pojazdu został zaktualizowany.",
     "support_fleet_operation_error": "Nie udało się utworzyć szkicu. Sprawdź daty oraz dostępność kierowcy i pojazdu.",
     "support_fleet_delete_error": "Nie udało się usunąć szkicu pojazdu.",
+    "support_fleet_publish_error": "Nie można opublikować przypisania: kierowca lub pojazd jest już zajęty w nakładającym się okresie. Wybierz innego kierowcę albo zmień daty.",
 })
 TRANSLATIONS["uk"].update({
     "support_registry_title": "Реєстри компанії",
@@ -2116,6 +2119,7 @@ TRANSLATIONS["uk"].update({
     "support_fleet_draft_updated": "Чернетку призначення автомобіля оновлено.",
     "support_fleet_operation_error": "Не вдалося створити чернетку. Перевірте дати та доступність водія й автомобіля.",
     "support_fleet_delete_error": "Не вдалося видалити чернетку автомобіля.",
+    "support_fleet_publish_error": "Не можна опублікувати призначення: водій або автомобіль уже зайнятий у період, що перетинається. Виберіть іншого водія або змініть дати.",
 })
 
 
