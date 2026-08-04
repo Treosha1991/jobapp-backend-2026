@@ -68,20 +68,17 @@
               <label class="jh-field"><span>{{ employer_t.support_registry_room }}</span><input class="jh-input" name="label" maxlength="80" required></label>
               <label class="jh-field"><span>{{ employer_t.support_registry_capacity }}</span><input class="jh-input" name="capacity" type="number" min="1" max="50" value="1" required></label>
             </div>
+            <p class="jh-subtitle">{{ employer_t.support_registry_room_places_auto }}</p>
             <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
           </form>
         {% endif %}
 
         {% if housing_rooms %}
-          <form class="registry-form" method="post">
-            {% csrf_token %}<input type="hidden" name="action" value="housing_place_create">
-            <h3>{{ employer_t.support_registry_add_place }}</h3>
-            <div class="registry-form-grid">
-              <label class="jh-field"><span>{{ employer_t.support_registry_room }}</span><select class="jh-input" name="room_id" required>{% for room in housing_rooms %}<option value="{{ room.public_id }}">{{ room.site.internal_name }} · {{ room.label }} ({{ room.places.all|length }}/{{ room.capacity }})</option>{% endfor %}</select></label>
-              <label class="jh-field"><span>{{ employer_t.support_registry_place }}</span><input class="jh-input" name="label" maxlength="80" required></label>
-            </div>
-            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
-          </form>
+          <div class="registry-grid">
+            {% for room in housing_rooms %}
+              <article class="registry-item"><h3>{{ room.site.internal_name }} · {{ room.label }}</h3><p>{{ employer_t.support_registry_capacity }}: {{ room.capacity }}<br>{% if room.capacity == 1 %}{{ employer_t.support_registry_room_single }}{% else %}{{ employer_t.support_registry_room_places }}: {% for place in room.places.all %}{{ place.label }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</p></article>
+            {% endfor %}
+          </div>
         {% endif %}
       </section>
     {% endif %}

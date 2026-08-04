@@ -4053,7 +4053,21 @@ class HousingRoomCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
             site=site,
             **data,
         )
-        return Response({"housing_room": {"id": str(room.public_id), "site_id": str(site.public_id), "label": room.label, "capacity": room.capacity}}, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                "housing_room": {
+                    "id": str(room.public_id),
+                    "site_id": str(site.public_id),
+                    "label": room.label,
+                    "capacity": room.capacity,
+                    "places": [
+                        {"id": str(place.public_id), "label": place.label}
+                        for place in room.places.order_by("id")
+                    ],
+                }
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class HousingPlaceCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):

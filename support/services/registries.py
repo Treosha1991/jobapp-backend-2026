@@ -47,12 +47,23 @@ def create_housing_room(*, actor, organization, site, label, capacity):
     try:
         with transaction.atomic():
             room = HousingRoom.objects.create(site=site, label=label, capacity=capacity)
+            # Places are not an extra setup step for the employer.  They are
+            # created with the room and are free until a housing assignment is
+            # published.  Keeping the records separate still gives us a safe
+            # occupancy check for every individual worker.
+            HousingPlace.objects.bulk_create(
+                [HousingPlace(room=room, label=str(number)) for number in range(1, capacity + 1)]
+            )
             record_audit_event(
                 organization=organization,
                 actor=actor,
                 action="housing.room_created",
                 target=room,
-                details={"site": str(site.public_id)},
+                details={
+                    "site": str(site.public_id),
+                    "capacity": capacity,
+                    "places_created": capacity,
+                },
             )
     except IntegrityError as exc:
         raise ValidationError({"label": "housing_room_label_already_exists"}) from exc

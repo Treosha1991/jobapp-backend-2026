@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from support.models import (
     DriverVehicleAssignment,
     HousingAssignment,
+    HousingRoom,
     HousingSite,
     NotificationOutbox,
     RouteStop,
@@ -136,13 +137,37 @@ class SupportOperationsTests(TestCase):
             format="json",
         )
         self.assertEqual(room.status_code, 201, room.data)
-        place = self.owner_client.post(
-            f"{self.base_url}/housing-places/",
-            {"room_id": room.data["housing_room"]["id"], "label": "Bed 1"},
+        place = room.data["housing_room"]["places"][0]
+        return site.data["housing_site"], room.data["housing_room"], place
+
+    def test_creating_room_creates_all_free_places(self):
+        site = self.owner_client.post(
+            f"{self.base_url}/housing-sites/",
+            {
+                "internal_name": "Automatic places house",
+                "country_code": "NL",
+                "city": "Lelystad",
+                "street": "Auto street",
+                "building": "8",
+            },
             format="json",
         )
-        self.assertEqual(place.status_code, 201, place.data)
-        return site.data["housing_site"], room.data["housing_room"], place.data["housing_place"]
+        self.assertEqual(site.status_code, 201, site.data)
+
+        room = self.owner_client.post(
+            f"{self.base_url}/housing-rooms/",
+            {"site_id": site.data["housing_site"]["id"], "label": "Room 8", "capacity": 3},
+            format="json",
+        )
+
+        self.assertEqual(room.status_code, 201, room.data)
+        self.assertEqual(
+            [item["label"] for item in room.data["housing_room"]["places"]],
+            ["1", "2", "3"],
+        )
+        room_model = HousingRoom.objects.get(public_id=room.data["housing_room"]["id"])
+        self.assertEqual(room_model.places.filter(is_active=True).count(), 3)
+        self.assertFalse(HousingAssignment.objects.filter(place__room=room_model).exists())
 
     def test_housing_is_drafted_before_publish_and_room_capacity_is_enforced(self):
         _, room, place = self._create_housing_place(capacity=1)
