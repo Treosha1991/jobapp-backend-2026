@@ -1214,19 +1214,25 @@ def fleet_workspace(request):
                     success_key = "support_fleet_draft_created"
                 else:
                     raise ValueError("fleet_operation_unknown")
-        except (APIException, ValueError):
+        except (APIException, ValueError) as error:
+            error_text = str(getattr(error, "detail", error))
+            message_key = (
+                "support_fleet_delete_error"
+                if action == "driver_vehicle_draft_delete"
+                else "support_fleet_publish_error"
+                if action == "driver_vehicle_draft_publish"
+                else "support_fleet_edit_error"
+                if action == "driver_vehicle_draft_edit"
+                else "support_fleet_operation_error"
+            )
+            if (
+                action == "driver_vehicle_draft_publish"
+                and "replacement_period_does_not_cover_route" in error_text
+            ):
+                message_key = "support_fleet_replacement_period_error"
             messages.error(
                 request,
-                tr(
-                    request,
-                    "support_fleet_delete_error"
-                    if action == "driver_vehicle_draft_delete"
-                    else "support_fleet_publish_error"
-                    if action == "driver_vehicle_draft_publish"
-                    else "support_fleet_edit_error"
-                    if action == "driver_vehicle_draft_edit"
-                    else "support_fleet_operation_error",
-                ),
+                tr(request, message_key),
             )
         else:
             messages.success(request, tr(request, success_key))

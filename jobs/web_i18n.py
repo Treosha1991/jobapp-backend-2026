@@ -1951,6 +1951,9 @@ TRANSLATIONS["ru"].update({
     "support_fleet_history": "История закреплений",
     "support_fleet_assign_driver": "Назначить или изменить водителя",
     "support_fleet_edit_draft": "Редактировать черновик",
+    "support_fleet_save_draft_changes": "Сохранить изменения",
+    "support_fleet_new_draft": "Новое закрепление",
+    "support_fleet_create_new_draft": "Создать новый черновик",
     "support_fleet_driver": "Водитель",
     "support_fleet_license_only": "В списке только работники с подтверждённым водительским удостоверением.",
     "support_fleet_draft_created": "Черновик закрепления автомобиля создан. Опубликуйте его в карточке выбранного водителя.",
@@ -1958,6 +1961,7 @@ TRANSLATIONS["ru"].update({
     "support_fleet_operation_error": "Не удалось создать черновик. Проверьте даты, доступность водителя и автомобиля.",
     "support_fleet_delete_error": "Не удалось удалить черновик автомобиля.",
     "support_fleet_publish_error": "Нельзя опубликовать закрепление: водитель или автомобиль уже заняты в пересекающийся период. Выберите другого водителя либо измените даты.",
+    "support_fleet_replacement_period_error": "Нельзя заменить водителя: новый период короче действующего маршрута. В черновике укажите даты, которые покрывают весь маршрут, затем опубликуйте его.",
     "support_fleet_edit_error": "Не удалось сохранить изменения черновика. Проверьте даты и выбранного водителя.",
 })
 TRANSLATIONS["en"].update({
@@ -2006,6 +2010,9 @@ TRANSLATIONS["en"].update({
     "support_fleet_history": "Assignment history",
     "support_fleet_assign_driver": "Assign or change driver",
     "support_fleet_edit_draft": "Edit draft",
+    "support_fleet_save_draft_changes": "Save changes",
+    "support_fleet_new_draft": "New assignment",
+    "support_fleet_create_new_draft": "Create new draft",
     "support_fleet_driver": "Driver",
     "support_fleet_license_only": "Only workers with a verified driving licence are listed.",
     "support_fleet_draft_created": "The vehicle assignment draft was created. Publish it from the selected driver's card.",
@@ -2013,6 +2020,7 @@ TRANSLATIONS["en"].update({
     "support_fleet_operation_error": "The draft could not be created. Check dates and driver and vehicle availability.",
     "support_fleet_delete_error": "The vehicle draft could not be deleted.",
     "support_fleet_publish_error": "The assignment cannot be published: the driver or vehicle is already assigned for an overlapping period. Choose another driver or change the dates.",
+    "support_fleet_replacement_period_error": "The driver cannot be replaced because the new period is shorter than the active route. Set draft dates that cover the whole route, then publish it.",
     "support_fleet_edit_error": "The draft changes could not be saved. Check the dates and selected driver.",
 })
 TRANSLATIONS["pl"].update({
@@ -2061,6 +2069,9 @@ TRANSLATIONS["pl"].update({
     "support_fleet_history": "Historia przypisań",
     "support_fleet_assign_driver": "Przypisz lub zmień kierowcę",
     "support_fleet_edit_draft": "Edytuj szkic",
+    "support_fleet_save_draft_changes": "Zapisz zmiany",
+    "support_fleet_new_draft": "Nowe przypisanie",
+    "support_fleet_create_new_draft": "Utwórz nowy szkic",
     "support_fleet_driver": "Kierowca",
     "support_fleet_license_only": "Na liście są tylko pracownicy z potwierdzonym prawem jazdy.",
     "support_fleet_draft_created": "Utworzono szkic przypisania pojazdu. Opublikuj go na karcie wybranego kierowcy.",
@@ -2068,6 +2079,7 @@ TRANSLATIONS["pl"].update({
     "support_fleet_operation_error": "Nie udało się utworzyć szkicu. Sprawdź daty oraz dostępność kierowcy i pojazdu.",
     "support_fleet_delete_error": "Nie udało się usunąć szkicu pojazdu.",
     "support_fleet_publish_error": "Nie można opublikować przypisania: kierowca lub pojazd jest już zajęty w nakładającym się okresie. Wybierz innego kierowcę albo zmień daty.",
+    "support_fleet_replacement_period_error": "Nie można zmienić kierowcy: nowy okres jest krótszy niż aktywna trasa. Ustaw w szkicu daty obejmujące całą trasę, a następnie go opublikuj.",
     "support_fleet_edit_error": "Nie udało się zapisać zmian szkicu. Sprawdź daty i wybranego kierowcę.",
 })
 TRANSLATIONS["uk"].update({
@@ -2116,6 +2128,9 @@ TRANSLATIONS["uk"].update({
     "support_fleet_history": "Історія призначень",
     "support_fleet_assign_driver": "Призначити або змінити водія",
     "support_fleet_edit_draft": "Редагувати чернетку",
+    "support_fleet_save_draft_changes": "Зберегти зміни",
+    "support_fleet_new_draft": "Нове призначення",
+    "support_fleet_create_new_draft": "Створити нову чернетку",
     "support_fleet_driver": "Водій",
     "support_fleet_license_only": "У списку лише працівники з підтвердженим водійським посвідченням.",
     "support_fleet_draft_created": "Створено чернетку призначення автомобіля. Опублікуйте її в картці вибраного водія.",
@@ -2123,6 +2138,7 @@ TRANSLATIONS["uk"].update({
     "support_fleet_operation_error": "Не вдалося створити чернетку. Перевірте дати та доступність водія й автомобіля.",
     "support_fleet_delete_error": "Не вдалося видалити чернетку автомобіля.",
     "support_fleet_publish_error": "Не можна опублікувати призначення: водій або автомобіль уже зайнятий у період, що перетинається. Виберіть іншого водія або змініть дати.",
+    "support_fleet_replacement_period_error": "Не можна змінити водія: новий період коротший за активний маршрут. У чернетці вкажіть дати, що покривають увесь маршрут, а потім опублікуйте її.",
     "support_fleet_edit_error": "Не вдалося зберегти зміни чернетки. Перевірте дати та вибраного водія.",
 })
 
