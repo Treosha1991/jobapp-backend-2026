@@ -145,7 +145,8 @@
               <form class="jh-actions" method="post" style="margin-top:14px">{% csrf_token %}<input type="hidden" name="action" value="route_publish"><input type="hidden" name="route_id" value="{{ route.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_publish }}</button></form>
             {% endif %}
           {% elif route.state == 'draft' %}<div class="transport-note">{{ employer_t.support_transport_reservation_expired }}</div>{% endif %}
-          {% if route.state != 'cancelled' %}<form class="jh-actions" method="post" style="margin-top:14px">{% csrf_token %}<input type="hidden" name="action" value="route_cancel"><input type="hidden" name="route_id" value="{{ route.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_transport_cancel }}</button></form>{% endif %}
+          {% if route.state == 'draft' %}<form class="jh-actions" method="post" style="margin-top:14px" onsubmit="return confirm('{{ employer_t.support_draft_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="route_delete"><input type="hidden" name="route_id" value="{{ route.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_draft_delete }}</button></form>{% endif %}
+          {% if route.state == 'published' %}<form class="jh-actions" method="post" style="margin-top:14px">{% csrf_token %}<input type="hidden" name="action" value="route_cancel"><input type="hidden" name="route_id" value="{{ route.public_id }}"><button class="jh-btn" type="submit">{{ employer_t.support_transport_cancel }}</button></form>{% endif %}
         </article>
       {% empty %}<div class="transport-empty">{{ employer_t.support_transport_no_routes }}</div>{% endfor %}
     </section>

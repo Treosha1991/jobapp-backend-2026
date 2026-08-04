@@ -201,6 +201,28 @@ def cancel_housing_assignment(*, actor, assignment):
     return assignment
 
 
+def delete_housing_assignment_draft(*, actor, assignment):
+    """Permanently remove a staff-only housing draft before publication."""
+
+    organization = assignment.organization
+    require_permission(user=actor, organization=organization, permission_code=HOUSING_MANAGE)
+    with transaction.atomic():
+        assignment = HousingAssignment.objects.select_for_update().get(pk=assignment.pk)
+        if assignment.state != HousingAssignment.STATE_DRAFT:
+            raise ValidationError({"assignment": "housing_assignment_not_draft"})
+        require_worker_connection_access(
+            user=actor, organization=organization, connection=assignment.connection
+        )
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="housing.assignment_draft_deleted",
+            target=assignment,
+            details={"connection": str(assignment.connection.public_id)},
+        )
+        assignment.delete()
+
+
 def create_worker_project_assignment(*, actor, organization, connection, project, worker_role, starts_at, ends_at=None):
     require_permission(user=actor, organization=organization, permission_code=SCHEDULE_MANAGE)
     with transaction.atomic():
@@ -329,6 +351,28 @@ def cancel_worker_project_assignment(*, actor, assignment):
     return assignment
 
 
+def delete_worker_project_assignment_draft(*, actor, assignment):
+    """Permanently remove a staff-only work draft before publication."""
+
+    organization = assignment.organization
+    require_permission(user=actor, organization=organization, permission_code=SCHEDULE_MANAGE)
+    with transaction.atomic():
+        assignment = WorkerProjectAssignment.objects.select_for_update().get(pk=assignment.pk)
+        if assignment.state != WorkerProjectAssignment.STATE_DRAFT:
+            raise ValidationError({"assignment": "work_assignment_not_draft"})
+        require_worker_connection_access(
+            user=actor, organization=organization, connection=assignment.connection
+        )
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="work.assignment_draft_deleted",
+            target=assignment,
+            details={"connection": str(assignment.connection.public_id)},
+        )
+        assignment.delete()
+
+
 def create_driver_vehicle_assignment(*, actor, organization, driver_connection, vehicle, starts_on, ends_on=None):
     require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
     with transaction.atomic():
@@ -424,6 +468,32 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
             dedupe_key=f"transport.driver-vehicle.published:{assignment.public_id}:{now.isoformat()}",
         )
     return assignment
+
+
+def delete_driver_vehicle_assignment_draft(*, actor, assignment):
+    """Remove an unshared driver--vehicle draft that has no route yet."""
+
+    organization = assignment.organization
+    require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
+    with transaction.atomic():
+        assignment = DriverVehicleAssignment.objects.select_for_update().get(pk=assignment.pk)
+        if assignment.state != DriverVehicleAssignment.STATE_DRAFT:
+            raise ValidationError({"driver_vehicle_assignment": "driver_vehicle_assignment_not_draft"})
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=assignment.driver_connection,
+        )
+        if TransportRoute.objects.filter(driver_vehicle_assignment=assignment).exists():
+            raise ValidationError({"driver_vehicle_assignment": "delete_route_before_driver_vehicle_assignment"})
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.driver_vehicle_draft_deleted",
+            target=assignment,
+            details={"driver_connection": str(assignment.driver_connection.public_id)},
+        )
+        assignment.delete()
 
 
 def create_transport_route(*, actor, organization, internal_name, driver_vehicle_assignment, starts_on, ends_on=None, worksite=None, departure_time=None, reservation_expires_at=None):
@@ -895,3 +965,36 @@ def cancel_transport_route(*, actor, route):
                     dedupe_key=f"transport.route.cancelled:{route.public_id}:{recipient.id}:{now.isoformat()}",
                 )
     return route
+
+
+def delete_transport_route_draft(*, actor, route):
+    """Remove a transport draft and its draft-only stops and passengers."""
+
+    organization = route.organization
+    require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
+    with transaction.atomic():
+        route = (
+            TransportRoute.objects.select_for_update()
+            .select_related("driver_vehicle_assignment__driver_connection")
+            .prefetch_related("passenger_assignments__connection")
+            .get(pk=route.pk)
+        )
+        if route.state != TransportRoute.STATE_DRAFT:
+            raise ValidationError({"route": "transport_route_not_draft"})
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=route.driver_vehicle_assignment.driver_connection,
+        )
+        for passenger in route.passenger_assignments.all():
+            require_worker_connection_access(
+                user=actor, organization=organization, connection=passenger.connection
+            )
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.route_draft_deleted",
+            target=route,
+            details={"driver_vehicle_assignment": str(route.driver_vehicle_assignment.public_id)},
+        )
+        route.delete()

@@ -819,6 +819,36 @@ def cancel_scheduled_shift(*, actor, shift):
     return shift
 
 
+def delete_scheduled_shift_draft(*, actor, shift):
+    """Remove a shift draft before it can be seen by the worker."""
+
+    organization = shift.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    with transaction.atomic():
+        shift = ScheduledWorkShift.objects.select_for_update().get(pk=shift.pk)
+        _require_operational_connection(connection=shift.connection, organization=organization)
+        require_worker_connection_access(
+            user=actor, organization=organization, connection=shift.connection
+        )
+        if shift.state != ScheduledWorkShift.STATE_DRAFT:
+            raise ValidationError({"shift": "scheduled_shift_not_draft"})
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="schedule.shift_draft_deleted",
+            target=shift,
+            details={
+                "connection": str(shift.connection.public_id),
+                "work_date": shift.work_date.isoformat(),
+            },
+        )
+        shift.delete()
+
+
 def replace_scheduled_shift(
     *,
     actor,

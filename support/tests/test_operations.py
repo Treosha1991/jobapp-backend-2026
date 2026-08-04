@@ -26,6 +26,7 @@ from support.services.operations import (
     add_route_passenger,
     create_driver_vehicle_assignment,
     create_transport_route,
+    delete_transport_route_draft,
     publish_driver_vehicle_assignment,
     publish_transport_route,
 )
@@ -452,6 +453,35 @@ class SupportOperationsTests(TestCase):
             starts_on=starts_on,
         )
         self.assertEqual(route.state, TransportRoute.STATE_DRAFT)
+
+    def test_transport_draft_can_be_deleted_without_deleting_vehicle_assignment(self):
+        starts_on = date.today() + timedelta(days=3)
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Draft deletion car",
+            registration_identifier="JH-DRAFT-DELETE-01",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        assignment = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+        )
+        route = create_transport_route(
+            actor=self.owner,
+            organization=self.organization,
+            internal_name="Discarded route",
+            driver_vehicle_assignment=assignment,
+            starts_on=starts_on,
+        )
+
+        delete_transport_route_draft(actor=self.owner, route=route)
+
+        self.assertFalse(TransportRoute.objects.filter(pk=route.pk).exists())
+        self.assertTrue(DriverVehicleAssignment.objects.filter(pk=assignment.pk).exists())
 
     def test_worker_cannot_be_driver_and_passenger_in_the_same_period(self):
         starts_on = date.today() + timedelta(days=3)

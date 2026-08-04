@@ -1003,6 +1003,29 @@ TRANSLATIONS["uk"].update({
     "phone_verify_send_failed": "Не вдалося надіслати код. Перевірте номер або спробуйте пізніше.",
 })
 
+# Shared draft actions.  Every staff editor uses the same explicit wording and
+# confirmation before a not-yet-published record is removed.
+TRANSLATIONS["ru"].update({
+    "support_draft_delete": "Удалить черновик",
+    "support_draft_delete_confirm": "Удалить этот черновик без возможности восстановления?",
+    "support_draft_deleted": "Черновик удалён.",
+})
+TRANSLATIONS["en"].update({
+    "support_draft_delete": "Delete draft",
+    "support_draft_delete_confirm": "Delete this draft permanently? This cannot be undone.",
+    "support_draft_deleted": "The draft was deleted.",
+})
+TRANSLATIONS["pl"].update({
+    "support_draft_delete": "Usuń szkic",
+    "support_draft_delete_confirm": "Usunąć ten szkic bez możliwości przywrócenia?",
+    "support_draft_deleted": "Szkic został usunięty.",
+})
+TRANSLATIONS["uk"].update({
+    "support_draft_delete": "Видалити чернетку",
+    "support_draft_delete_confirm": "Видалити цю чернетку без можливості відновлення?",
+    "support_draft_deleted": "Чернетку видалено.",
+})
+
 TRANSLATIONS["ru"].update({
     "support_documents_title": "Документы по e-mail",
     "support_documents_text": "JobHub хранит только запрос и статус. Документы работник отправляет на проверенный e-mail фирмы.",

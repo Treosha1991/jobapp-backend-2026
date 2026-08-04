@@ -71,6 +71,10 @@ from .services.operations import (
     cancel_transport_route,
     cancel_worker_project_assignment,
     create_transport_route,
+    delete_driver_vehicle_assignment_draft,
+    delete_housing_assignment_draft,
+    delete_transport_route_draft,
+    delete_worker_project_assignment_draft,
     edit_route_stop,
     publish_housing_assignment,
     publish_driver_vehicle_assignment,
@@ -81,6 +85,7 @@ from .services.timekeeping import (
     cancel_scheduled_shift,
     confirm_work_time_entry,
     create_scheduled_shift,
+    delete_scheduled_shift_draft,
     edit_work_time_entry,
     publish_scheduled_shift,
     replace_scheduled_shift,
@@ -376,6 +381,13 @@ def _worker_card_operation(request, *, snapshot):
                 check_out_at=check_out_at,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
+        elif action == "housing_draft_delete":
+            assignment = get_object_or_404(
+                HousingAssignment.objects.filter(organization=organization, connection=connection),
+                public_id=request.POST.get("assignment_id"),
+            )
+            delete_housing_assignment_draft(actor=request.user, assignment=assignment)
+            messages.success(request, tr(request, "support_draft_deleted"))
         elif action == "work_draft":
             project = get_object_or_404(
                 WorkProject.objects.filter(organization=organization),
@@ -395,6 +407,16 @@ def _worker_card_operation(request, *, snapshot):
                 ends_at=ends_at,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
+        elif action == "work_draft_delete":
+            assignment = get_object_or_404(
+                WorkerProjectAssignment.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                ),
+                public_id=request.POST.get("assignment_id"),
+            )
+            delete_worker_project_assignment_draft(actor=request.user, assignment=assignment)
+            messages.success(request, tr(request, "support_draft_deleted"))
         elif action == "driver_vehicle_draft":
             vehicle = get_object_or_404(
                 Vehicle.objects.filter(organization=organization),
@@ -423,6 +445,16 @@ def _worker_card_operation(request, *, snapshot):
             )
             publish_driver_vehicle_assignment(actor=request.user, assignment=assignment)
             messages.success(request, tr(request, "support_transport_driver_vehicle_published"))
+        elif action == "driver_vehicle_delete":
+            assignment = get_object_or_404(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    driver_connection=connection,
+                ),
+                public_id=request.POST.get("driver_vehicle_assignment_id"),
+            )
+            delete_driver_vehicle_assignment_draft(actor=request.user, assignment=assignment)
+            messages.success(request, tr(request, "support_draft_deleted"))
         elif action == "route_create":
             data = _validated_post(
                 TransportRouteCreateSerializer,
@@ -595,6 +627,16 @@ def _worker_card_operation(request, *, snapshot):
             )
             cancel_transport_route(actor=request.user, route=route)
             messages.success(request, tr(request, "support_transport_route_cancelled"))
+        elif action == "route_delete":
+            route = get_object_or_404(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    driver_vehicle_assignment__driver_connection=connection,
+                ),
+                public_id=request.POST.get("route_id"),
+            )
+            delete_transport_route_draft(actor=request.user, route=route)
+            messages.success(request, tr(request, "support_draft_deleted"))
         elif action == "scheduled_shift_create":
             work_date = _operation_date(request.POST.get("work_date"))
             starts_at = _aware_datetime(request.POST.get("starts_at"))
@@ -631,6 +673,16 @@ def _worker_card_operation(request, *, snapshot):
             )
             cancel_scheduled_shift(actor=request.user, shift=shift)
             messages.success(request, tr(request, "support_worker_assignment_cancelled"))
+        elif action == "scheduled_shift_delete":
+            shift = get_object_or_404(
+                ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                ),
+                public_id=request.POST.get("shift_id"),
+            )
+            delete_scheduled_shift_draft(actor=request.user, shift=shift)
+            messages.success(request, tr(request, "support_draft_deleted"))
         elif action == "scheduled_shift_replace":
             shift = get_object_or_404(
                 ScheduledWorkShift.objects.filter(
@@ -1042,6 +1094,14 @@ def _transport_operation(request, *, snapshot):
             )
             cancel_transport_route(actor=request.user, route=route)
             success_key = "support_transport_route_cancelled"
+        elif action == "route_delete":
+            route = get_object_or_404(
+                TransportRoute,
+                organization=organization,
+                public_id=request.POST.get("route_id"),
+            )
+            delete_transport_route_draft(actor=request.user, route=route)
+            success_key = "support_draft_deleted"
         else:
             raise ValueError("transport_operation_unknown")
     except (APIException, ValueError):
@@ -1241,6 +1301,14 @@ def _time_operation(request, *, snapshot):
             )
             cancel_scheduled_shift(actor=request.user, shift=shift)
             message_key = "support_time_shift_cancelled"
+        elif action == "scheduled_shift_delete":
+            shift = get_object_or_404(
+                ScheduledWorkShift,
+                organization=organization,
+                public_id=request.POST.get("shift_id"),
+            )
+            delete_scheduled_shift_draft(actor=request.user, shift=shift)
+            message_key = "support_draft_deleted"
         elif action == "time_entry_confirm":
             entry = get_object_or_404(
                 WorkTimeEntry,
