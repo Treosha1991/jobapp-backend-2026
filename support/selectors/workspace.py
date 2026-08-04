@@ -1254,6 +1254,97 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
     }
 
 
+def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None):
+    """Return a transport-only fleet view without exposing worker documents."""
+
+    memberships, membership = _select_membership(
+        user=user,
+        organization_public_id=organization_public_id,
+    )
+    organization = membership.organization
+    permissions = _permissions_for(user=user, organization=organization)
+    if not permissions["transport"]:
+        raise Http404("support_fleet_not_found")
+
+    workers = list(
+        worker_connection_queryset_for(
+            user=user,
+            organization=organization,
+            queryset=SupportConnection.objects.filter(
+                is_archived=False,
+                stage__in=(
+                    SupportConnection.STAGE_COORDINATOR,
+                    SupportConnection.STAGE_ACTIVE_WORKER,
+                ),
+            ).select_related("candidate"),
+        ).order_by("candidate__first_name", "candidate__last_name", "candidate__username")
+    )
+    license_connection_ids = set()
+    for package in DocumentRequestPackage.objects.filter(
+        organization=organization,
+        status=DocumentRequestPackage.STATUS_COMPLETED,
+    ).only("connection_id", "requested_items"):
+        if any(item.get("type") == "driving_license" for item in package.requested_items):
+            license_connection_ids.add(package.connection_id)
+    for worker in workers:
+        worker.has_verified_driving_license = worker.id in license_connection_ids
+        worker.display_name = _display_name(worker.candidate)
+    eligible_drivers = [item for item in workers if item.has_verified_driving_license]
+
+    today = timezone.localdate()
+    vehicles = list(
+        Vehicle.objects.filter(organization=organization)
+        .prefetch_related(
+            "driver_assignments__driver_connection__candidate",
+            "driver_assignments__routes__passenger_assignments",
+        )
+        .order_by("internal_name", "id")
+    )
+    for vehicle in vehicles:
+        assignments = list(vehicle.driver_assignments.all())
+        assignments.sort(key=lambda item: (item.starts_on, item.id), reverse=True)
+        vehicle.assignments_for_fleet = assignments
+        active = [
+            item for item in assignments
+            if item.state in (DriverVehicleAssignment.STATE_DRAFT, DriverVehicleAssignment.STATE_PUBLISHED)
+            and item.starts_on <= today
+            and (item.ends_on is None or item.ends_on > today)
+        ]
+        active.sort(key=lambda item: (item.state == DriverVehicleAssignment.STATE_PUBLISHED, item.starts_on), reverse=True)
+        vehicle.current_assignment = active[0] if active else None
+        vehicle.current_route = None
+        if vehicle.current_assignment:
+            routes = [
+                route for route in vehicle.current_assignment.routes.all()
+                if route.state in (TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED)
+            ]
+            routes.sort(key=lambda item: (item.state == TransportRoute.STATE_PUBLISHED, item.starts_on), reverse=True)
+            vehicle.current_route = routes[0] if routes else None
+        passenger_count = (
+            vehicle.current_route.passenger_assignments.count()
+            if vehicle.current_route is not None
+            else 0
+        )
+        vehicle.free_seat_count = max(0, vehicle.seat_capacity - (1 if vehicle.current_assignment else 0) - passenger_count)
+        vehicle.occupancy_label = f"{vehicle.free_seat_count}/{vehicle.seat_capacity}"
+
+    selected_vehicle = next(
+        (item for item in vehicles if str(item.public_id) == str(vehicle_public_id)),
+        vehicles[0] if vehicles else None,
+    )
+    if vehicle_public_id and selected_vehicle is None:
+        raise Http404("support_vehicle_not_found")
+    return {
+        "organization": organization,
+        "membership": membership,
+        "memberships": memberships,
+        "permissions": permissions,
+        "vehicles": vehicles,
+        "selected_vehicle": selected_vehicle,
+        "eligible_drivers": eligible_drivers,
+    }
+
+
 def team_management_snapshot(*, user, organization_public_id=None, membership_public_id=None):
     """Return a server-filtered staff and worker-scope management snapshot."""
 

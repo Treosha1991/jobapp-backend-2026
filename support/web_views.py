@@ -40,6 +40,7 @@ from .selectors.workspace import (
     team_management_snapshot,
     timekeeping_snapshot,
     transport_workspace_snapshot,
+    fleet_snapshot,
     worker_requests_snapshot,
     worker_card_snapshot,
     conversation_workspace_snapshot,
@@ -51,6 +52,7 @@ from .serializers import (
     HousingRoomCreateSerializer,
     HousingSiteCreateSerializer,
     VehicleCreateSerializer,
+    DriverVehicleAssignmentCreateSerializer,
     RoutePassengerCreateSerializer,
     RouteStopCreateSerializer,
     ScheduledWorkShiftCreateSerializer,
@@ -1132,6 +1134,45 @@ def transport_workspace(request):
         f"{reverse('support:registries')}?organization={snapshot['organization'].public_id}"
     )
     return render(request, "support/transport_workspace.html", snapshot)
+
+
+@login_required(login_url="employer:login")
+def fleet_workspace(request):
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = fleet_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+        vehicle_public_id=request.GET.get("vehicle"),
+    )
+    organization = snapshot["organization"]
+    if request.method == "POST":
+        try:
+            data = _validated_post(DriverVehicleAssignmentCreateSerializer, request)
+            vehicle = get_object_or_404(
+                Vehicle, organization=organization, public_id=data.pop("vehicle_id")
+            )
+            driver = get_object_or_404(
+                SupportConnection, organization=organization, public_id=data.pop("driver_connection_id")
+            )
+            eligible_ids = {item.id for item in snapshot["eligible_drivers"]}
+            if driver.id not in eligible_ids:
+                raise ValueError("driver_license_not_verified")
+            create_driver_vehicle_assignment(
+                actor=request.user,
+                organization=organization,
+                driver_connection=driver,
+                vehicle=vehicle,
+                **data,
+            )
+        except (APIException, ValueError):
+            messages.error(request, tr(request, "support_fleet_operation_error"))
+        else:
+            messages.success(request, tr(request, "support_fleet_draft_created"))
+        query = urlencode({"organization": organization.public_id, "vehicle": request.POST.get("vehicle_id", "")})
+        return redirect(f"{reverse('support:fleet')}?{query}")
+    snapshot["workspace_url"] = f"{reverse('support:workspace')}?organization={organization.public_id}"
+    return render(request, "support/fleet_workspace.html", snapshot)
 
 
 def _team_redirect(organization, membership):

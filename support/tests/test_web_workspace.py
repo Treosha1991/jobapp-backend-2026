@@ -369,6 +369,33 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(assignment.state, HousingAssignment.STATE_CANCELLED)
         self.assertContains(cancelled, "The assignment was cancelled. Its history was kept;")
 
+    def test_owner_can_open_fleet_and_see_vehicle_assignment_history(self):
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Fleet test car",
+            registration_identifier="FLEET-123",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            vehicle=vehicle,
+            driver_connection=self.worker_connection,
+            starts_on=date.today() - timedelta(days=1),
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            f"/employer/support/fleet/?organization={self.organization.public_id}&vehicle={vehicle.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Fleet test car")
+        self.assertContains(response, "FLEET-123")
+        self.assertContains(response, "workspace-active-worker")
+
     def test_housing_layout_marks_another_workers_draft_without_marking_it_occupied(self):
         site = HousingSite.objects.create(
             organization=self.organization,

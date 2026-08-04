@@ -19,6 +19,8 @@ from support.models import (
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
+    SupportWorkerDocumentReference,
+    DocumentRequestPackage,
     SupportOrganization,
     SupportVacancy,
 )
@@ -331,6 +333,24 @@ class Command(BaseCommand):
                 membership=membership,
                 connection=demo_connection,
             )
+            if email == "support-demo-worker-08@jobhub.test":
+                reference, _ = SupportWorkerDocumentReference.objects.get_or_create(
+                    user=demo_worker,
+                    defaults={"reference_code": f"JH-DEMO-DL-{demo_worker.id}"},
+                )
+                DocumentRequestPackage.objects.get_or_create(
+                    organization=organization,
+                    connection=demo_connection,
+                    requested_items=[{"type": "driving_license", "custom_label": ""}],
+                    defaults={
+                        "recipient_email": owner.email,
+                        "account_reference": reference,
+                        "status": DocumentRequestPackage.STATUS_COMPLETED,
+                        "created_by": owner,
+                        "reviewed_by": owner,
+                        "reviewed_at": timezone.now(),
+                    },
+                )
 
         self.stdout.write(
             self.style.SUCCESS(
