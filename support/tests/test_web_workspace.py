@@ -369,6 +369,61 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(assignment.state, HousingAssignment.STATE_CANCELLED)
         self.assertContains(cancelled, "The assignment was cancelled. Its history was kept;")
 
+    def test_housing_layout_marks_another_workers_draft_without_marking_it_occupied(self):
+        site = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="Draft layout home",
+            country_code="NL",
+            city="Lelystad",
+            street="Draft street",
+            building="1",
+            created_by=self.owner,
+        )
+        room = HousingRoom.objects.create(site=site, label="Room 2", capacity=1)
+        place = HousingPlace.objects.create(room=room, label="1")
+        other_candidate = User.objects.create_user(
+            username="workspace-draft-resident",
+            first_name="Victoria",
+            last_name="Draft",
+            email="workspace-draft-resident@example.com",
+            password="password",
+        )
+        other_application = SupportApplication.objects.create(
+            vacancy=self.worker_connection.vacancy,
+            candidate=other_candidate,
+            revision=1,
+            preferred_language="ru",
+            citizenship_country_code="BY",
+            current_country_code="PL",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        other_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=other_application,
+            candidate=other_candidate,
+            stage=SupportConnection.STAGE_COORDINATOR,
+        )
+        HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=other_connection,
+            place=place,
+            check_in_at=timezone.now() - timedelta(hours=1),
+            state=HousingAssignment.STATE_DRAFT,
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            f"/employer/support/workers/{self.worker_connection.public_id}/?tab=housing&site={site.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Draft · Victoria Draft")
+        self.assertNotContains(response, "Occupied · Victoria Draft")
+
     def test_owner_creates_work_draft_from_worker_card(self):
         worksite = Worksite.objects.create(
             organization=self.organization,

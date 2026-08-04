@@ -557,14 +557,24 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                     Q(check_out_at__isnull=True) | Q(check_out_at__gt=now)
                 )
                 .select_related("connection__candidate")
-                .order_by("-check_in_at", "-id")
+                # A published assignment always wins over a staff-only draft
+                # when a stale/parallel draft exists for the same place.
+                .order_by("-state", "-check_in_at", "-id")
             ):
                 occupancy_by_place_id.setdefault(assignment.place_id, assignment)
             for room in selected_housing_rooms:
                 room.places_for_layout = []
                 for place in room.places.all():
                     assignment = occupancy_by_place_id.get(place.id)
-                    place.occupancy_state = "free" if assignment is None else "occupied"
+                    place.occupancy_state = (
+                        "free"
+                        if assignment is None
+                        else (
+                            "draft"
+                            if assignment.state == HousingAssignment.STATE_DRAFT
+                            else "occupied"
+                        )
+                    )
                     place.occupancy_label = (
                         ""
                         if assignment is None
