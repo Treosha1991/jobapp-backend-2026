@@ -78,6 +78,9 @@
     .jh-required > label::after, .jh-required-star { content: "*"; color: var(--red); font-weight: 900; }
     .jh-label-note { color: var(--muted); font-size: 12px; font-weight: 800; }
     .jh-input { width: 100%; min-height: 40px; border: 1px solid var(--line); border-radius: 13px; background: rgba(5, 22, 36, .54); color: var(--text); padding: 9px 12px; outline: none; font: inherit; font-size: 13px; }
+    /* Native date/time controls need a compact, high-contrast treatment on the dark employer UI. */
+    .jh-input[type="date"], .jh-input[type="time"], .jh-input[type="datetime-local"] { width: min(100%, 300px); color-scheme: dark; }
+    .jh-input[type="date"]::-webkit-calendar-picker-indicator, .jh-input[type="time"]::-webkit-calendar-picker-indicator, .jh-input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1) brightness(1.8); opacity: .92; cursor: pointer; }
     textarea.jh-input { min-height: 118px; resize: vertical; }
     .jh-input:focus { border-color: rgba(24,223,103,.75); box-shadow: 0 0 0 3px rgba(24,223,103,.13); }
     .jh-input:disabled { opacity: .55; cursor: not-allowed; background: rgba(5, 22, 36, .3); }
