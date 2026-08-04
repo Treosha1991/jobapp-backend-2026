@@ -1223,6 +1223,8 @@ def fleet_workspace(request):
                     if action == "driver_vehicle_draft_delete"
                     else "support_fleet_publish_error"
                     if action == "driver_vehicle_draft_publish"
+                    else "support_fleet_edit_error"
+                    if action == "driver_vehicle_draft_edit"
                     else "support_fleet_operation_error",
                 ),
             )

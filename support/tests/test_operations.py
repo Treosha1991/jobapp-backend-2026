@@ -476,14 +476,57 @@ class SupportOperationsTests(TestCase):
         updated = edit_driver_vehicle_assignment_draft(
             actor=self.owner,
             assignment=assignment,
-            driver_connection=self.connection,
+            driver_connection=self.passenger_connection,
             starts_on=starts_on + timedelta(days=1),
             ends_on=starts_on + timedelta(days=4),
         )
 
         self.assertEqual(updated.state, DriverVehicleAssignment.STATE_DRAFT)
+        self.assertEqual(updated.driver_connection, self.passenger_connection)
         self.assertEqual(updated.starts_on, starts_on + timedelta(days=1))
         self.assertEqual(updated.ends_on, starts_on + timedelta(days=4))
+
+    def test_publishing_new_driver_for_same_vehicle_replaces_previous_driver(self):
+        starts_on = date.today() + timedelta(days=3)
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Replacement car",
+            registration_identifier="JH-REPLACE-01",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        previous_assignment = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+        )
+        publish_driver_vehicle_assignment(actor=self.owner, assignment=previous_assignment)
+        route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Route follows car",
+            driver_vehicle_assignment=previous_assignment,
+            starts_on=starts_on,
+            state=TransportRoute.STATE_PUBLISHED,
+            reservation_expires_at=timezone.now() + timedelta(hours=1),
+            created_by=self.owner,
+        )
+        replacement = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.passenger_connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+        )
+
+        published = publish_driver_vehicle_assignment(actor=self.owner, assignment=replacement)
+
+        previous_assignment.refresh_from_db()
+        route.refresh_from_db()
+        self.assertEqual(published.state, DriverVehicleAssignment.STATE_PUBLISHED)
+        self.assertEqual(previous_assignment.state, DriverVehicleAssignment.STATE_CANCELLED)
+        self.assertEqual(route.driver_vehicle_assignment, published)
 
     def test_transport_draft_can_be_deleted_without_deleting_vehicle_assignment(self):
         starts_on = date.today() + timedelta(days=3)

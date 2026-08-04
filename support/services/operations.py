@@ -461,10 +461,75 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
             raise ValidationError({"driver_vehicle_assignment": "driver_vehicle_assignment_not_draft"})
         if not assignment.vehicle.is_active:
             raise ValidationError({"vehicle": "vehicle_not_available"})
-        if _driver_vehicle_conflict(assignment=assignment):
+        replacement_assignments = list(
+            _period_overlaps(
+                DriverVehicleAssignment.objects.select_for_update()
+                .filter(
+                    vehicle=assignment.vehicle,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                )
+                .exclude(pk=assignment.pk),
+                starts_field="starts_on",
+                ends_field="ends_on",
+                starts_at=assignment.starts_on,
+                ends_at=assignment.ends_on,
+            )
+        )
+        driver_conflict = _period_overlaps(
+            DriverVehicleAssignment.objects.select_for_update()
+            .filter(
+                driver_connection=assignment.driver_connection,
+                state=DriverVehicleAssignment.STATE_PUBLISHED,
+            )
+            .exclude(pk=assignment.pk)
+            .exclude(pk__in=[item.pk for item in replacement_assignments]),
+            starts_field="starts_on",
+            ends_field="ends_on",
+            starts_at=assignment.starts_on,
+            ends_at=assignment.ends_on,
+        ).exists()
+        if driver_conflict:
             raise ValidationError({"driver_vehicle_assignment": "vehicle_or_driver_has_published_assignment_conflict"})
 
         now = timezone.now()
+        # Publishing a new draft for the same car deliberately replaces its
+        # previous driver.  Routes belong to the car's crew, so they move with
+        # the car instead of disappearing when the driver is changed.
+        for previous_assignment in replacement_assignments:
+            routes = list(
+                TransportRoute.objects.select_for_update()
+                .filter(driver_vehicle_assignment=previous_assignment)
+                .exclude(state=TransportRoute.STATE_CANCELLED)
+            )
+            for route in routes:
+                route_fits_new_assignment = (
+                    route.starts_on >= assignment.starts_on
+                    and (
+                        assignment.ends_on is None
+                        or (
+                            route.ends_on is not None
+                            and route.ends_on <= assignment.ends_on
+                        )
+                    )
+                )
+                if not route_fits_new_assignment:
+                    raise ValidationError({"driver_vehicle_assignment": "replacement_period_does_not_cover_route"})
+            for route in routes:
+                route.driver_vehicle_assignment = assignment
+                route.save(update_fields=["driver_vehicle_assignment", "updated_at"])
+            previous_assignment.state = DriverVehicleAssignment.STATE_CANCELLED
+            previous_assignment.cancelled_at = now
+            previous_assignment.save(update_fields=["state", "cancelled_at", "updated_at"])
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="transport.driver_vehicle_replaced",
+                target=previous_assignment,
+                details={
+                    "replacement_assignment": str(assignment.public_id),
+                    "transferred_route_count": len(routes),
+                },
+            )
         assignment.state = DriverVehicleAssignment.STATE_PUBLISHED
         assignment.published_by = actor
         assignment.published_at = now
