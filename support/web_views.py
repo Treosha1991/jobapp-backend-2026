@@ -73,6 +73,7 @@ from .services.operations import (
     create_transport_route,
     edit_route_stop,
     publish_housing_assignment,
+    publish_driver_vehicle_assignment,
     publish_transport_route,
     publish_worker_project_assignment,
 )
@@ -412,6 +413,16 @@ def _worker_card_operation(request, *, snapshot):
                 ends_on=ends_on,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
+        elif action == "driver_vehicle_publish":
+            assignment = get_object_or_404(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    driver_connection=connection,
+                ),
+                public_id=request.POST.get("driver_vehicle_assignment_id"),
+            )
+            publish_driver_vehicle_assignment(actor=request.user, assignment=assignment)
+            messages.success(request, tr(request, "support_transport_driver_vehicle_published"))
         elif action == "route_create":
             data = _validated_post(
                 TransportRouteCreateSerializer,

@@ -365,6 +365,67 @@ def create_driver_vehicle_assignment(*, actor, organization, driver_connection, 
     return assignment
 
 
+def publish_driver_vehicle_assignment(*, actor, assignment):
+    """Publish a driver--vehicle assignment even when no route is needed yet.
+
+    A vehicle can be assigned to a driver before the transport coordinator knows
+    its stops or passengers.  A route may still be created later from this
+    published assignment.
+    """
+
+    organization = assignment.organization
+    require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
+    with transaction.atomic():
+        assignment = (
+            DriverVehicleAssignment.objects.select_for_update()
+            .select_related("vehicle", "driver_connection__candidate")
+            .get(pk=assignment.pk)
+        )
+        _require_same_organization(organization=organization, assignment=assignment)
+        _require_connection_for_operations(
+            connection=assignment.driver_connection,
+            organization=organization,
+        )
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=assignment.driver_connection,
+        )
+        if assignment.state != DriverVehicleAssignment.STATE_DRAFT:
+            raise ValidationError({"driver_vehicle_assignment": "driver_vehicle_assignment_not_draft"})
+        if not assignment.vehicle.is_active:
+            raise ValidationError({"vehicle": "vehicle_not_available"})
+        if _driver_vehicle_conflict(assignment=assignment):
+            raise ValidationError({"driver_vehicle_assignment": "vehicle_or_driver_has_published_assignment_conflict"})
+
+        now = timezone.now()
+        assignment.state = DriverVehicleAssignment.STATE_PUBLISHED
+        assignment.published_by = actor
+        assignment.published_at = now
+        assignment.save(update_fields=["state", "published_by", "published_at", "updated_at"])
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.driver_vehicle_published",
+            target=assignment,
+            details={
+                "driver_connection": str(assignment.driver_connection.public_id),
+                "vehicle": str(assignment.vehicle.public_id),
+            },
+        )
+        enqueue_support_notification(
+            organization=organization,
+            recipient=assignment.driver_connection.candidate,
+            notification_code="transport.assignment_published",
+            target_kind="driver_vehicle_assignment",
+            target_public_id=assignment.public_id,
+            target_key=f"support:driver-vehicle:{assignment.public_id}",
+            collapse_key=f"support:transport:{assignment.driver_connection.candidate_id}",
+            dedupe_key=f"transport.driver-vehicle.published:{assignment.public_id}:{now.isoformat()}",
+        )
+    return assignment
+
+
 def create_transport_route(*, actor, organization, internal_name, driver_vehicle_assignment, starts_on, ends_on=None, worksite=None, departure_time=None, reservation_expires_at=None):
     require_permission(user=actor, organization=organization, permission_code=TRANSPORT_MANAGE)
     with transaction.atomic():

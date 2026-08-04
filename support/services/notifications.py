@@ -59,6 +59,12 @@ _NOTIFICATION_COPY = {
         "pl": ("JobHub Support", "Twoje informacje o transporcie zostały zaktualizowane."),
         "uk": ("JobHub Support", "Вашу інформацію про транспорт оновлено."),
     },
+    "transport.assignment_published": {
+        "ru": ("JobHub Support", "Ваша информация о транспорте обновлена."),
+        "en": ("JobHub Support", "Your transport information was updated."),
+        "pl": ("JobHub Support", "Twoje informacje o transporcie zostały zaktualizowane."),
+        "uk": ("JobHub Support", "Вашу інформацію про транспорт оновлено."),
+    },
     "schedule.shift_published": {
         "ru": ("JobHub Support", "Ваш график работы обновлён."),
         "en": ("JobHub Support", "Your work schedule was updated."),

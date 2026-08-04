@@ -24,6 +24,8 @@ from support.models import (
 from support.services.operations import (
     add_route_passenger,
     create_driver_vehicle_assignment,
+    create_transport_route,
+    publish_driver_vehicle_assignment,
     publish_transport_route,
 )
 from support.services.organizations import create_organization
@@ -388,6 +390,43 @@ class SupportOperationsTests(TestCase):
         )
         self.assertEqual(notifications.count(), 1)
         self.assertEqual(notifications.get().recipient, self.candidate)
+
+    def test_driver_vehicle_assignment_can_be_published_before_route_exists(self):
+        starts_on = date.today() + timedelta(days=3)
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Published car",
+            registration_identifier="JH-PUBLISHED-01",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        assignment = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+        )
+
+        published = publish_driver_vehicle_assignment(actor=self.owner, assignment=assignment)
+
+        self.assertEqual(published.state, DriverVehicleAssignment.STATE_PUBLISHED)
+        self.assertEqual(published.published_by, self.owner)
+        self.assertTrue(published.published_at)
+        notification = NotificationOutbox.objects.get(
+            notification_code="transport.assignment_published",
+            target_public_id=published.public_id,
+        )
+        self.assertEqual(notification.recipient, self.candidate)
+
+        route = create_transport_route(
+            actor=self.owner,
+            organization=self.organization,
+            internal_name="Route added later",
+            driver_vehicle_assignment=published,
+            starts_on=starts_on,
+        )
+        self.assertEqual(route.state, TransportRoute.STATE_DRAFT)
 
     def test_worker_cannot_be_driver_and_passenger_in_the_same_period(self):
         starts_on = date.today() + timedelta(days=3)

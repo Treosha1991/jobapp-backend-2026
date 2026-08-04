@@ -1087,7 +1087,10 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
     driver_assignments = list(
         DriverVehicleAssignment.objects.filter(
             organization=organization,
-            state=DriverVehicleAssignment.STATE_DRAFT,
+            state__in=(
+                DriverVehicleAssignment.STATE_DRAFT,
+                DriverVehicleAssignment.STATE_PUBLISHED,
+            ),
             driver_connection_id__in=worker_ids,
         )
         .exclude(id__in=route_driver_assignment_ids)
@@ -1215,6 +1218,9 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
             if item.transport_company_label:
                 item.transport_option_label += f" · {item.transport_company_label}"
             route.passenger_candidates.append(item)
+        # The API keeps its original name while the employer template uses the
+        # clearer `passenger_candidates` name for the same filtered list.
+        route.passenger_choices = route.passenger_candidates
         route.available_seat_count = max(
             0,
             route.driver_vehicle_assignment.vehicle.seat_capacity

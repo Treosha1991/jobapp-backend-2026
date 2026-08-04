@@ -720,6 +720,23 @@ class SupportWorkspaceWebTests(TestCase):
         card_url = f"/employer/support/workers/{self.worker_connection.public_id}/?tab=transport"
         self.client.force_login(self.owner)
 
+        card = self.client.get(card_url)
+        self.assertEqual(card.status_code, 200)
+        self.assertContains(card, "Publish vehicle assignment")
+        vehicle_published = self.client.post(
+            card_url,
+            {
+                "action": "driver_vehicle_publish",
+                "driver_vehicle_assignment_id": str(driver_assignment.public_id),
+                "return_tab": "transport",
+            },
+            follow=True,
+        )
+        self.assertEqual(vehicle_published.status_code, 200)
+        self.assertContains(vehicle_published, "The vehicle was assigned to the driver")
+        driver_assignment.refresh_from_db()
+        self.assertEqual(driver_assignment.state, DriverVehicleAssignment.STATE_PUBLISHED)
+
         created = self.client.post(
             card_url,
             {
