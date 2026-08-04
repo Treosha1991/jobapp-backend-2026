@@ -79,8 +79,10 @@
     .jh-label-note { color: var(--muted); font-size: 12px; font-weight: 800; }
     .jh-input { width: 100%; min-height: 40px; border: 1px solid var(--line); border-radius: 13px; background: rgba(5, 22, 36, .54); color: var(--text); padding: 9px 12px; outline: none; font: inherit; font-size: 13px; }
     /* Native date/time controls need a compact, high-contrast treatment on the dark employer UI. */
-    .jh-input[type="date"], .jh-input[type="time"], .jh-input[type="datetime-local"] { width: min(100%, 300px); color-scheme: dark; }
-    .jh-input[type="date"]::-webkit-calendar-picker-indicator, .jh-input[type="time"]::-webkit-calendar-picker-indicator, .jh-input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1) brightness(1.8); opacity: .92; cursor: pointer; }
+    .jh-input[type="date"], .jh-input[type="time"], .jh-input[type="datetime-local"] { width: min(100%, 300px); color-scheme: dark; padding-right:42px; background-repeat:no-repeat; background-position:calc(100% - 12px) center; background-size:18px 18px; }
+    .jh-input[type="date"], .jh-input[type="datetime-local"] { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23dff4ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='16' rx='2'/%3E%3Cpath d='M8 2.8v4M16 2.8v4M3 9.5h18'/%3E%3C/svg%3E"); }
+    .jh-input[type="time"] { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23dff4ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3.5 2'/%3E%3C/svg%3E"); }
+    .jh-input[type="date"]::-webkit-calendar-picker-indicator, .jh-input[type="time"]::-webkit-calendar-picker-indicator, .jh-input[type="datetime-local"]::-webkit-calendar-picker-indicator { opacity:0; cursor:pointer; }
     textarea.jh-input { min-height: 118px; resize: vertical; }
     .jh-input:focus { border-color: rgba(24,223,103,.75); box-shadow: 0 0 0 3px rgba(24,223,103,.13); }
     .jh-input:disabled { opacity: .55; cursor: not-allowed; background: rgba(5, 22, 36, .3); }
