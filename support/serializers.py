@@ -627,8 +627,8 @@ class DriverVehicleAssignmentCreateSerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        if attrs["ends_on"] is not None and attrs["ends_on"] <= attrs["starts_on"]:
-            raise serializers.ValidationError({"ends_on": "period_end_must_be_after_start"})
+        if attrs["ends_on"] is not None and attrs["ends_on"] < attrs["starts_on"]:
+            raise serializers.ValidationError({"ends_on": "period_end_must_not_be_before_start"})
         return attrs
 
 
@@ -643,8 +643,8 @@ class TransportRouteCreateSerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        if attrs["ends_on"] is not None and attrs["ends_on"] <= attrs["starts_on"]:
-            raise serializers.ValidationError({"ends_on": "period_end_must_be_after_start"})
+        if attrs["ends_on"] is not None and attrs["ends_on"] < attrs["starts_on"]:
+            raise serializers.ValidationError({"ends_on": "period_end_must_not_be_before_start"})
         return attrs
 
 

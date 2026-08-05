@@ -214,7 +214,7 @@ class DriverVehicleAssignment(models.Model):
 
     class Meta:
         ordering = ("-starts_on", "-id")
-        constraints = [models.CheckConstraint(condition=Q(ends_on__isnull=True) | Q(starts_on__lt=F("ends_on")), name="support_driver_vehicle_assignment_valid_period")]
+        constraints = [models.CheckConstraint(condition=Q(ends_on__isnull=True) | Q(starts_on__lte=F("ends_on")), name="support_driver_vehicle_assignment_valid_period")]
         indexes = [
             models.Index(fields=("organization", "state", "starts_on")),
             models.Index(fields=("driver_connection", "state", "starts_on")),
@@ -249,7 +249,7 @@ class TransportRoute(models.Model):
         ordering = ("-starts_on", "-id")
         constraints = [
             models.UniqueConstraint(fields=("organization", "internal_name"), name="support_unique_transport_route_internal_name"),
-            models.CheckConstraint(condition=Q(ends_on__isnull=True) | Q(starts_on__lt=F("ends_on")), name="support_transport_route_valid_period"),
+            models.CheckConstraint(condition=Q(ends_on__isnull=True) | Q(starts_on__lte=F("ends_on")), name="support_transport_route_valid_period"),
         ]
         indexes = [
             models.Index(fields=("organization", "state", "starts_on")),

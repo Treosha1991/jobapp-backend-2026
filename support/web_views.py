@@ -326,6 +326,19 @@ def _validated_post(serializer_class, request, *, nullable_fields=(), ignored_fi
     return serializer.validated_data
 
 
+def _transport_operation_error_key(error):
+    """Turn expected route validation codes into an actionable web message."""
+
+    detail = str(getattr(error, "detail", error))
+    if "period_end_must_not_be_before_start" in detail:
+        return "support_transport_route_end_before_start"
+    if "route_outside_driver_vehicle_assignment_period" in detail:
+        return "support_transport_route_outside_driver_period"
+    if "driver_vehicle_assignment_already_has_active_route" in detail:
+        return "support_transport_route_already_exists"
+    return "support_transport_operation_error"
+
+
 def _worker_card_operation(request, *, snapshot):
     """Create or publish an operational draft through the existing services."""
 
@@ -785,11 +798,15 @@ def _worker_card_operation(request, *, snapshot):
             messages.success(request, tr(request, "support_worker_assignment_cancelled"))
         else:
             raise ValueError("operation_unknown")
-    except (APIException, ValueError):
+    except (APIException, ValueError) as error:
         message_key = (
             "support_worker_housing_check_out_error"
             if action == "housing_check_out"
-            else "support_worker_operation_error"
+            else (
+                _transport_operation_error_key(error)
+                if action == "route_create"
+                else "support_worker_operation_error"
+            )
         )
         messages.error(request, tr(request, message_key))
     return _worker_card_redirect(
@@ -1151,8 +1168,8 @@ def _transport_operation(request, *, snapshot):
             success_key = "support_draft_deleted"
         else:
             raise ValueError("transport_operation_unknown")
-    except (APIException, ValueError):
-        messages.error(request, tr(request, "support_transport_operation_error"))
+    except (APIException, ValueError) as error:
+        messages.error(request, tr(request, _transport_operation_error_key(error)))
     else:
         messages.success(request, tr(request, success_key))
     return _transport_redirect(organization)

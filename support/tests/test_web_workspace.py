@@ -989,6 +989,72 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(route.state, TransportRoute.STATE_PUBLISHED)
         self.assertContains(published, "Card route")
 
+    def test_worker_card_allows_one_day_route_and_explains_invalid_period(self):
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="One-day route vehicle",
+            registration_identifier="NL-ONE-01",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        starts_on = timezone.localdate()
+        driver_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.worker_connection,
+            vehicle=vehicle,
+            starts_on=starts_on,
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        card_url = (
+            f"/employer/support/workers/{self.worker_connection.public_id}/?tab=transport"
+        )
+
+        created = self.client.post(
+            card_url,
+            {
+                "action": "route_create",
+                "driver_vehicle_assignment_id": str(driver_assignment.public_id),
+                "internal_name": "One-day route",
+                "worksite_id": "",
+                "starts_on": starts_on.isoformat(),
+                "ends_on": starts_on.isoformat(),
+                "departure_time": "",
+                "return_tab": "transport",
+            },
+            follow=True,
+        )
+        self.assertEqual(created.status_code, 200)
+        self.assertContains(created, "The route draft was created.")
+        self.assertTrue(
+            TransportRoute.objects.filter(
+                organization=self.organization,
+                internal_name="One-day route",
+                starts_on=starts_on,
+                ends_on=starts_on,
+            ).exists()
+        )
+
+        invalid = self.client.post(
+            card_url,
+            {
+                "action": "route_create",
+                "driver_vehicle_assignment_id": str(driver_assignment.public_id),
+                "internal_name": "Invalid route",
+                "worksite_id": "",
+                "starts_on": starts_on.isoformat(),
+                "ends_on": (starts_on - timedelta(days=1)).isoformat(),
+                "departure_time": "",
+                "return_tab": "transport",
+            },
+            follow=True,
+        )
+        self.assertEqual(invalid.status_code, 200)
+        self.assertContains(
+            invalid,
+            "The route could not be created: its end date cannot be before its start date.",
+        )
+
     @override_settings(SUPPORT_FEATURE_ENABLED=False)
     def test_workspace_stays_hidden_when_feature_flag_is_off(self):
         self.client.force_login(self.owner)

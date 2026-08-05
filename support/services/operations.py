@@ -739,8 +739,8 @@ def create_transport_route(*, actor, organization, internal_name, driver_vehicle
         # also the natural end date of an otherwise open-ended route.
         if ends_on is None and driver_assignment.ends_on is not None:
             ends_on = driver_assignment.ends_on
-        if ends_on is not None and ends_on <= starts_on:
-            raise ValidationError({"ends_on": "period_end_must_be_after_start"})
+        if ends_on is not None and ends_on < starts_on:
+            raise ValidationError({"ends_on": "period_end_must_not_be_before_start"})
         if worksite is not None:
             _require_same_organization(organization=organization, worksite=worksite)
             if not worksite.is_active:
