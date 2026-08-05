@@ -708,14 +708,15 @@ class SupportWorkspaceWebTests(TestCase):
             created_by=self.owner,
         )
         worker_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
+        worker_page = self.client.get(worker_url)
+        self.assertNotContains(worker_page, 'name="starts_at" type="datetime-local"')
+        self.assertNotContains(worker_page, 'name="ends_at" type="datetime-local"')
         response = self.client.post(
             worker_url,
             {
                 "action": "work_draft",
                 "project_id": str(project.public_id),
                 "worker_role": "Operator",
-                "starts_at": f"{project_starts.isoformat()}T06:00",
-                "ends_at": "",
                 "schedule_template_ids": [
                     str(morning.public_id),
                     str(evening.public_id),
@@ -735,6 +736,9 @@ class SupportWorkspaceWebTests(TestCase):
             ),
             {morning.id, evening.id},
         )
+        self.assertEqual(assignment.starts_at.date(), project_starts)
+        self.assertEqual(assignment.starts_at.strftime("%H:%M"), "14:30")
+        self.assertIsNone(assignment.ends_at)
         self.assertContains(response, "Morning shift")
         self.assertContains(response, "Evening shift")
 

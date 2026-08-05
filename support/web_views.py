@@ -473,10 +473,6 @@ def _worker_card_operation(request, *, snapshot):
                 WorkProject.objects.filter(organization=organization),
                 public_id=request.POST.get("project_id"),
             )
-            starts_at = _aware_datetime(request.POST.get("starts_at"))
-            ends_at = _aware_datetime(request.POST.get("ends_at"), required=False)
-            if ends_at is not None and ends_at <= starts_at:
-                raise ValueError("period_invalid")
             template_ids = set(request.POST.getlist("schedule_template_ids"))
             schedule_templates = list(
                 ProjectScheduleTemplate.objects.filter(
@@ -493,8 +489,6 @@ def _worker_card_operation(request, *, snapshot):
                 connection=connection,
                 project=project,
                 worker_role=(request.POST.get("worker_role") or "").strip(),
-                starts_at=starts_at,
-                ends_at=ends_at,
                 schedule_templates=schedule_templates,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))

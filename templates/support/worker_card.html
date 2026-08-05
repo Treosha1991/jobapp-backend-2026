@@ -199,8 +199,6 @@
             <div class="worker-form-grid">
               <label class="jh-field"><span>{{ employer_t.support_worker_project }}</span><select class="jh-input" name="project_id" required data-project-select>{% for item in work_projects %}<option value="{{ item.public_id }}">{{ item.worker_visible_name }} · {{ item.internal_name }}</option>{% endfor %}</select></label>
               <label class="jh-field"><span>{{ employer_t.support_worker_role }}</span><input class="jh-input" name="worker_role" maxlength="160"></label>
-              <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" name="starts_at" type="datetime-local" required></label>
-              <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_at" type="datetime-local"></label>
             </div>
             {% for item in work_projects %}
               <fieldset data-project-template-group="{{ item.public_id }}" hidden style="margin:14px 0 0;padding:12px;border:1px solid var(--line);border-radius:14px">

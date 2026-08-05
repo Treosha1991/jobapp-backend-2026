@@ -68,6 +68,25 @@ def _require_same_organization(*, organization, **objects):
             raise ValidationError({field: "operation_related_record_not_in_organization"})
 
 
+def _assignment_start_from_schedule_templates(templates):
+    """Return the first selected shift start, or now for an assignment without a schedule."""
+
+    current_timezone = timezone.get_current_timezone()
+    shift_starts = []
+    for template in templates:
+        for raw_date in template.calendar_dates:
+            work_date = parse_date(raw_date) if isinstance(raw_date, str) else None
+            if work_date is None:
+                raise ValidationError({"schedule": "project_schedule_template_date_invalid"})
+            shift_starts.append(
+                timezone.make_aware(
+                    datetime.combine(work_date, template.starts_at_time),
+                    current_timezone,
+                )
+            )
+    return min(shift_starts) if shift_starts else timezone.now()
+
+
 def _publish_project_template_shifts(*, actor, assignment, published_at):
     """Turn selected project templates into immutable worker calendar shifts.
 
@@ -444,7 +463,7 @@ def create_worker_project_assignment(
     connection,
     project,
     worker_role,
-    starts_at,
+    starts_at=None,
     ends_at=None,
     schedule_templates=(),
 ):
@@ -467,6 +486,7 @@ def create_worker_project_assignment(
         )
         if len(templates) != len(template_ids):
             raise ValidationError({"schedule_templates": "project_schedule_template_not_available"})
+        starts_at = starts_at or _assignment_start_from_schedule_templates(templates)
         assignment = WorkerProjectAssignment.objects.create(
             organization=organization,
             connection=connection,
