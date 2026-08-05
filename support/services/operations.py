@@ -1,10 +1,11 @@
 """Transactional creation and publication of Support operational assignments."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from support.models import (
@@ -13,6 +14,7 @@ from support.models import (
     HousingPlace,
     RouteStop,
     ProjectScheduleTemplate,
+    ScheduledWorkShift,
     SupportConnection,
     TransportPassengerAssignment,
     TransportRoute,
@@ -64,6 +66,110 @@ def _require_same_organization(*, organization, **objects):
             item_organization_id = item.room.site.organization_id
         if item_organization_id != organization.id:
             raise ValidationError({field: "operation_related_record_not_in_organization"})
+
+
+def _publish_project_template_shifts(*, actor, assignment, published_at):
+    """Turn selected project templates into immutable worker calendar shifts.
+
+    A ProjectScheduleTemplate is a reusable employer pattern.  A
+    ScheduledWorkShift is the actual calendar entry seen by one worker.  The
+    copy happens only on publication, so later template edits cannot rewrite
+    an already published calendar.
+    """
+
+    selections = list(
+        WorkerProjectScheduleTemplateSelection.objects.select_for_update()
+        .filter(assignment=assignment)
+        .select_related("template")
+        .order_by("template__name", "template_id")
+    )
+    if not selections:
+        return []
+
+    current_timezone = timezone.get_current_timezone()
+    shifts_by_date = {}
+    for selection in selections:
+        template = selection.template
+        for raw_date in template.calendar_dates:
+            work_date = parse_date(raw_date) if isinstance(raw_date, str) else None
+            if work_date is None:
+                raise ValidationError({"schedule": "project_schedule_template_date_invalid"})
+            starts_at = timezone.make_aware(
+                datetime.combine(work_date, template.starts_at_time),
+                current_timezone,
+            )
+            ends_at = timezone.make_aware(
+                datetime.combine(work_date, template.ends_at_time),
+                current_timezone,
+            )
+            if ends_at <= starts_at:
+                ends_at += timedelta(days=1)
+            if starts_at < assignment.starts_at or (
+                assignment.ends_at is not None and ends_at > assignment.ends_at
+            ):
+                continue
+            if work_date in shifts_by_date:
+                raise ValidationError(
+                    {"schedule": "project_schedule_templates_overlap_on_day"}
+                )
+            duration_minutes = int((ends_at - starts_at).total_seconds() // 60)
+            if template.break_minutes >= duration_minutes:
+                raise ValidationError(
+                    {"schedule": "project_schedule_template_break_invalid"}
+                )
+            shifts_by_date[work_date] = {
+                "template": template,
+                "starts_at": starts_at,
+                "ends_at": ends_at,
+            }
+
+    if not shifts_by_date:
+        return []
+    conflicting_dates = set(
+        ScheduledWorkShift.objects.select_for_update()
+        .filter(
+            connection=assignment.connection,
+            work_date__in=shifts_by_date,
+            state__in=(
+                ScheduledWorkShift.STATE_DRAFT,
+                ScheduledWorkShift.STATE_PUBLISHED,
+            ),
+        )
+        .values_list("work_date", flat=True)
+    )
+    if conflicting_dates:
+        raise ValidationError({"schedule": "worker_schedule_conflicts_with_existing_shift"})
+
+    shifts = []
+    for work_date, values in sorted(shifts_by_date.items()):
+        template = values["template"]
+        shifts.append(
+            ScheduledWorkShift.objects.create(
+                organization=assignment.organization,
+                connection=assignment.connection,
+                work_assignment=assignment,
+                work_date=work_date,
+                starts_at=values["starts_at"],
+                ends_at=values["ends_at"],
+                break_minutes=template.break_minutes,
+                worker_label=template.worker_label,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+                created_by=actor,
+                published_by=actor,
+                published_at=published_at,
+            )
+        )
+    record_audit_event(
+        organization=assignment.organization,
+        actor=actor,
+        action="schedule.project_templates_published_to_worker",
+        target=assignment,
+        details={
+            "shift_count": len(shifts),
+            "work_dates": [item.work_date.isoformat() for item in shifts],
+        },
+    )
+    return shifts
 
 
 def set_worker_driving_license(*, actor, connection, has_driving_license):
@@ -435,10 +541,16 @@ def publish_worker_project_assignment(*, actor, assignment):
         ).count()
         if occupied_places >= assignment.project.worker_capacity:
             raise ValidationError({"project": "work_project_capacity_reached"})
+        published_at = timezone.now()
         assignment.state = WorkerProjectAssignment.STATE_PUBLISHED
         assignment.published_by = actor
-        assignment.published_at = timezone.now()
+        assignment.published_at = published_at
         assignment.save(update_fields=["state", "published_by", "published_at", "updated_at"])
+        _publish_project_template_shifts(
+            actor=actor,
+            assignment=assignment,
+            published_at=published_at,
+        )
         record_audit_event(
             organization=organization,
             actor=actor,

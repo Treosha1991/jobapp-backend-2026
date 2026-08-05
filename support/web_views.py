@@ -363,6 +363,12 @@ def _worker_operation_error_key(error):
         return "support_worker_work_assignment_conflict"
     if "work_project_capacity_reached" in detail:
         return "support_worker_work_project_capacity_reached"
+    if "project_schedule_templates_overlap_on_day" in detail:
+        return "support_worker_project_templates_overlap"
+    if "worker_schedule_conflicts_with_existing_shift" in detail:
+        return "support_worker_schedule_conflicts_with_existing_shift"
+    if "project_schedule_template_break_invalid" in detail:
+        return "support_worker_project_template_break_invalid"
     return "support_worker_operation_error"
 
 

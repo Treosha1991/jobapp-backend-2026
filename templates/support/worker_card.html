@@ -189,7 +189,35 @@
         {% for item in work_assignments %}
           <article class="worker-item"><div><h3>{{ item.project.worker_visible_name }}</h3><p>{{ item.project.internal_name }}{% if item.worker_role %}<br>{{ employer_t.support_worker_role }}: {{ item.worker_role }}{% endif %}{% if item.schedule_template_selections.all %}<br>{{ employer_t.support_project_schedule }}: {% for selection in item.schedule_template_selections.all %}{{ selection.template.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}<br>{{ employer_t.support_worker_starts }}: {{ item.starts_at|date:"d.m.Y H:i" }}{% if item.ends_at %}<br>{{ employer_t.support_worker_ends }}: {{ item.ends_at|date:"d.m.Y H:i" }}{% endif %}</p></div><div class="worker-status"><span class="jh-status {% if item.state == 'published' %}success{% else %}warning{% endif %}">{{ item.state_label }}</span>{% if item.state == 'draft' and can_operate %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="publish_work"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form><form method="post" onsubmit="return confirm('{{ employer_t.support_draft_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="work_draft_delete"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><button class="jh-btn" type="submit">{{ employer_t.support_draft_delete }}</button></form>{% elif item.state != 'cancelled' and can_operate %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="cancel_work"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><button class="jh-btn" type="submit">{{ employer_t.support_worker_cancel }}</button></form>{% endif %}</div></article>
         {% empty %}<div class="worker-empty">{{ employer_t.support_worker_no_assignments }}</div>{% endfor %}
-        {% if can_operate and work_projects %}<form class="worker-form" method="post" data-project-assignment-form>{% csrf_token %}<input type="hidden" name="action" value="work_draft"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><h3>{{ employer_t.support_worker_create_work }}</h3><div class="worker-form-grid"><label class="jh-field"><span>{{ employer_t.support_worker_project }}</span><select class="jh-input" name="project_id" required data-project-select>{% for item in work_projects %}<option value="{{ item.public_id }}">{{ item.worker_visible_name }} · {{ item.internal_name }}</option>{% endfor %}</select></label><label class="jh-field"><span>{{ employer_t.support_worker_role }}</span><input class="jh-input" name="worker_role" maxlength="160"></label><label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" name="starts_at" type="datetime-local" required></label><label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_at" type="datetime-local"></label></div>{% for item in work_projects %}{% if item.schedule_templates.all %}<fieldset data-project-template-group="{{ item.public_id }}" style="margin:14px 0 0;padding:12px;border:1px solid var(--line);border-radius:14px"><legend>{{ employer_t.support_project_schedule }}</legend>{% for template in item.schedule_templates.all %}<label class="jh-inline-check"><input class="jh-checkbox" type="checkbox" name="schedule_template_ids" value="{{ template.public_id }}">{{ template.name }} · {{ template.starts_at_time|time:"H:i" }}–{{ template.ends_at_time|time:"H:i" }} · {{ employer_t.support_project_schedule_dates }}: {{ template.calendar_dates|length }}</label>{% endfor %}</fieldset>{% endif %}{% endfor %}<div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div></form>{% endif %}
+        {% if can_operate and work_projects %}
+          <form class="worker-form" method="post" data-project-assignment-form>
+            {% csrf_token %}
+            <input type="hidden" name="action" value="work_draft">
+            <input type="hidden" name="return_tab" value="company">
+            <input type="hidden" name="return_month" value="{{ calendar_month }}">
+            <h3>{{ employer_t.support_worker_create_work }}</h3>
+            <div class="worker-form-grid">
+              <label class="jh-field"><span>{{ employer_t.support_worker_project }}</span><select class="jh-input" name="project_id" required data-project-select>{% for item in work_projects %}<option value="{{ item.public_id }}">{{ item.worker_visible_name }} · {{ item.internal_name }}</option>{% endfor %}</select></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_role }}</span><input class="jh-input" name="worker_role" maxlength="160"></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" name="starts_at" type="datetime-local" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_at" type="datetime-local"></label>
+            </div>
+            {% for item in work_projects %}
+              <fieldset data-project-template-group="{{ item.public_id }}" hidden style="margin:14px 0 0;padding:12px;border:1px solid var(--line);border-radius:14px">
+                <legend>{{ employer_t.support_project_schedule }}</legend>
+                {% if item.schedule_templates.all %}
+                  <p><small>{{ employer_t.support_worker_project_templates_choose }}</small></p>
+                  {% for template in item.schedule_templates.all %}
+                    <label class="jh-inline-check"><input class="jh-checkbox" type="checkbox" name="schedule_template_ids" value="{{ template.public_id }}">{{ template.name }} · {{ template.starts_at_time|time:"H:i" }}–{{ template.ends_at_time|time:"H:i" }} · {{ employer_t.support_project_schedule_dates }}: {{ template.calendar_dates|length }}</label>
+                  {% endfor %}
+                {% else %}
+                  <p><small>{{ employer_t.support_worker_project_templates_empty }}</small></p>
+                {% endif %}
+              </fieldset>
+            {% endfor %}
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
+          </form>
+        {% endif %}
       </section>
       <section class="worker-section">
         <div class="worker-calendar-head"><a class="jh-btn" href="{{ calendar_previous_url }}">←</a><strong>{{ employer_t.support_worker_schedule_calendar }} · {{ selected_calendar_date|date:"F Y" }}</strong><a class="jh-btn" href="{{ calendar_next_url }}">→</a></div>

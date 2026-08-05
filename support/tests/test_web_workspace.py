@@ -15,6 +15,7 @@ from support.models import (
     OrganizationMembership,
     ProjectScheduleTemplate,
     RouteStop,
+    ScheduledWorkShift,
     SupportApplication,
     SupportConnection,
     SupportConversation,
@@ -677,10 +678,7 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(project.worksite.street, "Zuurlaan")
         self.assertEqual(project.contact_email, "rafal@example.com")
 
-        template_dates = [
-            project_starts.isoformat(),
-            (project_starts + timedelta(days=1)).isoformat(),
-        ]
+        template_dates = [(project_starts + timedelta(days=1)).isoformat()]
         response = self.client.post(
             detail_url,
             {
@@ -739,6 +737,32 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertContains(response, "Morning shift")
         self.assertContains(response, "Evening shift")
+
+        response = self.client.post(
+            worker_url,
+            {
+                "action": "publish_work",
+                "assignment_id": str(assignment.public_id),
+                "return_tab": "company",
+            },
+            follow=True,
+        )
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, WorkerProjectAssignment.STATE_PUBLISHED)
+        created_shifts = list(
+            ScheduledWorkShift.objects.filter(
+                work_assignment=assignment,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).order_by("work_date")
+        )
+        self.assertEqual([item.work_date for item in created_shifts], [
+            project_starts,
+            project_starts + timedelta(days=1),
+        ])
+        self.assertEqual(created_shifts[0].starts_at.strftime("%H:%M"), "14:30")
+        self.assertEqual(created_shifts[1].starts_at.strftime("%H:%M"), "06:00")
+        self.assertContains(response, "14:30")
+        self.assertContains(response, "06:00")
 
     def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):
         self.client.force_login(self.owner)
