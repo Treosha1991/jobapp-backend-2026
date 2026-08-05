@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -369,6 +369,8 @@ def _worker_operation_error_key(error):
         return "support_worker_schedule_conflicts_with_existing_shift"
     if "project_schedule_template_break_invalid" in detail:
         return "support_worker_project_template_break_invalid"
+    if "current_scheduled_shift_already_exists" in detail:
+        return "support_worker_schedule_day_already_has_shift"
     return "support_worker_operation_error"
 
 
@@ -735,6 +737,52 @@ def _worker_card_operation(request, *, snapshot):
                 work_assignment=None,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
+        elif action == "scheduled_shift_from_template":
+            work_date = _operation_date(request.POST.get("work_date"))
+            template = get_object_or_404(
+                ProjectScheduleTemplate.objects.select_related("project"),
+                public_id=request.POST.get("schedule_template_id"),
+                project__organization=organization,
+                project__is_active=True,
+                is_active=True,
+            )
+            current_timezone = timezone.get_current_timezone()
+            starts_at = timezone.make_aware(
+                datetime.combine(work_date, template.starts_at_time),
+                current_timezone,
+            )
+            ends_at = timezone.make_aware(
+                datetime.combine(work_date, template.ends_at_time),
+                current_timezone,
+            )
+            if ends_at <= starts_at:
+                ends_at += timedelta(days=1)
+            work_assignment = next(
+                (
+                    item
+                    for item in WorkerProjectAssignment.objects.filter(
+                        organization=organization,
+                        connection=connection,
+                        project=template.project,
+                        state=WorkerProjectAssignment.STATE_PUBLISHED,
+                        starts_at__lte=starts_at,
+                    ).order_by("-starts_at", "-id")
+                    if item.ends_at is None or item.ends_at >= ends_at
+                ),
+                None,
+            )
+            create_scheduled_shift(
+                actor=request.user,
+                organization=organization,
+                connection=connection,
+                work_date=work_date,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                break_minutes=template.break_minutes,
+                worker_label=(template.worker_label or template.name).strip(),
+                work_assignment=work_assignment,
+            )
+            messages.success(request, tr(request, "support_worker_quick_shift_created"))
         elif action == "scheduled_shift_publish":
             shift = get_object_or_404(
                 ScheduledWorkShift.objects.filter(

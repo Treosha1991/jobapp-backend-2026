@@ -804,6 +804,46 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "14:30")
         self.assertContains(response, "06:00")
 
+        quick_date = project_starts + timedelta(days=3)
+        quick_response = self.client.post(
+            worker_url,
+            {
+                "action": "scheduled_shift_from_template",
+                "work_date": quick_date.isoformat(),
+                "schedule_template_id": str(morning.public_id),
+                "return_tab": "company",
+                "return_month": quick_date.strftime("%Y-%m"),
+            },
+            follow=True,
+        )
+        quick_shift = ScheduledWorkShift.objects.get(
+            connection=self.worker_connection,
+            work_date=quick_date,
+        )
+        self.assertEqual(quick_shift.state, ScheduledWorkShift.STATE_DRAFT)
+        self.assertEqual(quick_shift.work_assignment_id, assignment.id)
+        self.assertEqual(quick_shift.starts_at.strftime("%H:%M"), "06:00")
+        self.assertContains(
+            quick_response,
+            "The shift draft was created from the selected template.",
+        )
+
+        duplicate_quick_response = self.client.post(
+            worker_url,
+            {
+                "action": "scheduled_shift_from_template",
+                "work_date": quick_date.isoformat(),
+                "schedule_template_id": str(morning.public_id),
+                "return_tab": "company",
+                "return_month": quick_date.strftime("%Y-%m"),
+            },
+            follow=True,
+        )
+        self.assertContains(
+            duplicate_quick_response,
+            "This day already has a published shift or a draft.",
+        )
+
     def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):
         self.client.force_login(self.owner)
         registry_url = (

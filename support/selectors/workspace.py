@@ -762,6 +762,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
 
     work_assignments = []
     work_projects = []
+    has_schedule_templates = False
     scheduled_shifts = []
     calendar_days = []
     selected_calendar_date = None
@@ -783,6 +784,9 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
             .select_related("worksite")
             .prefetch_related("schedule_templates")
             .order_by("internal_name", "id")
+        )
+        has_schedule_templates = any(
+            item.schedule_templates.all() for item in work_projects
         )
         try:
             year, month = [int(item) for item in (calendar_month or "").split("-", 1)]
@@ -1179,6 +1183,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         "selected_housing_rooms": selected_housing_rooms,
         "work_assignments": work_assignments,
         "work_projects": work_projects,
+        "has_schedule_templates": has_schedule_templates,
         "scheduled_shifts": scheduled_shifts,
         "calendar_days": calendar_days,
         "selected_calendar_date": selected_calendar_date,
