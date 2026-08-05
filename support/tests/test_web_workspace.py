@@ -820,13 +820,14 @@ class SupportWorkspaceWebTests(TestCase):
             connection=self.worker_connection,
             work_date=quick_date,
         )
-        self.assertEqual(quick_shift.state, ScheduledWorkShift.STATE_DRAFT)
+        self.assertEqual(quick_shift.state, ScheduledWorkShift.STATE_PUBLISHED)
         self.assertEqual(quick_shift.work_assignment_id, assignment.id)
         self.assertEqual(quick_shift.starts_at.strftime("%H:%M"), "06:00")
         self.assertContains(
             quick_response,
-            "The shift draft was created from the selected template.",
+            "The shift was added and published immediately from the selected template.",
         )
+        self.assertContains(quick_response, "Shifts in this assignment: 3")
 
         duplicate_quick_response = self.client.post(
             worker_url,

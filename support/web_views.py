@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -371,6 +372,8 @@ def _worker_operation_error_key(error):
         return "support_worker_project_template_break_invalid"
     if "current_scheduled_shift_already_exists" in detail:
         return "support_worker_schedule_day_already_has_shift"
+    if "published_assignment_for_selected_project_required" in detail:
+        return "support_worker_quick_shift_active_assignment_required"
     return "support_worker_operation_error"
 
 
@@ -771,18 +774,22 @@ def _worker_card_operation(request, *, snapshot):
                 ),
                 None,
             )
-            create_scheduled_shift(
-                actor=request.user,
-                organization=organization,
-                connection=connection,
-                work_date=work_date,
-                starts_at=starts_at,
-                ends_at=ends_at,
-                break_minutes=template.break_minutes,
-                worker_label=(template.worker_label or template.name).strip(),
-                work_assignment=work_assignment,
-            )
-            messages.success(request, tr(request, "support_worker_quick_shift_created"))
+            if work_assignment is None:
+                raise ValueError("published_assignment_for_selected_project_required")
+            with transaction.atomic():
+                shift = create_scheduled_shift(
+                    actor=request.user,
+                    organization=organization,
+                    connection=connection,
+                    work_date=work_date,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    break_minutes=template.break_minutes,
+                    worker_label=(template.worker_label or template.name).strip(),
+                    work_assignment=work_assignment,
+                )
+                publish_scheduled_shift(actor=request.user, shift=shift)
+            messages.success(request, tr(request, "support_worker_quick_shift_published"))
         elif action == "scheduled_shift_publish":
             shift = get_object_or_404(
                 ScheduledWorkShift.objects.filter(

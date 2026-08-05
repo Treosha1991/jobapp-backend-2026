@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 from django.http import Http404
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
@@ -762,6 +762,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
 
     work_assignments = []
     work_projects = []
+    quick_shift_projects = []
     has_schedule_templates = False
     scheduled_shifts = []
     calendar_days = []
@@ -772,7 +773,19 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         work_assignments = list(
             WorkerProjectAssignment.objects.filter(connection=connection)
             .select_related("project__worksite")
-            .prefetch_related("schedule_template_selections__template")
+            .prefetch_related(
+                "schedule_template_selections__template",
+                Prefetch(
+                    "scheduled_shifts",
+                    queryset=ScheduledWorkShift.objects.filter(
+                        state__in=(
+                            ScheduledWorkShift.STATE_DRAFT,
+                            ScheduledWorkShift.STATE_PUBLISHED,
+                        )
+                    ).order_by("work_date", "starts_at", "id"),
+                    to_attr="display_scheduled_shifts",
+                ),
+            )
             .order_by("-starts_at", "-id")
         )
         work_projects = list(
@@ -782,12 +795,27 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                 worksite__is_active=True,
             )
             .select_related("worksite")
-            .prefetch_related("schedule_templates")
+            .prefetch_related(
+                Prefetch(
+                    "schedule_templates",
+                    queryset=ProjectScheduleTemplate.objects.filter(is_active=True).order_by(
+                        "name", "id"
+                    ),
+                )
+            )
             .order_by("internal_name", "id")
         )
-        has_schedule_templates = any(
-            item.schedule_templates.all() for item in work_projects
-        )
+        active_project_ids = {
+            item.project_id
+            for item in work_assignments
+            if item.state == WorkerProjectAssignment.STATE_PUBLISHED
+        }
+        quick_shift_projects = [
+            item
+            for item in work_projects
+            if item.id in active_project_ids and item.schedule_templates.all()
+        ]
+        has_schedule_templates = bool(quick_shift_projects)
         try:
             year, month = [int(item) for item in (calendar_month or "").split("-", 1)]
             month_start = date(year, month, 1)
@@ -1183,6 +1211,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         "selected_housing_rooms": selected_housing_rooms,
         "work_assignments": work_assignments,
         "work_projects": work_projects,
+        "quick_shift_projects": quick_shift_projects,
         "has_schedule_templates": has_schedule_templates,
         "scheduled_shifts": scheduled_shifts,
         "calendar_days": calendar_days,
