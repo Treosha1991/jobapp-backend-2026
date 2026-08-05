@@ -2753,6 +2753,7 @@ def employer_i18n(request):
     support_header = {
         "organization_id": "",
         "query": "",
+        "active": {},
         "workers": False,
         "requests": False,
         "registries": False,
@@ -2802,9 +2803,26 @@ def employer_i18n(request):
                     memberships[0],
                 )
                 organization = membership.organization
+                resolver_match = getattr(request, "resolver_match", None)
+                resolver_namespace = getattr(resolver_match, "namespace", "")
+                resolver_name = getattr(resolver_match, "url_name", "")
                 support_header = {
                     "organization_id": str(organization.public_id),
                     "query": f"organization={organization.public_id}",
+                    "active": {
+                        "workers": resolver_namespace == "support"
+                        and resolver_name in {"workspace", "worker-card"},
+                        "requests": resolver_namespace == "support"
+                        and resolver_name == "worker-requests",
+                        "registries": resolver_namespace == "support"
+                        and resolver_name == "registries",
+                        "fleet": resolver_namespace == "support"
+                        and resolver_name == "fleet",
+                        "staff_chats": resolver_namespace == "support"
+                        and resolver_name in {"conversations", "conversation-detail"},
+                        "general_chat": resolver_namespace == "employer"
+                        and resolver_name in {"chat_list", "chat_detail"},
+                    },
                     "workers": has_permission(
                         user=request.user,
                         organization=organization,
