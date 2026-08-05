@@ -742,6 +742,26 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "Morning shift")
         self.assertContains(response, "Evening shift")
 
+        preview_page = self.client.get(worker_url)
+        self.assertContains(preview_page, 'data-draft-preview="true"', count=2)
+        self.assertNotContains(preview_page, "Overlaps another shift")
+
+        overlapping_template = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Overlapping shift",
+            starts_at_time="08:00",
+            ends_at_time="16:00",
+            calendar_dates=template_dates,
+            created_by=self.owner,
+        )
+        assignment.schedule_template_selections.create(template=overlapping_template)
+        conflicting_preview_page = self.client.get(worker_url)
+        self.assertContains(conflicting_preview_page, "Overlaps another shift")
+        self.assertContains(conflicting_preview_page, "has-conflict")
+        assignment.schedule_template_selections.filter(
+            template=overlapping_template
+        ).delete()
+
         response = self.client.post(
             worker_url,
             {

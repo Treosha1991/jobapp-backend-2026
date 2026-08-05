@@ -6,7 +6,8 @@ hide columns, because that would still expose data through a direct URL.
 """
 
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 
 from django.http import Http404
 from django.db.models import Q
@@ -795,7 +796,65 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                 work_date__range=(month_start, month_end),
             ).select_related("work_assignment__project").order_by("work_date", "starts_at", "id")
         )
-        shifts_by_date = {item.work_date: item for item in scheduled_shifts}
+        for shift in scheduled_shifts:
+            shift.is_preview = False
+            shift.has_conflict = False
+
+        # A project-assignment draft has not created ScheduledWorkShift rows yet.
+        # Still show its selected project templates in the calendar so the manager
+        # can see the planned shifts, including a collision, before publishing.
+        draft_template_previews = []
+        current_timezone = timezone.get_current_timezone()
+        for assignment in work_assignments:
+            if assignment.state != WorkerProjectAssignment.STATE_DRAFT:
+                continue
+            for selection in assignment.schedule_template_selections.all():
+                template = selection.template
+                for raw_date in template.calendar_dates:
+                    work_date = parse_date(raw_date) if isinstance(raw_date, str) else None
+                    if work_date is None or not (month_start <= work_date <= month_end):
+                        continue
+                    starts_at = timezone.make_aware(
+                        datetime.combine(work_date, template.starts_at_time),
+                        current_timezone,
+                    )
+                    ends_at = timezone.make_aware(
+                        datetime.combine(work_date, template.ends_at_time),
+                        current_timezone,
+                    )
+                    if ends_at <= starts_at:
+                        ends_at += timedelta(days=1)
+                    if starts_at < assignment.starts_at or (
+                        assignment.ends_at is not None and ends_at > assignment.ends_at
+                    ):
+                        continue
+                    draft_template_previews.append(
+                        SimpleNamespace(
+                            work_date=work_date,
+                            starts_at=starts_at,
+                            ends_at=ends_at,
+                            break_minutes=template.break_minutes,
+                            worker_label=template.worker_label or template.name,
+                            state=WorkerProjectAssignment.STATE_DRAFT,
+                            is_preview=True,
+                            has_conflict=False,
+                        )
+                    )
+
+        calendar_shifts = sorted(
+            [*scheduled_shifts, *draft_template_previews],
+            key=lambda item: (item.work_date, item.starts_at, item.ends_at),
+        )
+        for index, shift in enumerate(calendar_shifts):
+            for other in calendar_shifts[index + 1 :]:
+                if other.starts_at >= shift.ends_at:
+                    break
+                if shift.starts_at < other.ends_at and other.starts_at < shift.ends_at:
+                    shift.has_conflict = True
+                    other.has_conflict = True
+        shifts_by_date = {}
+        for shift in calendar_shifts:
+            shifts_by_date.setdefault(shift.work_date, []).append(shift)
         first_weekday, days_in_month = monthrange(month_start.year, month_start.month)
         calendar_days = [None] * first_weekday
         for day_number in range(1, days_in_month + 1):
@@ -803,7 +862,11 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
             calendar_days.append(
                 {
                     "date": current_date,
-                    "shift": shifts_by_date.get(current_date),
+                    "shifts": shifts_by_date.get(current_date, []),
+                    "has_conflict": any(
+                        item.has_conflict
+                        for item in shifts_by_date.get(current_date, [])
+                    ),
                     "is_today": current_date == timezone.localdate(),
                 }
             )
