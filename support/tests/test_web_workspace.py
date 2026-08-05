@@ -762,6 +762,22 @@ class SupportWorkspaceWebTests(TestCase):
             template=overlapping_template
         ).delete()
 
+        active_assignment = WorkerProjectAssignment.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            project=project,
+            worker_role="Existing assignment",
+            starts_at=assignment.starts_at - timedelta(minutes=1),
+            state=WorkerProjectAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        assignment_conflict_page = self.client.get(worker_url)
+        self.assertContains(assignment_conflict_page, "Overlaps an active assignment")
+        self.assertContains(assignment_conflict_page, "worker-calendar-conflict-mark")
+        active_assignment.delete()
+
         response = self.client.post(
             worker_url,
             {

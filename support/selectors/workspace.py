@@ -81,6 +81,15 @@ def _date_period_overlaps(*, starts_field, ends_field, starts_on, ends_on):
     )
 
 
+def _datetime_periods_overlap(*, starts_at, ends_at, other_starts_at, other_ends_at):
+    """Return whether two half-open datetime periods overlap."""
+
+    return (
+        (ends_at is None or other_starts_at < ends_at)
+        and (other_ends_at is None or other_ends_at > starts_at)
+    )
+
+
 def _select_membership(*, user, organization_public_id):
     memberships = list(
         OrganizationMembership.objects.filter(
@@ -805,9 +814,23 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         # can see the planned shifts, including a collision, before publishing.
         draft_template_previews = []
         current_timezone = timezone.get_current_timezone()
+        published_work_assignments = [
+            item
+            for item in work_assignments
+            if item.state == WorkerProjectAssignment.STATE_PUBLISHED
+        ]
         for assignment in work_assignments:
             if assignment.state != WorkerProjectAssignment.STATE_DRAFT:
                 continue
+            assignment_has_conflict = any(
+                _datetime_periods_overlap(
+                    starts_at=assignment.starts_at,
+                    ends_at=assignment.ends_at,
+                    other_starts_at=other.starts_at,
+                    other_ends_at=other.ends_at,
+                )
+                for other in published_work_assignments
+            )
             for selection in assignment.schedule_template_selections.all():
                 template = selection.template
                 for raw_date in template.calendar_dates:
@@ -838,6 +861,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                             state=WorkerProjectAssignment.STATE_DRAFT,
                             is_preview=True,
                             has_conflict=False,
+                            has_assignment_conflict=assignment_has_conflict,
                         )
                     )
 
@@ -846,6 +870,8 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
             key=lambda item: (item.work_date, item.starts_at, item.ends_at),
         )
         for index, shift in enumerate(calendar_shifts):
+            if getattr(shift, "has_assignment_conflict", False):
+                shift.has_conflict = True
             for other in calendar_shifts[index + 1 :]:
                 if other.starts_at >= shift.ends_at:
                     break
@@ -863,8 +889,20 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                 {
                     "date": current_date,
                     "shifts": shifts_by_date.get(current_date, []),
+                    "has_published": any(
+                        item.state == ScheduledWorkShift.STATE_PUBLISHED
+                        for item in shifts_by_date.get(current_date, [])
+                    ),
+                    "has_draft": any(
+                        item.state == ScheduledWorkShift.STATE_DRAFT
+                        for item in shifts_by_date.get(current_date, [])
+                    ),
                     "has_conflict": any(
                         item.has_conflict
+                        for item in shifts_by_date.get(current_date, [])
+                    ),
+                    "has_assignment_conflict": any(
+                        getattr(item, "has_assignment_conflict", False)
                         for item in shifts_by_date.get(current_date, [])
                     ),
                     "is_today": current_date == timezone.localdate(),
