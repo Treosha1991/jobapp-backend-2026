@@ -355,6 +355,17 @@ def _transport_operation_error_key(error):
     return "support_transport_operation_error"
 
 
+def _worker_operation_error_key(error):
+    """Expose expected work-assignment conflicts without hiding the cause."""
+
+    detail = str(getattr(error, "detail", error))
+    if "work_assignment_conflicts_with_published_assignment" in detail:
+        return "support_worker_work_assignment_conflict"
+    if "work_project_capacity_reached" in detail:
+        return "support_worker_work_project_capacity_reached"
+    return "support_worker_operation_error"
+
+
 def _worker_card_operation(request, *, snapshot):
     """Create or publish an operational draft through the existing services."""
 
@@ -832,7 +843,7 @@ def _worker_card_operation(request, *, snapshot):
             else (
                 _transport_operation_error_key(error)
                 if action == "route_create"
-                else "support_worker_operation_error"
+                else _worker_operation_error_key(error)
             )
         )
         messages.error(request, tr(request, message_key))

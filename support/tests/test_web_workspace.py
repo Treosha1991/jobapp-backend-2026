@@ -572,6 +572,72 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(assignment.state, WorkerProjectAssignment.STATE_DRAFT)
         self.assertContains(response, "The draft was saved. The worker cannot see it yet.")
 
+    def test_owner_sees_exact_error_for_overlapping_work_publication(self):
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="First site",
+            country_code="NL",
+            city="Lelystad",
+            street="Main street",
+            building="1",
+            created_by=self.owner,
+        )
+        first_project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="First project",
+            worker_visible_name="First project",
+            created_by=self.owner,
+        )
+        later = timezone.now() + timedelta(days=2)
+        WorkerProjectAssignment.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            project=first_project,
+            starts_at=later,
+            ends_at=later + timedelta(hours=8),
+            state=WorkerProjectAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        conflicting_project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=Worksite.objects.create(
+                organization=self.organization,
+                internal_name="Second site",
+                country_code="NL",
+                city="Lelystad",
+                street="Other street",
+                building="2",
+                created_by=self.owner,
+            ),
+            internal_name="Second project",
+            worker_visible_name="Second project",
+            created_by=self.owner,
+        )
+        draft = WorkerProjectAssignment.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            project=conflicting_project,
+            starts_at=later - timedelta(days=1),
+            state=WorkerProjectAssignment.STATE_DRAFT,
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.post(
+            f"/employer/support/workers/{self.worker_connection.public_id}/",
+            {
+                "action": "publish_work",
+                "assignment_id": str(draft.public_id),
+                "return_tab": "company",
+            },
+            follow=True,
+        )
+
+        self.assertContains(response, "Cannot publish: the worker already has a published assignment")
+        draft.refresh_from_db()
+        self.assertEqual(draft.state, WorkerProjectAssignment.STATE_DRAFT)
+
     def test_owner_creates_project_templates_and_selects_several_for_worker(self):
         """A project is employer-facing, while its address stays operational data."""
 
