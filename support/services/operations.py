@@ -12,11 +12,13 @@ from support.models import (
     HousingAssignment,
     HousingPlace,
     RouteStop,
+    ProjectScheduleTemplate,
     SupportConnection,
     TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
     WorkerProjectAssignment,
+    WorkerProjectScheduleTemplateSelection,
     WorkProject,
 )
 from support.permission_codes import HOUSING_MANAGE, SCHEDULE_MANAGE, TRANSPORT_MANAGE
@@ -329,7 +331,17 @@ def delete_housing_assignment_draft(*, actor, assignment):
         assignment.delete()
 
 
-def create_worker_project_assignment(*, actor, organization, connection, project, worker_role, starts_at, ends_at=None):
+def create_worker_project_assignment(
+    *,
+    actor,
+    organization,
+    connection,
+    project,
+    worker_role,
+    starts_at,
+    ends_at=None,
+    schedule_templates=(),
+):
     require_permission(user=actor, organization=organization, permission_code=SCHEDULE_MANAGE)
     with transaction.atomic():
         connection = SupportConnection.objects.select_for_update().get(pk=connection.pk)
@@ -341,6 +353,14 @@ def create_worker_project_assignment(*, actor, organization, connection, project
         _require_same_organization(organization=organization, project=project)
         if not project.is_active or not project.worksite.is_active:
             raise ValidationError({"project": "work_project_not_available"})
+        template_ids = {item.pk for item in schedule_templates}
+        templates = list(
+            ProjectScheduleTemplate.objects.select_for_update()
+            .filter(project=project, is_active=True, pk__in=template_ids)
+            .order_by("id")
+        )
+        if len(templates) != len(template_ids):
+            raise ValidationError({"schedule_templates": "project_schedule_template_not_available"})
         assignment = WorkerProjectAssignment.objects.create(
             organization=organization,
             connection=connection,
@@ -350,12 +370,25 @@ def create_worker_project_assignment(*, actor, organization, connection, project
             ends_at=ends_at,
             created_by=actor,
         )
+        WorkerProjectScheduleTemplateSelection.objects.bulk_create(
+            [
+                WorkerProjectScheduleTemplateSelection(
+                    assignment=assignment,
+                    template=template,
+                )
+                for template in templates
+            ]
+        )
         record_audit_event(
             organization=organization,
             actor=actor,
             action="work.assignment_drafted",
             target=assignment,
-            details={"connection": str(connection.public_id), "project": str(project.public_id)},
+            details={
+                "connection": str(connection.public_id),
+                "project": str(project.public_id),
+                "schedule_template_count": len(templates),
+            },
         )
     return assignment
 
@@ -388,6 +421,20 @@ def publish_worker_project_assignment(*, actor, assignment):
         ).exists()
         if conflict:
             raise ValidationError({"assignment": "work_assignment_conflicts_with_published_assignment"})
+        occupied_places = _period_overlaps(
+            WorkerProjectAssignment.objects.select_for_update()
+            .filter(
+                project=assignment.project,
+                state=WorkerProjectAssignment.STATE_PUBLISHED,
+            )
+            .exclude(pk=assignment.pk),
+            starts_field="starts_at",
+            ends_field="ends_at",
+            starts_at=assignment.starts_at,
+            ends_at=assignment.ends_at,
+        ).count()
+        if occupied_places >= assignment.project.worker_capacity:
+            raise ValidationError({"project": "work_project_capacity_reached"})
         assignment.state = WorkerProjectAssignment.STATE_PUBLISHED
         assignment.published_by = actor
         assignment.published_at = timezone.now()

@@ -586,6 +586,56 @@ class WorkProjectCreateSerializer(StrictInputSerializer):
     instructions = serializers.CharField(max_length=5000, required=False, allow_blank=True, default="")
 
 
+class ProjectCreateSerializer(StrictInputSerializer):
+    name = serializers.CharField(max_length=160)
+    country_code = serializers.CharField(max_length=2)
+    city = serializers.CharField(max_length=120)
+    postal_code = serializers.CharField(max_length=20, required=False, allow_blank=True, default="")
+    street = serializers.CharField(max_length=160)
+    building = serializers.CharField(max_length=40)
+    worker_capacity = serializers.IntegerField(min_value=1, max_value=5000)
+    starts_on = serializers.DateField()
+    ends_on = serializers.DateField(required=False, allow_null=True, default=None)
+    contact_name = serializers.CharField(max_length=160, required=False, allow_blank=True, default="")
+    contact_phone = serializers.CharField(max_length=48, required=False, allow_blank=True, default="")
+    contact_email = serializers.EmailField(required=False, allow_blank=True, default="")
+    instructions = serializers.CharField(max_length=5000, required=False, allow_blank=True, default="")
+
+    def validate_country_code(self, value):
+        normalized = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", normalized):
+            raise serializers.ValidationError("country_code_must_be_iso_alpha_2")
+        return normalized
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs["ends_on"] is not None and attrs["ends_on"] < attrs["starts_on"]:
+            raise serializers.ValidationError({"ends_on": "period_end_must_not_be_before_start"})
+        return attrs
+
+
+class ProjectScheduleTemplateCreateSerializer(StrictInputSerializer):
+    name = serializers.CharField(max_length=120)
+    starts_at_time = serializers.TimeField()
+    ends_at_time = serializers.TimeField()
+    break_minutes = serializers.IntegerField(min_value=0, max_value=720, default=0)
+    worker_label = serializers.CharField(max_length=160, required=False, allow_blank=True, default="")
+    calendar_dates = serializers.ListField(
+        child=serializers.DateField(), min_length=1, max_length=366
+    )
+
+    def validate_name(self, value):
+        normalized = value.strip()
+        if not normalized:
+            raise serializers.ValidationError("project_schedule_template_name_required")
+        return normalized
+
+    def validate_calendar_dates(self, value):
+        if len(set(value)) != len(value):
+            raise serializers.ValidationError("project_schedule_template_duplicate_date")
+        return sorted(value)
+
+
 class VehicleCreateSerializer(StrictInputSerializer):
     internal_name = serializers.CharField(max_length=120)
     registration_identifier = serializers.CharField(max_length=64)

@@ -10,6 +10,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.db.models import F, Q
+from django.utils import timezone
 
 from .organization import SupportOrganization
 from .pipeline import SupportConnection
@@ -130,6 +131,12 @@ class WorkProject(models.Model):
     internal_name = models.CharField(max_length=160)
     worker_visible_name = models.CharField(max_length=160)
     instructions = models.TextField(max_length=5000, blank=True, default="")
+    worker_capacity = models.PositiveSmallIntegerField(default=1)
+    starts_on = models.DateField(default=timezone.localdate)
+    ends_on = models.DateField(null=True, blank=True)
+    contact_name = models.CharField(max_length=160, blank=True, default="")
+    contact_phone = models.CharField(max_length=48, blank=True, default="")
+    contact_email = models.EmailField(blank=True, default="")
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_support_work_projects")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -137,7 +144,13 @@ class WorkProject(models.Model):
 
     class Meta:
         ordering = ("internal_name", "id")
-        constraints = [models.UniqueConstraint(fields=("organization", "internal_name"), name="support_unique_work_project_internal_name")]
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "internal_name"), name="support_unique_work_project_internal_name"),
+            models.CheckConstraint(
+                condition=Q(ends_on__isnull=True) | Q(starts_on__lte=F("ends_on")),
+                name="support_work_project_valid_period",
+            ),
+        ]
         indexes = [models.Index(fields=("organization", "is_active", "internal_name"))]
 
 
@@ -170,6 +183,70 @@ class WorkerProjectAssignment(models.Model):
             models.Index(fields=("connection", "state", "starts_at")),
             models.Index(fields=("project", "state", "starts_at")),
         ]
+
+
+class ProjectScheduleTemplate(models.Model):
+    """A project-owned shift pattern with explicitly selected calendar days."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    project = models.ForeignKey(
+        WorkProject,
+        on_delete=models.CASCADE,
+        related_name="schedule_templates",
+    )
+    name = models.CharField(max_length=120)
+    starts_at_time = models.TimeField()
+    ends_at_time = models.TimeField()
+    break_minutes = models.PositiveSmallIntegerField(default=0)
+    worker_label = models.CharField(max_length=160, blank=True, default="")
+    # ISO dates keep the selection intentionally explicit: the employer may
+    # choose any days in the calendar instead of being limited to weekdays.
+    calendar_dates = models.JSONField(default=list)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_project_schedule_templates",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("project", "name"),
+                name="support_unique_project_schedule_template_name",
+            )
+        ]
+        indexes = [models.Index(fields=("project", "is_active", "name"))]
+
+
+class WorkerProjectScheduleTemplateSelection(models.Model):
+    """The project templates selected for one worker assignment."""
+
+    assignment = models.ForeignKey(
+        WorkerProjectAssignment,
+        on_delete=models.CASCADE,
+        related_name="schedule_template_selections",
+    )
+    template = models.ForeignKey(
+        ProjectScheduleTemplate,
+        on_delete=models.PROTECT,
+        related_name="assignment_selections",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("assignment", "template"),
+                name="support_unique_worker_project_schedule_template",
+            )
+        ]
+        indexes = [models.Index(fields=("template", "assignment"))]
 
 
 class Vehicle(models.Model):

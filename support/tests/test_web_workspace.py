@@ -13,6 +13,7 @@ from support.models import (
     DriverVehicleAssignment,
     NotificationOutbox,
     OrganizationMembership,
+    ProjectScheduleTemplate,
     RouteStop,
     SupportApplication,
     SupportConnection,
@@ -570,6 +571,108 @@ class SupportWorkspaceWebTests(TestCase):
         assignment = WorkerProjectAssignment.objects.get(connection=self.worker_connection)
         self.assertEqual(assignment.state, WorkerProjectAssignment.STATE_DRAFT)
         self.assertContains(response, "The draft was saved. The worker cannot see it yet.")
+
+    def test_owner_creates_project_templates_and_selects_several_for_worker(self):
+        """A project is employer-facing, while its address stays operational data."""
+
+        self.client.force_login(self.owner)
+        projects_url = f"/employer/support/projects/?organization={self.organization.public_id}"
+        project_starts = timezone.localdate() + timedelta(days=1)
+
+        response = self.client.post(
+            projects_url,
+            {
+                "action": "project_create",
+                "name": "Flevosap BV",
+                "country_code": "NL",
+                "city": "Biddinghuizen",
+                "postal_code": "8256TA",
+                "street": "Zuurlaan",
+                "building": "22",
+                "worker_capacity": "12",
+                "starts_on": project_starts.isoformat(),
+                "ends_on": "",
+                "contact_name": "Rafal",
+                "contact_phone": "+31600000000",
+                "contact_email": "rafal@example.com",
+                "instructions": "Bring safety shoes.",
+            },
+        )
+        project = WorkProject.objects.get(
+            organization=self.organization,
+            internal_name="Flevosap BV",
+        )
+        detail_url = (
+            f"/employer/support/projects/{project.public_id}/"
+            f"?organization={self.organization.public_id}"
+        )
+        self.assertRedirects(response, detail_url)
+        self.assertEqual(project.worker_capacity, 12)
+        self.assertEqual(project.worksite.street, "Zuurlaan")
+        self.assertEqual(project.contact_email, "rafal@example.com")
+
+        template_dates = [
+            project_starts.isoformat(),
+            (project_starts + timedelta(days=1)).isoformat(),
+        ]
+        response = self.client.post(
+            detail_url,
+            {
+                "action": "project_schedule_template_create",
+                "return_month": project_starts.strftime("%Y-%m"),
+                "name": "Morning shift",
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:30",
+                "break_minutes": "30",
+                "worker_label": "Packing",
+                "calendar_dates": template_dates,
+            },
+        )
+        self.assertRedirects(
+            response,
+            f"{detail_url}&month={project_starts.strftime('%Y-%m')}",
+        )
+        morning = ProjectScheduleTemplate.objects.get(project=project, name="Morning shift")
+        self.assertEqual(morning.calendar_dates, template_dates)
+
+        evening = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Evening shift",
+            starts_at_time="14:30",
+            ends_at_time="23:00",
+            calendar_dates=[project_starts.isoformat()],
+            created_by=self.owner,
+        )
+        worker_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
+        response = self.client.post(
+            worker_url,
+            {
+                "action": "work_draft",
+                "project_id": str(project.public_id),
+                "worker_role": "Operator",
+                "starts_at": f"{project_starts.isoformat()}T06:00",
+                "ends_at": "",
+                "schedule_template_ids": [
+                    str(morning.public_id),
+                    str(evening.public_id),
+                ],
+            },
+            follow=True,
+        )
+        assignment = WorkerProjectAssignment.objects.get(
+            connection=self.worker_connection,
+            project=project,
+        )
+        self.assertEqual(
+            set(
+                assignment.schedule_template_selections.values_list(
+                    "template_id", flat=True
+                )
+            ),
+            {morning.id, evening.id},
+        )
+        self.assertContains(response, "Morning shift")
+        self.assertContains(response, "Evening shift")
 
     def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):
         self.client.force_login(self.owner)

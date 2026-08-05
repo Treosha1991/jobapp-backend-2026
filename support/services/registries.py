@@ -1,6 +1,7 @@
 """Transactional creation for employer-owned operational registries."""
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from support.models import (
@@ -8,6 +9,7 @@ from support.models import (
     HousingRoom,
     HousingSite,
     Vehicle,
+    ProjectScheduleTemplate,
     WorkProject,
     Worksite,
 )
@@ -145,6 +147,131 @@ def create_work_project(*, actor, organization, worksite, **data):
             {"internal_name": "work_project_internal_name_already_exists"}
         ) from exc
     return project
+
+
+def create_project(*, actor, organization, name, **data):
+    """Create the employer-facing project and its one operational address."""
+
+    require_permission(user=actor, organization=organization, permission_code=SCHEDULE_MANAGE)
+    normalized_name = (name or "").strip()
+    if not normalized_name:
+        raise ValidationError({"name": "project_name_required"})
+    address_fields = {
+        field: data.pop(field)
+        for field in ("country_code", "city", "postal_code", "street", "building")
+    }
+    with transaction.atomic():
+        try:
+            worksite = Worksite.objects.create(
+                organization=organization,
+                internal_name=normalized_name,
+                instructions=data.get("instructions", ""),
+                created_by=actor,
+                **address_fields,
+            )
+            project = WorkProject.objects.create(
+                organization=organization,
+                worksite=worksite,
+                internal_name=normalized_name,
+                worker_visible_name=normalized_name,
+                created_by=actor,
+                **data,
+            )
+        except IntegrityError as exc:
+            raise ValidationError({"name": "project_name_already_exists"}) from exc
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="work.project_created",
+            target=project,
+            details={"worksite": str(worksite.public_id)},
+        )
+    return project
+
+
+def update_project(*, actor, project, name, **data):
+    """Update project data and its address without changing past assignments."""
+
+    organization = project.organization
+    require_permission(user=actor, organization=organization, permission_code=SCHEDULE_MANAGE)
+    normalized_name = (name or "").strip()
+    if not normalized_name:
+        raise ValidationError({"name": "project_name_required"})
+    address_fields = {
+        field: data.pop(field)
+        for field in ("country_code", "city", "postal_code", "street", "building")
+    }
+    with transaction.atomic():
+        project = WorkProject.objects.select_for_update().select_related("worksite").get(pk=project.pk)
+        worksite = Worksite.objects.select_for_update().get(pk=project.worksite_id)
+        try:
+            WorkProject.objects.filter(pk=project.pk).update(
+                internal_name=normalized_name,
+                worker_visible_name=normalized_name,
+                updated_at=timezone.now(),
+                **data,
+            )
+            Worksite.objects.filter(pk=worksite.pk).update(
+                internal_name=normalized_name,
+                instructions=data.get("instructions", ""),
+                updated_at=timezone.now(),
+                **address_fields,
+            )
+        except IntegrityError as exc:
+            raise ValidationError({"name": "project_name_already_exists"}) from exc
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="work.project_updated",
+            target=project,
+            details={"worksite": str(worksite.public_id)},
+        )
+    return WorkProject.objects.select_related("worksite").get(pk=project.pk)
+
+
+def create_project_schedule_template(
+    *, actor, project, name, starts_at_time, ends_at_time, break_minutes, worker_label, calendar_dates
+):
+    """Store one reusable, explicitly dated template for a project."""
+
+    organization = project.organization
+    require_permission(user=actor, organization=organization, permission_code=SCHEDULE_MANAGE)
+    normalized_name = (name or "").strip()
+    if not normalized_name:
+        raise ValidationError({"name": "project_schedule_template_name_required"})
+    normalized_dates = sorted({item.isoformat() for item in calendar_dates})
+    if not normalized_dates:
+        raise ValidationError({"calendar_dates": "project_schedule_template_dates_required"})
+    with transaction.atomic():
+        project = WorkProject.objects.select_for_update().get(pk=project.pk)
+        if not project.is_active:
+            raise ValidationError({"project": "work_project_not_available"})
+        if any(item < project.starts_on.isoformat() for item in normalized_dates) or (
+            project.ends_on is not None
+            and any(item > project.ends_on.isoformat() for item in normalized_dates)
+        ):
+            raise ValidationError({"calendar_dates": "project_schedule_template_dates_outside_project"})
+        try:
+            template = ProjectScheduleTemplate.objects.create(
+                project=project,
+                name=normalized_name,
+                starts_at_time=starts_at_time,
+                ends_at_time=ends_at_time,
+                break_minutes=break_minutes,
+                worker_label=(worker_label or "").strip(),
+                calendar_dates=normalized_dates,
+                created_by=actor,
+            )
+        except IntegrityError as exc:
+            raise ValidationError({"name": "project_schedule_template_name_already_exists"}) from exc
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="work.project_schedule_template_created",
+            target=template,
+            details={"project": str(project.public_id), "calendar_date_count": len(normalized_dates)},
+        )
+    return template
 
 
 def create_vehicle(*, actor, organization, **data):

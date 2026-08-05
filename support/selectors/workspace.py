@@ -22,6 +22,7 @@ from support.models import (
     HousingSite,
     MembershipInvitation,
     OrganizationMembership,
+    ProjectScheduleTemplate,
     RouteStop,
     ScheduledWorkShift,
     SupportApplication,
@@ -441,6 +442,169 @@ def conversation_workspace_snapshot(*, user, organization_public_id=None):
     }
 
 
+def projects_snapshot(*, user, organization_public_id=None, project_public_id=None, calendar_month=None):
+    """Return the employer-facing project directory without exposing other firms."""
+
+    memberships, membership = _select_membership(
+        user=user,
+        organization_public_id=organization_public_id,
+    )
+    organization = membership.organization
+    permissions = _permissions_for(user=user, organization=organization)
+    if not permissions["work"]:
+        raise Http404("support_projects_not_found")
+
+    projects = list(
+        WorkProject.objects.filter(organization=organization, is_active=True)
+        .select_related("worksite")
+        .order_by("internal_name", "id")
+    )
+    now = timezone.now()
+    for project in projects:
+        active_assignments = WorkerProjectAssignment.objects.filter(
+            project=project,
+            state=WorkerProjectAssignment.STATE_PUBLISHED,
+        ).filter(Q(ends_at__isnull=True) | Q(ends_at__gt=now))
+        project.filled_places = active_assignments.count()
+        project.draft_places = WorkerProjectAssignment.objects.filter(
+            project=project,
+            state=WorkerProjectAssignment.STATE_DRAFT,
+        ).count()
+        project.address_label = " · ".join(
+            item
+            for item in (
+                project.worksite.city,
+                project.worksite.street,
+                project.worksite.building,
+            )
+            if item
+        )
+
+    selected_project = None
+    if project_public_id:
+        selected_project = next(
+            (item for item in projects if str(item.public_id) == str(project_public_id)),
+            None,
+        )
+        if selected_project is None:
+            raise Http404("support_project_not_found")
+
+    templates = []
+    workers = []
+    routes = []
+    calendar_days = []
+    selected_calendar_month = None
+    calendar_previous_month = None
+    calendar_next_month = None
+    if selected_project is not None:
+        templates = list(
+            ProjectScheduleTemplate.objects.filter(
+                project=selected_project,
+                is_active=True,
+            ).order_by("name", "id")
+        )
+        allowed_connections = worker_connection_queryset_for(
+            user=user,
+            organization=organization,
+            queryset=SupportConnection.objects.filter(is_archived=False),
+        )
+        workers = list(
+            WorkerProjectAssignment.objects.filter(
+                project=selected_project,
+                connection__in=allowed_connections,
+                state=WorkerProjectAssignment.STATE_PUBLISHED,
+            )
+            .filter(Q(ends_at__isnull=True) | Q(ends_at__gt=now))
+            .select_related("connection__candidate")
+            .order_by("connection__candidate__first_name", "connection__candidate__last_name", "id")
+        )
+        for item in workers:
+            item.worker_display_name = _display_name(item.connection.candidate)
+
+        routes = list(
+            TransportRoute.objects.filter(
+                organization=organization,
+                worksite=selected_project.worksite,
+                state=TransportRoute.STATE_PUBLISHED,
+            )
+            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=timezone.localdate()))
+            .select_related(
+                "driver_vehicle_assignment__vehicle",
+                "driver_vehicle_assignment__driver_connection__candidate",
+            )
+            .order_by("starts_on", "departure_time", "id")
+        )
+        for route in routes:
+            route.driver_display_name = _display_name(
+                route.driver_vehicle_assignment.driver_connection.candidate
+            )
+
+        try:
+            year, month = [int(item) for item in (calendar_month or "").split("-", 1)]
+            selected_calendar_month = date(year, month, 1)
+        except (TypeError, ValueError):
+            today = timezone.localdate()
+            selected_calendar_month = date(today.year, today.month, 1)
+        selected_month_end = date(
+            selected_calendar_month.year,
+            selected_calendar_month.month,
+            monthrange(selected_calendar_month.year, selected_calendar_month.month)[1],
+        )
+        template_by_date = {}
+        for template in templates:
+            for raw_value in template.calendar_dates:
+                selected_date = parse_date(raw_value) if isinstance(raw_value, str) else None
+                if selected_date is None or not (
+                    selected_calendar_month <= selected_date <= selected_month_end
+                ):
+                    continue
+                template_by_date.setdefault(selected_date, []).append(template)
+        first_weekday, days_in_month = monthrange(
+            selected_calendar_month.year,
+            selected_calendar_month.month,
+        )
+        calendar_days = [None] * first_weekday
+        for day_number in range(1, days_in_month + 1):
+            current_date = date(
+                selected_calendar_month.year,
+                selected_calendar_month.month,
+                day_number,
+            )
+            calendar_days.append(
+                {
+                    "date": current_date,
+                    "templates": template_by_date.get(current_date, []),
+                    "is_today": current_date == timezone.localdate(),
+                }
+            )
+        calendar_previous_month = (
+            date(selected_calendar_month.year - 1, 12, 1)
+            if selected_calendar_month.month == 1
+            else date(selected_calendar_month.year, selected_calendar_month.month - 1, 1)
+        )
+        calendar_next_month = (
+            date(selected_calendar_month.year + 1, 1, 1)
+            if selected_calendar_month.month == 12
+            else date(selected_calendar_month.year, selected_calendar_month.month + 1, 1)
+        )
+
+    return {
+        "organization": organization,
+        "membership": membership,
+        "memberships": memberships,
+        "permissions": permissions,
+        "projects": projects,
+        "selected_project": selected_project,
+        "schedule_templates": templates,
+        "workers": workers,
+        "routes": routes,
+        "calendar_days": calendar_days,
+        "selected_calendar_month": selected_calendar_month,
+        "calendar_previous_month": calendar_previous_month,
+        "calendar_next_month": calendar_next_month,
+    }
+
+
 def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, housing_site_public_id=None):
     """Return one worker card without expanding access beyond its organization.
 
@@ -597,6 +761,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         work_assignments = list(
             WorkerProjectAssignment.objects.filter(connection=connection)
             .select_related("project__worksite")
+            .prefetch_related("schedule_template_selections__template")
             .order_by("-starts_at", "-id")
         )
         work_projects = list(
@@ -606,6 +771,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                 worksite__is_active=True,
             )
             .select_related("worksite")
+            .prefetch_related("schedule_templates")
             .order_by("internal_name", "id")
         )
         try:

@@ -23,6 +23,7 @@ from .models import (
     HousingRoom,
     HousingSite,
     OrganizationMembership,
+    ProjectScheduleTemplate,
     RouteStop,
     ScheduledWorkShift,
     SupportConnection,
@@ -38,6 +39,7 @@ from .models import (
 )
 from .selectors.workspace import (
     registry_snapshot,
+    projects_snapshot,
     team_management_snapshot,
     timekeeping_snapshot,
     transport_workspace_snapshot,
@@ -63,6 +65,8 @@ from .serializers import (
     WorkerRequestDecisionSerializer,
     WorkProjectCreateSerializer,
     WorksiteCreateSerializer,
+    ProjectCreateSerializer,
+    ProjectScheduleTemplateCreateSerializer,
 )
 from .services.operations import (
     create_driver_vehicle_assignment,
@@ -111,6 +115,9 @@ from .services.registries import (
     create_vehicle,
     create_work_project,
     create_worksite,
+    create_project,
+    update_project,
+    create_project_schedule_template,
 )
 from .services.organizations import (
     create_membership_invitation,
@@ -310,7 +317,14 @@ def _registry_redirect(organization):
     )
 
 
-def _validated_post(serializer_class, request, *, nullable_fields=(), ignored_fields=()):
+def _validated_post(
+    serializer_class,
+    request,
+    *,
+    nullable_fields=(),
+    ignored_fields=(),
+    list_fields=(),
+):
     """Validate a regular web form with the same rules as the public API."""
 
     data = request.POST.dict()
@@ -318,6 +332,8 @@ def _validated_post(serializer_class, request, *, nullable_fields=(), ignored_fi
     data.pop("csrfmiddlewaretoken", None)
     for field in ignored_fields:
         data.pop(field, None)
+    for field in list_fields:
+        data[field] = request.POST.getlist(field)
     for field in nullable_fields:
         if data.get(field) == "":
             data[field] = None
@@ -444,6 +460,16 @@ def _worker_card_operation(request, *, snapshot):
             ends_at = _aware_datetime(request.POST.get("ends_at"), required=False)
             if ends_at is not None and ends_at <= starts_at:
                 raise ValueError("period_invalid")
+            template_ids = set(request.POST.getlist("schedule_template_ids"))
+            schedule_templates = list(
+                ProjectScheduleTemplate.objects.filter(
+                    project=project,
+                    is_active=True,
+                    public_id__in=template_ids,
+                ).order_by("name", "id")
+            )
+            if len(schedule_templates) != len(template_ids):
+                raise ValueError("project_schedule_template_not_available")
             create_worker_project_assignment(
                 actor=request.user,
                 organization=organization,
@@ -452,6 +478,7 @@ def _worker_card_operation(request, *, snapshot):
                 worker_role=(request.POST.get("worker_role") or "").strip(),
                 starts_at=starts_at,
                 ends_at=ends_at,
+                schedule_templates=schedule_templates,
             )
             messages.success(request, tr(request, "support_worker_draft_created"))
         elif action == "work_draft_delete":
@@ -999,6 +1026,111 @@ def registries(request):
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
     return render(request, "support/registries.html", snapshot)
+
+
+def _projects_redirect(organization, *, project=None, calendar_month=None):
+    query = {"organization": organization.public_id}
+    if calendar_month:
+        query["month"] = calendar_month
+    if project is not None:
+        return redirect(
+            f"{reverse('support:project-detail', kwargs={'project_public_id': project.public_id})}"
+            f"?{urlencode(query)}"
+        )
+    return redirect(f"{reverse('support:projects')}?{urlencode(query)}")
+
+
+@login_required(login_url="employer:login")
+def projects_workspace(request, project_public_id=None):
+    """Employer directory of work projects and their operational details."""
+
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = projects_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+        project_public_id=project_public_id,
+        calendar_month=request.GET.get("month"),
+    )
+    organization = snapshot["organization"]
+    selected_project = snapshot["selected_project"]
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        try:
+            if action == "project_create":
+                data = _validated_post(
+                    ProjectCreateSerializer,
+                    request,
+                    nullable_fields=("ends_on",),
+                )
+                project = create_project(
+                    actor=request.user,
+                    organization=organization,
+                    **data,
+                )
+                messages.success(request, tr(request, "support_project_created"))
+                return _projects_redirect(organization, project=project)
+            if selected_project is None:
+                raise ValueError("project_operation_requires_selected_project")
+            if action == "project_update":
+                data = _validated_post(
+                    ProjectCreateSerializer,
+                    request,
+                    nullable_fields=("ends_on",),
+                )
+                project = update_project(
+                    actor=request.user,
+                    project=selected_project,
+                    **data,
+                )
+                messages.success(request, tr(request, "support_project_updated"))
+                return _projects_redirect(
+                    organization,
+                    project=project,
+                    calendar_month=request.POST.get("return_month"),
+                )
+            if action == "project_schedule_template_create":
+                data = _validated_post(
+                    ProjectScheduleTemplateCreateSerializer,
+                    request,
+                    list_fields=("calendar_dates",),
+                    ignored_fields=("return_month",),
+                )
+                create_project_schedule_template(
+                    actor=request.user,
+                    project=selected_project,
+                    **data,
+                )
+                messages.success(request, tr(request, "support_project_schedule_created"))
+                return _projects_redirect(
+                    organization,
+                    project=selected_project,
+                    calendar_month=request.POST.get("return_month"),
+                )
+            raise ValueError("project_operation_unknown")
+        except (APIException, ValueError):
+            messages.error(request, tr(request, "support_project_operation_error"))
+            return _projects_redirect(
+                organization,
+                project=selected_project,
+                calendar_month=request.POST.get("return_month"),
+            )
+    snapshot["workspace_url"] = (
+        f"{reverse('support:workspace')}?organization={organization.public_id}"
+    )
+    snapshot["project_list_url"] = (
+        f"{reverse('support:projects')}?organization={organization.public_id}"
+    )
+    if selected_project is not None:
+        snapshot["calendar_previous_url"] = (
+            f"{reverse('support:project-detail', kwargs={'project_public_id': selected_project.public_id})}"
+            f"?{urlencode({'organization': organization.public_id, 'month': snapshot['calendar_previous_month'].strftime('%Y-%m')})}"
+        )
+        snapshot["calendar_next_url"] = (
+            f"{reverse('support:project-detail', kwargs={'project_public_id': selected_project.public_id})}"
+            f"?{urlencode({'organization': organization.public_id, 'month': snapshot['calendar_next_month'].strftime('%Y-%m')})}"
+        )
+    return render(request, "support/projects_workspace.html", snapshot)
 
 
 def _transport_redirect(organization):

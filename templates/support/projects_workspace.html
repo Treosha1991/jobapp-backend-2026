@@ -1,0 +1,114 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_projects_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .projects-back { margin-bottom:16px; }
+  .projects-head { display:flex; align-items:flex-start; justify-content:space-between; gap:15px; flex-wrap:wrap; }
+  .projects-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .projects-form, .projects-section { margin-top:21px; padding-top:20px; border-top:1px solid var(--line); }
+  .projects-form { padding:15px; border:1px solid rgba(24,223,103,.28); border-radius:18px; background:linear-gradient(135deg,rgba(24,223,103,.07),rgba(5,22,36,.25)); }
+  .projects-form h2, .projects-section h2 { margin:0 0 7px; font-size:21px; }
+  .projects-form > p, .projects-section > p { margin:0 0 14px; color:var(--muted); line-height:1.45; }
+  .projects-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+  .projects-wide { grid-column:1/-1; }
+  .projects-table a { color:#dff4ff; font-weight:850; text-decoration:none; }
+  .projects-table a:hover { color:var(--green); }
+  .projects-empty { padding:24px; text-align:center; border:1px dashed var(--line); border-radius:16px; color:var(--muted); }
+  .projects-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:11px; margin-top:16px; }
+  .projects-summary-item, .projects-item { padding:13px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.28); }
+  .projects-summary-item span, .projects-item p { display:block; color:var(--muted); font-size:12px; line-height:1.4; }
+  .projects-summary-item strong { display:block; margin-top:4px; font-size:16px; }
+  .projects-item h3 { margin:0; font-size:16px; }
+  .projects-item p { margin:7px 0 0; }
+  .projects-item-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+  .projects-calendar-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:14px 0 10px; }
+  .projects-calendar { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:7px; }
+  .projects-calendar-day { min-height:81px; padding:8px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.25); }
+  .projects-calendar-day.today { border-color:rgba(24,223,103,.7); }
+  .projects-calendar-day label { display:flex; align-items:flex-start; gap:5px; font-size:12px; font-weight:800; cursor:pointer; }
+  .projects-calendar-day small { display:block; margin:5px 0 0 19px; color:#bafbd2; font-size:10px; line-height:1.25; }
+  .projects-calendar-empty { min-height:81px; }
+  .projects-worker-link { color:#dff4ff; text-decoration:none; font-weight:800; }
+  .projects-worker-link:hover { color:var(--green); }
+  @media (max-width:900px) { .projects-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width:760px) { .projects-grid, .projects-item-grid { grid-template-columns:1fr; } .projects-wide { grid-column:auto; } .projects-summary { grid-template-columns:1fr; } .projects-calendar { gap:4px; } .projects-calendar-day { min-height:65px; padding:5px; } .projects-calendar-day small { display:none; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions projects-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a></div>
+  <section class="jh-card">
+    <div class="projects-head">
+      <div>
+        <p class="projects-kicker">JobHub Support · {{ organization.display_name }}</p>
+        <h1 class="jh-title">{% if selected_project %}{{ selected_project.worker_visible_name }}{% else %}{{ employer_t.support_projects_title }}{% endif %}</h1>
+        <p class="jh-subtitle">{% if selected_project %}{{ employer_t.support_project_detail_subtitle }}{% else %}{{ employer_t.support_projects_subtitle }}{% endif %}</p>
+      </div>
+      {% if not selected_project %}<a class="jh-btn primary" href="#project-add">{{ employer_t.support_projects_add }}</a>{% endif %}
+      {% if selected_project %}<a class="jh-btn" href="{{ project_list_url }}">{{ employer_t.support_projects_all }}</a>{% endif %}
+    </div>
+
+    {% if not selected_project %}
+      <form class="projects-form" method="post" id="project-add">
+        {% csrf_token %}<input type="hidden" name="action" value="project_create">
+        <h2>{{ employer_t.support_projects_add }}</h2><p>{{ employer_t.support_projects_add_text }}</p>
+        <div class="projects-grid">
+          <label class="jh-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="1" max="5000" value="1" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="NL" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20"></label>
+          <label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date"></label>
+          <label class="jh-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160"></label>
+          <label class="jh-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48"></label>
+          <label class="jh-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email"></label>
+          <label class="jh-field projects-wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000"></textarea></label>
+        </div>
+        <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_projects_add }}</button></div>
+      </form>
+
+      <section class="projects-section">
+        <h2>{{ employer_t.support_projects_title }}</h2>
+        {% if projects %}
+          <div class="jh-table-wrap"><table class="jh-table projects-table"><thead><tr><th>{{ employer_t.support_project_name }}</th><th>{{ employer_t.support_project_address }}</th><th>{{ employer_t.support_project_occupancy }}</th><th>{{ employer_t.support_project_starts_on }}</th><th>{{ employer_t.support_project_ends_on }}</th><th>{{ employer_t.support_project_edit }}</th></tr></thead><tbody>
+          {% for project in projects %}<tr>
+            <td><a href="{% url 'support:project-detail' project.public_id %}?organization={{ organization.public_id }}">{{ project.worker_visible_name }}</a></td>
+            <td>{{ project.address_label }}</td>
+            <td>{{ project.filled_places }}/{{ project.worker_capacity }}{% if project.draft_places %}<br><small>{{ employer_t.support_project_drafts }}: {{ project.draft_places }}</small>{% endif %}</td>
+            <td>{{ project.starts_on|date:"d.m.Y" }}</td><td>{% if project.ends_on %}{{ project.ends_on|date:"d.m.Y" }}{% else %}—{% endif %}</td>
+            <td><a class="jh-btn" href="{% url 'support:project-detail' project.public_id %}?organization={{ organization.public_id }}">{{ employer_t.support_project_edit }}</a></td>
+          </tr>{% endfor %}
+          </tbody></table></div>
+        {% else %}<div class="projects-empty">{{ employer_t.support_projects_empty }}</div>{% endif %}
+      </section>
+    {% else %}
+      <div class="projects-summary">
+        <div class="projects-summary-item"><span>{{ employer_t.support_project_occupancy }}</span><strong>{{ selected_project.filled_places }}/{{ selected_project.worker_capacity }}</strong>{% if selected_project.draft_places %}<span>{{ employer_t.support_project_drafts }}: {{ selected_project.draft_places }}</span>{% endif %}</div>
+        <div class="projects-summary-item"><span>{{ employer_t.support_project_address }}</span><strong>{{ selected_project.address_label }}</strong></div>
+        <div class="projects-summary-item"><span>{{ employer_t.support_project_starts_on }}</span><strong>{{ selected_project.starts_on|date:"d.m.Y" }}</strong></div>
+        <div class="projects-summary-item"><span>{{ employer_t.support_project_ends_on }}</span><strong>{% if selected_project.ends_on %}{{ selected_project.ends_on|date:"d.m.Y" }}{% else %}—{% endif %}</strong></div>
+      </div>
+
+      <section class="projects-section"><h2>{{ employer_t.support_project_contacts }}</h2><div class="projects-item-grid"><article class="projects-item"><h3>{{ selected_project.contact_name|default:"—" }}</h3><p>{{ selected_project.contact_phone|default:"—" }}<br>{{ selected_project.contact_email|default:"—" }}</p></article><article class="projects-item"><h3>{{ employer_t.support_project_address }}</h3><p>{{ selected_project.worksite.country_code }} · {{ selected_project.worksite.city }}{% if selected_project.worksite.postal_code %} · {{ selected_project.worksite.postal_code }}{% endif %}<br>{{ selected_project.worksite.street }} {{ selected_project.worksite.building }}</p></article></div></section>
+
+      <section class="projects-section"><h2>{{ employer_t.support_project_workers }}</h2>{% if workers %}<div class="projects-item-grid">{% for item in workers %}<article class="projects-item"><h3><a class="projects-worker-link" href="{% url 'support:worker-card' item.connection.public_id %}?tab=company">{{ item.worker_display_name }}</a></h3><p>{{ employer_t.support_worker_role }}: {{ item.worker_role|default:"—" }}<br>{{ employer_t.support_worker_starts }}: {{ item.starts_at|date:"d.m.Y H:i" }}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_project_workers_empty }}</div>{% endif %}</section>
+
+      <section class="projects-section"><h2>{{ employer_t.support_project_vehicles }}</h2>{% if routes %}<div class="projects-item-grid">{% for route in routes %}<article class="projects-item"><h3>{{ route.driver_vehicle_assignment.vehicle.internal_name }} · {{ route.driver_vehicle_assignment.vehicle.registration_identifier }}</h3><p>{{ employer_t.support_worker_driver }}: {{ route.driver_display_name }}{% if route.departure_time %}<br>{{ employer_t.support_transport_departure }}: {{ route.departure_time|time:"H:i" }}{% endif %}<br>{{ employer_t.support_worker_starts }}: {{ route.starts_on|date:"d.m.Y" }}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_project_vehicles_empty }}</div>{% endif %}</section>
+
+      <section class="projects-section">
+        <h2>{{ employer_t.support_project_schedule }}</h2><p>{{ employer_t.support_project_schedule_text }}</p>
+        <div class="projects-calendar-head"><a class="jh-btn" href="{{ calendar_previous_url }}">←</a><strong>{{ selected_calendar_month|date:"F Y" }}</strong><a class="jh-btn" href="{{ calendar_next_url }}">→</a></div>
+        <div class="projects-calendar">{% for day in calendar_days %}{% if day %}<div class="projects-calendar-day{% if day.is_today %} today{% endif %}"><label>{{ day.date|date:"j" }}</label>{% for template in day.templates %}<small>{{ template.name }} · {{ template.starts_at_time|time:"H:i" }}–{{ template.ends_at_time|time:"H:i" }}</small>{% endfor %}</div>{% else %}<div class="projects-calendar-empty"></div>{% endif %}{% endfor %}</div>
+        {% if schedule_templates %}<div class="projects-item-grid" style="margin-top:14px">{% for template in schedule_templates %}<article class="projects-item"><h3>{{ template.name }}</h3><p>{{ template.starts_at_time|time:"H:i" }} — {{ template.ends_at_time|time:"H:i" }} · {{ employer_t.support_worker_break }}: {{ template.break_minutes }}{% if template.worker_label %}<br>{{ template.worker_label }}{% endif %}<br>{{ employer_t.support_project_schedule_dates }}: {{ template.calendar_dates|length }}</p></article>{% endfor %}</div>{% endif %}
+        <form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="project_schedule_template_create"><input type="hidden" name="return_month" value="{{ selected_calendar_month|date:'Y-m' }}"><h2>{{ employer_t.support_project_schedule_add }}</h2><div class="projects-grid"><label class="jh-field"><span>{{ employer_t.support_project_schedule_name }}</span><input class="jh-input" name="name" maxlength="120" required></label><label class="jh-field"><span>{{ employer_t.support_worker_shift_time }}</span><input class="jh-input" name="starts_at_time" type="time" required></label><label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_at_time" type="time" required></label><label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" name="break_minutes" type="number" min="0" max="720" value="0" required></label><label class="jh-field projects-wide"><span>{{ employer_t.support_time_label }}</span><input class="jh-input" name="worker_label" maxlength="160"></label></div><p style="margin:14px 0 8px;color:var(--muted)">{{ employer_t.support_project_schedule_pick_dates }}</p><div class="projects-calendar">{% for day in calendar_days %}{% if day %}<div class="projects-calendar-day{% if day.is_today %} today{% endif %}"><label><input class="jh-checkbox" name="calendar_dates" type="checkbox" value="{{ day.date|date:'Y-m-d' }}">{{ day.date|date:"j" }}</label></div>{% else %}<div class="projects-calendar-empty"></div>{% endif %}{% endfor %}</div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_project_schedule_add }}</button></div></form>
+      </section>
+
+      <section class="projects-section"><h2>{{ employer_t.support_project_edit }}</h2><form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="project_update"><input type="hidden" name="return_month" value="{{ selected_calendar_month|date:'Y-m' }}"><div class="projects-grid"><label class="jh-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" value="{{ selected_project.worker_visible_name }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="1" max="5000" value="{{ selected_project.worker_capacity }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="{{ selected_project.worksite.country_code }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" value="{{ selected_project.worksite.city }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20" value="{{ selected_project.worksite.postal_code }}"></label><label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" value="{{ selected_project.worksite.street }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" value="{{ selected_project.worksite.building }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" value="{{ selected_project.starts_on|date:'Y-m-d' }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date" value="{{ selected_project.ends_on|date:'Y-m-d' }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160" value="{{ selected_project.contact_name }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48" value="{{ selected_project.contact_phone }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email" value="{{ selected_project.contact_email }}"></label><label class="jh-field projects-wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000">{{ selected_project.instructions }}</textarea></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_project_save }}</button></div></form></section>
+    {% endif %}
+  </section>
+{% endblock %}
