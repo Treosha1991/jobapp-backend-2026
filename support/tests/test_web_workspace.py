@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -702,6 +702,109 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(
             response,
             "The shift was added and published immediately from the selected template.",
+        )
+
+    def test_quick_shift_replaces_a_current_shift_with_another_project(self):
+        """A one-day move may change the project without creating a second shift."""
+
+        self.client.force_login(self.owner)
+        work_date = timezone.localdate()
+        first_worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Existing packing site",
+            country_code="NL",
+            city="Lelystad",
+            street="Korenstraat",
+            building="15",
+            created_by=self.owner,
+        )
+        first_project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=first_worksite,
+            internal_name="Existing packing project",
+            worker_visible_name="Existing packing project",
+            worker_capacity=8,
+            starts_on=work_date,
+            created_by=self.owner,
+        )
+        first_assignment = WorkerProjectAssignment.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            project=first_project,
+            starts_at=timezone.make_aware(datetime.combine(work_date, datetime.min.time())),
+            state=WorkerProjectAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        old_shift = ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            work_assignment=first_assignment,
+            work_date=work_date,
+            starts_at=timezone.make_aware(datetime.combine(work_date, datetime.min.time())),
+            ends_at=timezone.make_aware(datetime.combine(work_date, datetime.min.time()))
+            + timedelta(hours=8),
+            break_minutes=30,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        second_worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Temporary packing site",
+            country_code="NL",
+            city="Lelystad",
+            street="Korenstraat",
+            building="16",
+            created_by=self.owner,
+        )
+        second_project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=second_worksite,
+            internal_name="Temporary packing project",
+            worker_visible_name="Temporary packing project",
+            worker_capacity=8,
+            starts_on=work_date,
+            created_by=self.owner,
+        )
+        template = ProjectScheduleTemplate.objects.create(
+            project=second_project,
+            name="Evening packing",
+            starts_at_time="14:00",
+            ends_at_time="22:00",
+            calendar_dates=[work_date.isoformat()],
+            created_by=self.owner,
+        )
+
+        worker_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
+        response = self.client.post(
+            worker_url,
+            {
+                "action": "scheduled_shift_from_template",
+                "work_date": work_date.isoformat(),
+                "project_id": str(second_project.public_id),
+                "schedule_template_id": str(template.public_id),
+                "return_tab": "company",
+                "return_month": work_date.strftime("%Y-%m"),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        old_shift.refresh_from_db()
+        self.assertEqual(old_shift.state, ScheduledWorkShift.STATE_CANCELLED)
+        replacement = ScheduledWorkShift.objects.get(
+            connection=self.worker_connection,
+            work_date=work_date,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(replacement.starts_at.strftime("%H:%M"), "14:00")
+        self.assertEqual(replacement.work_assignment.project_id, second_project.id)
+        self.assertContains(
+            response,
+            "The shift for this day was replaced and published immediately from the selected template.",
         )
 
     def test_owner_creates_project_templates_and_selects_several_for_worker(self):

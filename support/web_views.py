@@ -980,6 +980,12 @@ def _worker_card_operation(request, *, snapshot):
             )
         )
         messages.error(request, tr(request, message_key))
+    except Exception as error:  # Safety net: an employer action must never end on a blank 500 page.
+        print(
+            "[SUPPORT-WORKER-OPERATION-ERROR] "
+            f"action={action} type={type(error).__name__} detail={error}"
+        )
+        messages.error(request, tr(request, "support_worker_operation_error"))
     return _worker_card_redirect(
         connection,
         tab=request.POST.get("return_tab"),
