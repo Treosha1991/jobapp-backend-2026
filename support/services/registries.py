@@ -230,7 +230,7 @@ def update_project(*, actor, project, name, **data):
 
 
 def create_project_schedule_template(
-    *, actor, project, name, starts_at_time, ends_at_time, break_minutes, worker_label
+    *, actor, project, name, starts_at_time, ends_at_time, break_minutes
 ):
     """Store one reusable shift pattern for a project, without calendar days."""
 
@@ -250,7 +250,7 @@ def create_project_schedule_template(
                 starts_at_time=starts_at_time,
                 ends_at_time=ends_at_time,
                 break_minutes=break_minutes,
-                worker_label=(worker_label or "").strip(),
+                worker_label="",
                 created_by=actor,
             )
         except IntegrityError as exc:

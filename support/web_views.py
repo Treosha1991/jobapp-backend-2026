@@ -877,7 +877,7 @@ def _worker_card_operation(request, *, snapshot):
                             starts_at=starts_at,
                             ends_at=ends_at,
                             break_minutes=template.break_minutes,
-                            worker_label=(template.worker_label or template.name).strip(),
+                            worker_label="",
                             work_assignment=work_assignment,
                             replacement_state=ScheduledWorkShift.STATE_PUBLISHED,
                         )
@@ -890,7 +890,7 @@ def _worker_card_operation(request, *, snapshot):
                             starts_at=starts_at,
                             ends_at=ends_at,
                             break_minutes=template.break_minutes,
-                            worker_label=(template.worker_label or template.name).strip(),
+                            worker_label="",
                             work_assignment=work_assignment,
                         )
                         publish_scheduled_shift(actor=request.user, shift=shift)

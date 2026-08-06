@@ -845,11 +845,25 @@ class SupportWorkspaceWebTests(TestCase):
                 "starts_at_time": "06:00",
                 "ends_at_time": "14:30",
                 "break_minutes": "30",
-                "worker_label": "Packing",
             },
         )
         self.assertRedirects(response, detail_url)
         morning = ProjectScheduleTemplate.objects.get(project=project, name="Morning shift")
+        self.assertEqual(morning.worker_label, "")
+        project_page = self.client.get(detail_url)
+        self.assertContains(project_page, 'name="name" maxlength="30"')
+        self.assertNotContains(project_page, 'name="worker_label"')
+        self.client.post(
+            detail_url,
+            {
+                "action": "project_schedule_template_create",
+                "name": "X" * 31,
+                "starts_at_time": "08:00",
+                "ends_at_time": "16:00",
+                "break_minutes": "15",
+            },
+        )
+        self.assertFalse(ProjectScheduleTemplate.objects.filter(project=project, name="X" * 31).exists())
         evening = ProjectScheduleTemplate.objects.create(
             project=project,
             name="Evening shift",

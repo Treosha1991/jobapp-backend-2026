@@ -615,11 +615,10 @@ class ProjectCreateSerializer(StrictInputSerializer):
 
 
 class ProjectScheduleTemplateCreateSerializer(StrictInputSerializer):
-    name = serializers.CharField(max_length=120)
+    name = serializers.CharField(max_length=30)
     starts_at_time = serializers.TimeField()
     ends_at_time = serializers.TimeField()
     break_minutes = serializers.IntegerField(min_value=0, max_value=720, default=0)
-    worker_label = serializers.CharField(max_length=160, required=False, allow_blank=True, default="")
 
     def validate_name(self, value):
         normalized = value.strip()

@@ -199,7 +199,7 @@ class ProjectScheduleTemplate(models.Model):
         on_delete=models.CASCADE,
         related_name="schedule_templates",
     )
-    name = models.CharField(max_length=120)
+    name = models.CharField(max_length=30)
     starts_at_time = models.TimeField()
     ends_at_time = models.TimeField()
     break_minutes = models.PositiveSmallIntegerField(default=0)
