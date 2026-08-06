@@ -805,15 +805,10 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
             )
             .order_by("internal_name", "id")
         )
-        active_project_ids = {
-            item.project_id
-            for item in work_assignments
-            if item.state == WorkerProjectAssignment.STATE_PUBLISHED
-        }
         quick_shift_projects = [
             item
             for item in work_projects
-            if item.id in active_project_ids and item.schedule_templates.all()
+            if item.schedule_templates.all()
         ]
         has_schedule_templates = bool(quick_shift_projects)
         try:

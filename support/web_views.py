@@ -801,7 +801,31 @@ def _worker_card_operation(request, *, snapshot):
                 None,
             )
             if work_assignment is None:
-                raise ValueError("published_assignment_for_selected_project_required")
+                draft_assignment = (
+                    WorkerProjectAssignment.objects.filter(
+                        organization=organization,
+                        connection=connection,
+                        project=project,
+                        state=WorkerProjectAssignment.STATE_DRAFT,
+                    )
+                    .order_by("-starts_at", "-id")
+                    .first()
+                )
+                with transaction.atomic():
+                    if draft_assignment is None:
+                        draft_assignment = create_worker_project_assignment(
+                            actor=request.user,
+                            organization=organization,
+                            connection=connection,
+                            project=project,
+                            worker_role="",
+                            starts_at=starts_at,
+                            schedule_templates=(),
+                        )
+                    work_assignment = publish_worker_project_assignment(
+                        actor=request.user,
+                        assignment=draft_assignment,
+                    )
 
             current_shift = (
                 ScheduledWorkShift.objects.filter(

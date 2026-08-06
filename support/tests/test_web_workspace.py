@@ -639,6 +639,71 @@ class SupportWorkspaceWebTests(TestCase):
         draft.refresh_from_db()
         self.assertEqual(draft.state, WorkerProjectAssignment.STATE_DRAFT)
 
+    def test_quick_shift_lists_an_unassigned_project_and_assigns_it_on_publish(self):
+        self.client.force_login(self.owner)
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="New packing site",
+            country_code="NL",
+            city="Lelystad",
+            street="Korenstraat",
+            building="14",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="New packing project",
+            worker_visible_name="New packing project",
+            worker_capacity=8,
+            starts_on=timezone.localdate(),
+            created_by=self.owner,
+        )
+        template = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Late packing",
+            starts_at_time="14:00",
+            ends_at_time="22:00",
+            calendar_dates=[timezone.localdate().isoformat()],
+            created_by=self.owner,
+        )
+        worker_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
+
+        page = self.client.get(worker_url)
+        self.assertContains(
+            page,
+            f'<option value="{project.public_id}">{project.worker_visible_name}</option>',
+        )
+
+        response = self.client.post(
+            worker_url,
+            {
+                "action": "scheduled_shift_from_template",
+                "work_date": timezone.localdate().isoformat(),
+                "project_id": str(project.public_id),
+                "schedule_template_id": str(template.public_id),
+                "return_tab": "company",
+                "return_month": timezone.localdate().strftime("%Y-%m"),
+            },
+            follow=True,
+        )
+        assignment = WorkerProjectAssignment.objects.get(
+            connection=self.worker_connection,
+            project=project,
+        )
+        self.assertEqual(assignment.state, WorkerProjectAssignment.STATE_PUBLISHED)
+        self.assertTrue(
+            ScheduledWorkShift.objects.filter(
+                connection=self.worker_connection,
+                work_assignment=assignment,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).exists()
+        )
+        self.assertContains(
+            response,
+            "The shift was added and published immediately from the selected template.",
+        )
+
     def test_owner_creates_project_templates_and_selects_several_for_worker(self):
         """A project is employer-facing, while its address stays operational data."""
 
