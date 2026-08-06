@@ -229,7 +229,7 @@ class SupportOperationsTests(TestCase):
             2,
         )
 
-    def test_work_assignment_conflict_is_rejected_only_when_publishing(self):
+    def test_work_assignment_conflict_is_rejected_only_when_publishing_same_project(self):
         worksite = self.owner_client.post(
             f"{self.base_url}/worksites/",
             {
@@ -277,6 +277,33 @@ class SupportOperationsTests(TestCase):
             "work_assignment_conflicts_with_published_assignment",
         )
         self.assertEqual(WorkerProjectAssignment.objects.filter(state="published").count(), 1)
+
+        other_project = self.owner_client.post(
+            f"{self.base_url}/work-projects/",
+            {
+                "worksite_id": worksite.data["worksite"]["id"],
+                "internal_name": "Flevosap line B",
+                "worker_visible_name": "Flevosap B",
+            },
+            format="json",
+        )
+        self.assertEqual(other_project.status_code, 201, other_project.data)
+        other_payload = {
+            **payload,
+            "project_id": other_project.data["work_project"]["id"],
+        }
+        other_assignment = self.owner_client.post(
+            f"{self.base_url}/work-assignments/",
+            other_payload,
+            format="json",
+        )
+        self.assertEqual(other_assignment.status_code, 201, other_assignment.data)
+        other_published = self.owner_client.post(
+            f"/api/v2/support/work-assignments/"
+            f"{other_assignment.data['work_assignment']['id']}/publish/"
+        )
+        self.assertEqual(other_published.status_code, 200, other_published.data)
+        self.assertEqual(WorkerProjectAssignment.objects.filter(state="published").count(), 2)
 
     def test_route_publishes_driver_and_only_notifies_assigned_people(self):
         _, _, place = self._create_housing_place()

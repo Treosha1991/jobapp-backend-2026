@@ -857,6 +857,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
                     other_ends_at=other.ends_at,
                 )
                 for other in published_work_assignments
+                if other.project_id == assignment.project_id
             )
             for selection in assignment.schedule_template_selections.all():
                 template = selection.template

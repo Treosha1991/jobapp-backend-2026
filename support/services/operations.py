@@ -538,7 +538,11 @@ def publish_worker_project_assignment(*, actor, assignment):
             raise ValidationError({"project": "work_project_not_available"})
         conflict = _period_overlaps(
             WorkerProjectAssignment.objects.select_for_update()
-            .filter(connection=assignment.connection, state=WorkerProjectAssignment.STATE_PUBLISHED)
+            .filter(
+                connection=assignment.connection,
+                project=assignment.project,
+                state=WorkerProjectAssignment.STATE_PUBLISHED,
+            )
             .exclude(pk=assignment.pk),
             starts_field="starts_at",
             ends_field="ends_at",
