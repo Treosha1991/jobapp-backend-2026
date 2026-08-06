@@ -858,6 +858,8 @@ def replace_scheduled_shift(
     ends_at,
     break_minutes,
     worker_label="",
+    work_assignment=None,
+    replacement_state=None,
 ):
     """Replace one planned shift while preserving the old audit record.
 
@@ -907,7 +909,22 @@ def replace_scheduled_shift(
         if conflict_exists:
             raise ValidationError({"work_date": "current_scheduled_shift_already_exists"})
 
-        previous_state = shift.state
+        if work_assignment is None:
+            work_assignment = shift.work_assignment
+        elif (
+            work_assignment.organization_id != organization.id
+            or work_assignment.connection_id != shift.connection_id
+            or work_assignment.state != work_assignment.STATE_PUBLISHED
+        ):
+            raise ValidationError({"work_assignment": "published_assignment_for_worker_required"})
+
+        next_state = replacement_state or shift.state
+        if next_state not in {
+            ScheduledWorkShift.STATE_DRAFT,
+            ScheduledWorkShift.STATE_PUBLISHED,
+        }:
+            raise ValidationError({"state": "scheduled_shift_replacement_state_invalid"})
+
         now = timezone.now()
         shift.state = ScheduledWorkShift.STATE_CANCELLED
         shift.cancelled_at = now
@@ -915,16 +932,16 @@ def replace_scheduled_shift(
         replacement = ScheduledWorkShift.objects.create(
             organization=organization,
             connection=shift.connection,
-            work_assignment=shift.work_assignment,
+            work_assignment=work_assignment,
             work_date=work_date,
             starts_at=starts_at,
             ends_at=ends_at,
             break_minutes=break_minutes,
             worker_label=(worker_label or "").strip(),
-            state=previous_state,
+            state=next_state,
             created_by=actor,
-            published_by=actor if previous_state == ScheduledWorkShift.STATE_PUBLISHED else None,
-            published_at=now if previous_state == ScheduledWorkShift.STATE_PUBLISHED else None,
+            published_by=actor if next_state == ScheduledWorkShift.STATE_PUBLISHED else None,
+            published_at=now if next_state == ScheduledWorkShift.STATE_PUBLISHED else None,
         )
         record_audit_event(
             organization=organization,
@@ -937,7 +954,7 @@ def replace_scheduled_shift(
                 "work_date": work_date.isoformat(),
             },
         )
-        if previous_state == ScheduledWorkShift.STATE_PUBLISHED:
+        if next_state == ScheduledWorkShift.STATE_PUBLISHED:
             enqueue_support_notification(
                 organization=organization,
                 recipient=shift.connection.candidate,

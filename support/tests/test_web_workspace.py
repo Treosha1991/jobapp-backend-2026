@@ -678,6 +678,26 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(project.worksite.street, "Zuurlaan")
         self.assertEqual(project.contact_email, "rafal@example.com")
 
+        project_page = self.client.get(detail_url)
+        self.assertContains(project_page, 'name="starts_at_time" type="time" value="06:00"')
+        self.assertContains(project_page, 'name="ends_at_time" type="time" value="14:45"')
+        missing_dates_response = self.client.post(
+            detail_url,
+            {
+                "action": "project_schedule_template_create",
+                "return_month": project_starts.strftime("%Y-%m"),
+                "name": "No dates",
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:30",
+                "break_minutes": "30",
+            },
+            follow=True,
+        )
+        self.assertContains(
+            missing_dates_response,
+            "Select at least one calendar day for the template.",
+        )
+
         template_dates = [(project_starts + timedelta(days=1)).isoformat()]
         response = self.client.post(
             detail_url,
@@ -803,6 +823,9 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(created_shifts[1].starts_at.strftime("%H:%M"), "06:00")
         self.assertContains(response, "14:30")
         self.assertContains(response, "06:00")
+        self.assertContains(response, 'data-calendar-day')
+        self.assertContains(response, 'data-quick-shift-project')
+        self.assertContains(response, 'data-quick-shift-template')
 
         quick_date = project_starts + timedelta(days=3)
         quick_response = self.client.post(
@@ -810,6 +833,7 @@ class SupportWorkspaceWebTests(TestCase):
             {
                 "action": "scheduled_shift_from_template",
                 "work_date": quick_date.isoformat(),
+                "project_id": str(project.public_id),
                 "schedule_template_id": str(morning.public_id),
                 "return_tab": "company",
                 "return_month": quick_date.strftime("%Y-%m"),
@@ -829,20 +853,30 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertContains(quick_response, "Shifts in this assignment: 3")
 
-        duplicate_quick_response = self.client.post(
+        replaced_quick_response = self.client.post(
             worker_url,
             {
                 "action": "scheduled_shift_from_template",
                 "work_date": quick_date.isoformat(),
-                "schedule_template_id": str(morning.public_id),
+                "project_id": str(project.public_id),
+                "schedule_template_id": str(evening.public_id),
                 "return_tab": "company",
                 "return_month": quick_date.strftime("%Y-%m"),
             },
             follow=True,
         )
+        quick_shift.refresh_from_db()
+        self.assertEqual(quick_shift.state, ScheduledWorkShift.STATE_CANCELLED)
+        replacement = ScheduledWorkShift.objects.get(
+            connection=self.worker_connection,
+            work_date=quick_date,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(replacement.work_assignment_id, assignment.id)
+        self.assertEqual(replacement.starts_at.strftime("%H:%M"), "14:30")
         self.assertContains(
-            duplicate_quick_response,
-            "This day already has a published shift or a draft.",
+            replaced_quick_response,
+            "The shift for this day was replaced and published immediately from the selected template.",
         )
 
     def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):

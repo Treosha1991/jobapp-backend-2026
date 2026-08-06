@@ -377,6 +377,26 @@ def _worker_operation_error_key(error):
     return "support_worker_operation_error"
 
 
+def _project_operation_error_key(error):
+    """Keep project-template validation errors understandable in the web UI."""
+
+    detail = str(getattr(error, "detail", error))
+    if (
+        "project_schedule_template_dates_required" in detail
+        or "This list may not be empty" in detail
+    ):
+        return "support_project_schedule_dates_required"
+    if "project_schedule_template_dates_outside_project" in detail:
+        return "support_project_schedule_dates_outside_project"
+    if "project_schedule_template_name_already_exists" in detail:
+        return "support_project_schedule_name_already_exists"
+    if "project_schedule_template_name_required" in detail:
+        return "support_project_schedule_name_required"
+    if "time has the wrong format" in detail.lower():
+        return "support_project_schedule_time_invalid"
+    return "support_project_operation_error"
+
+
 def _worker_card_operation(request, *, snapshot):
     """Create or publish an operational draft through the existing services."""
 
@@ -742,11 +762,17 @@ def _worker_card_operation(request, *, snapshot):
             messages.success(request, tr(request, "support_worker_draft_created"))
         elif action == "scheduled_shift_from_template":
             work_date = _operation_date(request.POST.get("work_date"))
+            project = get_object_or_404(
+                WorkProject.objects.filter(
+                    organization=organization,
+                    is_active=True,
+                ),
+                public_id=request.POST.get("project_id"),
+            )
             template = get_object_or_404(
                 ProjectScheduleTemplate.objects.select_related("project"),
                 public_id=request.POST.get("schedule_template_id"),
-                project__organization=organization,
-                project__is_active=True,
+                project=project,
                 is_active=True,
             )
             current_timezone = timezone.get_current_timezone()
@@ -766,7 +792,7 @@ def _worker_card_operation(request, *, snapshot):
                     for item in WorkerProjectAssignment.objects.filter(
                         organization=organization,
                         connection=connection,
-                        project=template.project,
+                        project=project,
                         state=WorkerProjectAssignment.STATE_PUBLISHED,
                         starts_at__lte=starts_at,
                     ).order_by("-starts_at", "-id")
@@ -776,20 +802,48 @@ def _worker_card_operation(request, *, snapshot):
             )
             if work_assignment is None:
                 raise ValueError("published_assignment_for_selected_project_required")
-            with transaction.atomic():
-                shift = create_scheduled_shift(
-                    actor=request.user,
+
+            current_shift = (
+                ScheduledWorkShift.objects.filter(
                     organization=organization,
                     connection=connection,
+                    work_date=work_date,
+                    state__in=(
+                        ScheduledWorkShift.STATE_DRAFT,
+                        ScheduledWorkShift.STATE_PUBLISHED,
+                    ),
+                )
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            if current_shift is not None:
+                replace_scheduled_shift(
+                    actor=request.user,
+                    shift=current_shift,
                     work_date=work_date,
                     starts_at=starts_at,
                     ends_at=ends_at,
                     break_minutes=template.break_minutes,
                     worker_label=(template.worker_label or template.name).strip(),
                     work_assignment=work_assignment,
+                    replacement_state=ScheduledWorkShift.STATE_PUBLISHED,
                 )
-                publish_scheduled_shift(actor=request.user, shift=shift)
-            messages.success(request, tr(request, "support_worker_quick_shift_published"))
+                messages.success(request, tr(request, "support_worker_quick_shift_replaced"))
+            else:
+                with transaction.atomic():
+                    shift = create_scheduled_shift(
+                        actor=request.user,
+                        organization=organization,
+                        connection=connection,
+                        work_date=work_date,
+                        starts_at=starts_at,
+                        ends_at=ends_at,
+                        break_minutes=template.break_minutes,
+                        worker_label=(template.worker_label or template.name).strip(),
+                        work_assignment=work_assignment,
+                    )
+                    publish_scheduled_shift(actor=request.user, shift=shift)
+                messages.success(request, tr(request, "support_worker_quick_shift_published"))
         elif action == "scheduled_shift_publish":
             shift = get_object_or_404(
                 ScheduledWorkShift.objects.filter(
@@ -1174,8 +1228,8 @@ def projects_workspace(request, project_public_id=None):
                     calendar_month=request.POST.get("return_month"),
                 )
             raise ValueError("project_operation_unknown")
-        except (APIException, ValueError):
-            messages.error(request, tr(request, "support_project_operation_error"))
+        except (APIException, ValueError) as error:
+            messages.error(request, tr(request, _project_operation_error_key(error)))
             return _projects_redirect(
                 organization,
                 project=selected_project,
