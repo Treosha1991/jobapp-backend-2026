@@ -186,7 +186,12 @@ class WorkerProjectAssignment(models.Model):
 
 
 class ProjectScheduleTemplate(models.Model):
-    """A project-owned shift pattern with explicitly selected calendar days."""
+    """A project-owned reusable pattern for one work shift.
+
+    A template deliberately contains no calendar dates.  Managers choose the
+    actual days for a worker in that worker's calendar, which lets the same
+    template be used for one day, several selected days, or a replacement.
+    """
 
     public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     project = models.ForeignKey(
@@ -199,9 +204,6 @@ class ProjectScheduleTemplate(models.Model):
     ends_at_time = models.TimeField()
     break_minutes = models.PositiveSmallIntegerField(default=0)
     worker_label = models.CharField(max_length=160, blank=True, default="")
-    # ISO dates keep the selection intentionally explicit: the employer may
-    # choose any days in the calendar instead of being limited to weekdays.
-    calendar_dates = models.JSONField(default=list)
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -222,32 +224,6 @@ class ProjectScheduleTemplate(models.Model):
             )
         ]
         indexes = [models.Index(fields=("project", "is_active", "name"))]
-
-
-class WorkerProjectScheduleTemplateSelection(models.Model):
-    """The project templates selected for one worker assignment."""
-
-    assignment = models.ForeignKey(
-        WorkerProjectAssignment,
-        on_delete=models.CASCADE,
-        related_name="schedule_template_selections",
-    )
-    template = models.ForeignKey(
-        ProjectScheduleTemplate,
-        on_delete=models.PROTECT,
-        related_name="assignment_selections",
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=("assignment", "template"),
-                name="support_unique_worker_project_schedule_template",
-            )
-        ]
-        indexes = [models.Index(fields=("template", "assignment"))]
-
 
 class Vehicle(models.Model):
     public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)

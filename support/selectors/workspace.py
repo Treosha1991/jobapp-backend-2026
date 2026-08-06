@@ -6,8 +6,7 @@ hide columns, because that would still expose data through a direct URL.
 """
 
 from calendar import monthrange
-from datetime import date, datetime, timedelta
-from types import SimpleNamespace
+from datetime import date, timedelta
 
 from django.http import Http404
 from django.db.models import Prefetch, Q
@@ -79,16 +78,6 @@ def _date_period_overlaps(*, starts_field, ends_field, starts_on, ends_on):
         Q(**{f"{ends_field}__isnull": True})
         | Q(**{f"{ends_field}__gt": starts_on})
     )
-
-
-def _datetime_periods_overlap(*, starts_at, ends_at, other_starts_at, other_ends_at):
-    """Return whether two half-open datetime periods overlap."""
-
-    return (
-        (ends_at is None or other_starts_at < ends_at)
-        and (other_ends_at is None or other_ends_at > starts_at)
-    )
-
 
 def _select_membership(*, user, organization_public_id):
     memberships = list(
@@ -502,10 +491,6 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
     templates = []
     workers = []
     routes = []
-    calendar_days = []
-    selected_calendar_month = None
-    calendar_previous_month = None
-    calendar_next_month = None
     if selected_project is not None:
         templates = list(
             ProjectScheduleTemplate.objects.filter(
@@ -549,55 +534,6 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
                 route.driver_vehicle_assignment.driver_connection.candidate
             )
 
-        try:
-            year, month = [int(item) for item in (calendar_month or "").split("-", 1)]
-            selected_calendar_month = date(year, month, 1)
-        except (TypeError, ValueError):
-            today = timezone.localdate()
-            selected_calendar_month = date(today.year, today.month, 1)
-        selected_month_end = date(
-            selected_calendar_month.year,
-            selected_calendar_month.month,
-            monthrange(selected_calendar_month.year, selected_calendar_month.month)[1],
-        )
-        template_by_date = {}
-        for template in templates:
-            for raw_value in template.calendar_dates:
-                selected_date = parse_date(raw_value) if isinstance(raw_value, str) else None
-                if selected_date is None or not (
-                    selected_calendar_month <= selected_date <= selected_month_end
-                ):
-                    continue
-                template_by_date.setdefault(selected_date, []).append(template)
-        first_weekday, days_in_month = monthrange(
-            selected_calendar_month.year,
-            selected_calendar_month.month,
-        )
-        calendar_days = [None] * first_weekday
-        for day_number in range(1, days_in_month + 1):
-            current_date = date(
-                selected_calendar_month.year,
-                selected_calendar_month.month,
-                day_number,
-            )
-            calendar_days.append(
-                {
-                    "date": current_date,
-                    "templates": template_by_date.get(current_date, []),
-                    "is_today": current_date == timezone.localdate(),
-                }
-            )
-        calendar_previous_month = (
-            date(selected_calendar_month.year - 1, 12, 1)
-            if selected_calendar_month.month == 1
-            else date(selected_calendar_month.year, selected_calendar_month.month - 1, 1)
-        )
-        calendar_next_month = (
-            date(selected_calendar_month.year + 1, 1, 1)
-            if selected_calendar_month.month == 12
-            else date(selected_calendar_month.year, selected_calendar_month.month + 1, 1)
-        )
-
     return {
         "organization": organization,
         "membership": membership,
@@ -608,10 +544,6 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
         "schedule_templates": templates,
         "workers": workers,
         "routes": routes,
-        "calendar_days": calendar_days,
-        "selected_calendar_month": selected_calendar_month,
-        "calendar_previous_month": calendar_previous_month,
-        "calendar_next_month": calendar_next_month,
     }
 
 
@@ -774,7 +706,6 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
             WorkerProjectAssignment.objects.filter(connection=connection)
             .select_related("project__worksite")
             .prefetch_related(
-                "schedule_template_selections__template",
                 Prefetch(
                     "scheduled_shifts",
                     queryset=ScheduledWorkShift.objects.filter(
@@ -836,67 +767,7 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
             shift.is_preview = False
             shift.has_conflict = False
 
-        # A project-assignment draft has not created ScheduledWorkShift rows yet.
-        # Still show its selected project templates in the calendar so the manager
-        # can see the planned shifts, including a collision, before publishing.
-        draft_template_previews = []
-        current_timezone = timezone.get_current_timezone()
-        published_work_assignments = [
-            item
-            for item in work_assignments
-            if item.state == WorkerProjectAssignment.STATE_PUBLISHED
-        ]
-        for assignment in work_assignments:
-            if assignment.state != WorkerProjectAssignment.STATE_DRAFT:
-                continue
-            assignment_has_conflict = any(
-                _datetime_periods_overlap(
-                    starts_at=assignment.starts_at,
-                    ends_at=assignment.ends_at,
-                    other_starts_at=other.starts_at,
-                    other_ends_at=other.ends_at,
-                )
-                for other in published_work_assignments
-                if other.project_id == assignment.project_id
-            )
-            for selection in assignment.schedule_template_selections.all():
-                template = selection.template
-                for raw_date in template.calendar_dates:
-                    work_date = parse_date(raw_date) if isinstance(raw_date, str) else None
-                    if work_date is None or not (month_start <= work_date <= month_end):
-                        continue
-                    starts_at = timezone.make_aware(
-                        datetime.combine(work_date, template.starts_at_time),
-                        current_timezone,
-                    )
-                    ends_at = timezone.make_aware(
-                        datetime.combine(work_date, template.ends_at_time),
-                        current_timezone,
-                    )
-                    if ends_at <= starts_at:
-                        ends_at += timedelta(days=1)
-                    if starts_at < assignment.starts_at or (
-                        assignment.ends_at is not None and ends_at > assignment.ends_at
-                    ):
-                        continue
-                    draft_template_previews.append(
-                        SimpleNamespace(
-                            work_date=work_date,
-                            starts_at=starts_at,
-                            ends_at=ends_at,
-                            break_minutes=template.break_minutes,
-                            worker_label=template.worker_label or template.name,
-                            state=WorkerProjectAssignment.STATE_DRAFT,
-                            is_preview=True,
-                            has_conflict=False,
-                            has_assignment_conflict=assignment_has_conflict,
-                        )
-                    )
-
-        calendar_shifts = sorted(
-            [*scheduled_shifts, *draft_template_previews],
-            key=lambda item: (item.work_date, item.starts_at, item.ends_at),
-        )
+        calendar_shifts = list(scheduled_shifts)
         for index, shift in enumerate(calendar_shifts):
             if getattr(shift, "has_assignment_conflict", False):
                 shift.has_conflict = True

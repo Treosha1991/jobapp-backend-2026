@@ -43,6 +43,7 @@
   .worker-calendar-day.has-published { border-color:rgba(24,223,103,.75); background:rgba(24,223,103,.08); }
   .worker-calendar-day.has-draft { border-color:rgba(255,176,71,.85); background:rgba(255,176,71,.08); }
   .worker-calendar-day.has-conflict { border-color:rgba(255,107,107,.95); background:rgba(255,107,107,.10); }
+  .worker-calendar-day.is-selected { box-shadow:inset 0 0 0 2px rgba(110,199,255,.95); }
   .worker-calendar-conflict-mark { display:inline-grid; width:18px; height:18px; place-items:center; border-radius:999px; background:#ff6b6b; color:#fff; font-size:12px; line-height:1; }
   .worker-calendar-time { margin-top:8px; color:#d7fce3; font-size:11px; line-height:1.35; }
   .worker-calendar-time.is-preview { color:#ffe4ad; }
@@ -50,6 +51,10 @@
   .worker-quick-shift { display:grid; gap:7px; margin-top:9px; padding-top:9px; border-top:1px dashed var(--line); }
   .worker-quick-shift .jh-input { min-width:0; padding:7px 8px; font-size:10px; }
   .worker-quick-shift .jh-btn { width:100%; padding:7px 8px; font-size:10px; }
+  .worker-calendar-bulk { margin:14px 0; padding:14px; border:1px solid rgba(24,223,103,.34); border-radius:16px; background:linear-gradient(135deg,rgba(24,223,103,.07),rgba(5,22,36,.25)); }
+  .worker-calendar-bulk p { margin:0 0 10px; color:var(--muted); font-size:12px; }
+  .worker-calendar-select { margin-top:8px; display:flex; align-items:center; gap:6px; color:#ccecff; font-size:11px; font-weight:800; }
+  .worker-calendar-select input { width:16px; height:16px; accent-color:var(--green); }
   .worker-edit { margin-top:10px; padding:11px; border:1px solid var(--line); border-radius:13px; background:rgba(5,22,36,.2); }
   .worker-edit summary { cursor:pointer; color:#ccecff; font-weight:800; }
   .worker-edit form { margin-top:11px; }
@@ -129,6 +134,7 @@
       document.querySelectorAll('[data-quick-shift-form]').forEach(function (form) {
         var project = form.querySelector('[data-quick-shift-project]');
         var template = form.querySelector('[data-quick-shift-template]');
+        if (!project || !template) return;
         var syncTemplates = function () {
           var firstAvailable = null;
           Array.prototype.forEach.call(template.options, function (option) {
@@ -144,6 +150,12 @@
         project.addEventListener('change', syncTemplates);
         syncTemplates();
       });
+      document.querySelectorAll('[data-schedule-date]').forEach(function (input) {
+        var day = input.closest('[data-calendar-day]');
+        var syncSelected = function () { if (day) day.classList.toggle('is-selected', input.checked); };
+        input.addEventListener('change', syncSelected);
+        syncSelected();
+      });
       document.querySelectorAll('[data-calendar-day]').forEach(function (day) {
         day.addEventListener('click', function (event) {
           if (event.target.closest('summary, form, input, select, option, button, a, label')) return;
@@ -151,23 +163,6 @@
         });
       });
     });
-</script>
-{% endblock %}
-
-{% block extra_body %}
-<script>
-  (() => {
-    document.querySelectorAll("[data-project-assignment-form]").forEach((form) => {
-      const select = form.querySelector("[data-project-select]");
-      const sync = () => form.querySelectorAll("[data-project-template-group]").forEach((group) => {
-        const active = group.dataset.projectTemplateGroup === select.value;
-        group.hidden = !active;
-        group.querySelectorAll("input").forEach((input) => { if (!active) input.checked = false; });
-      });
-      select.addEventListener("change", sync);
-      sync();
-    });
-  })();
 </script>
 {% endblock %}
 
@@ -225,7 +220,7 @@
           <article class="worker-item">
             <div>
               <h3>{{ item.project.worker_visible_name }}</h3>
-              <p>{{ item.project.internal_name }}{% if item.worker_role %}<br>{{ employer_t.support_worker_role }}: {{ item.worker_role }}{% endif %}{% if item.schedule_template_selections.all %}<br>{{ employer_t.support_project_schedule }}: {% for selection in item.schedule_template_selections.all %}{{ selection.template.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}<br>{{ employer_t.support_worker_starts }}: {{ item.starts_at|date:"d.m.Y H:i" }}{% if item.ends_at %}<br>{{ employer_t.support_worker_ends }}: {{ item.ends_at|date:"d.m.Y H:i" }}{% endif %}</p>
+              <p>{{ item.project.internal_name }}{% if item.worker_role %}<br>{{ employer_t.support_worker_role }}: {{ item.worker_role }}{% endif %}<br>{{ employer_t.support_worker_starts }}: {{ item.starts_at|date:"d.m.Y H:i" }}{% if item.ends_at %}<br>{{ employer_t.support_worker_ends }}: {{ item.ends_at|date:"d.m.Y H:i" }}{% endif %}</p>
               {% if item.display_scheduled_shifts %}
                 <details class="worker-assignment-shifts">
                   <summary>{{ employer_t.support_worker_assignment_shifts }}: {{ item.display_scheduled_shifts|length }}</summary>
@@ -239,7 +234,7 @@
           </article>
         {% empty %}<div class="worker-empty">{{ employer_t.support_worker_no_assignments }}</div>{% endfor %}
         {% if can_operate and work_projects %}
-          <form class="worker-form" method="post" data-project-assignment-form>
+          <form class="worker-form" method="post">
             {% csrf_token %}
             <input type="hidden" name="action" value="work_draft">
             <input type="hidden" name="return_tab" value="company">
@@ -249,19 +244,6 @@
               <label class="jh-field"><span>{{ employer_t.support_worker_project }}</span><select class="jh-input" name="project_id" required data-project-select>{% for item in work_projects %}<option value="{{ item.public_id }}">{{ item.worker_visible_name }} · {{ item.internal_name }}</option>{% endfor %}</select></label>
               <label class="jh-field"><span>{{ employer_t.support_worker_role }}</span><input class="jh-input" name="worker_role" maxlength="160"></label>
             </div>
-            {% for item in work_projects %}
-              <fieldset data-project-template-group="{{ item.public_id }}" hidden style="margin:14px 0 0;padding:12px;border:1px solid var(--line);border-radius:14px">
-                <legend>{{ employer_t.support_project_schedule }}</legend>
-                {% if item.schedule_templates.all %}
-                  <p><small>{{ employer_t.support_worker_project_templates_choose }}</small></p>
-                  {% for template in item.schedule_templates.all %}
-                    <label class="jh-inline-check"><input class="jh-checkbox" type="checkbox" name="schedule_template_ids" value="{{ template.public_id }}">{{ template.name }} · {{ template.starts_at_time|time:"H:i" }}–{{ template.ends_at_time|time:"H:i" }} · {{ employer_t.support_project_schedule_dates }}: {{ template.calendar_dates|length }}</label>
-                  {% endfor %}
-                {% else %}
-                  <p><small>{{ employer_t.support_worker_project_templates_empty }}</small></p>
-                {% endif %}
-              </fieldset>
-            {% endfor %}
             <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div>
           </form>
         {% endif %}
@@ -269,47 +251,51 @@
       <section class="worker-section">
         <div class="worker-calendar-head"><a class="jh-btn" href="{{ calendar_previous_url }}">←</a><strong>{{ employer_t.support_worker_schedule_calendar }} · {{ selected_calendar_date|date:"F Y" }}</strong><a class="jh-btn" href="{{ calendar_next_url }}">→</a></div>
         <p>{{ employer_t.support_worker_schedule_hint }}</p>
-        <div class="worker-calendar">
+        {% if can_operate %}
+          <form class="worker-calendar-bulk" method="post" data-quick-shift-form>
+            {% csrf_token %}
+            <input type="hidden" name="return_tab" value="company">
+            <input type="hidden" name="return_month" value="{{ calendar_month }}">
+            <h3>{{ employer_t.support_worker_schedule_bulk_title }}</h3>
+            <p>{{ employer_t.support_worker_schedule_bulk_text }}</p>
+            {% if has_schedule_templates %}
+              <div class="worker-form-grid">
+                <label class="jh-field"><span>{{ employer_t.support_worker_quick_shift_project }}</span>
+                  <select class="jh-input" name="project_id" required data-quick-shift-project>
+                    {% for project in quick_shift_projects %}<option value="{{ project.public_id }}">{{ project.worker_visible_name }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label class="jh-field"><span>{{ employer_t.support_worker_quick_shift_template }}</span>
+                  <select class="jh-input" name="schedule_template_id" required data-quick-shift-template>
+                    {% for project in quick_shift_projects %}{% for template in project.schedule_templates.all %}<option value="{{ template.public_id }}" data-project-id="{{ project.public_id }}">{{ template.name }} · {{ template.starts_at_time|time:"H:i" }}–{{ template.ends_at_time|time:"H:i" }}</option>{% endfor %}{% endfor %}
+                  </select>
+                </label>
+              </div>
+              <div class="jh-actions"><button class="jh-btn primary" name="action" value="scheduled_shifts_from_template" type="submit">{{ employer_t.support_worker_schedule_bulk_apply }}</button><button class="jh-btn" name="action" value="scheduled_shifts_clear" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_bulk_clear }}</button></div>
+            {% else %}
+              <p>{{ employer_t.support_worker_project_templates_empty }}</p>
+              <div class="jh-actions"><button class="jh-btn" name="action" value="scheduled_shifts_clear" type="submit">{{ employer_t.support_worker_schedule_bulk_clear }}</button></div>
+            {% endif %}
+            <div class="worker-calendar">
+        {% else %}
+          <div class="worker-calendar">
+        {% endif %}
           {% for day in calendar_days %}
             {% if day %}
               <details data-calendar-day class="worker-calendar-day {% if day.is_today %}is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}">
                 <summary>{{ day.date|date:"j" }}{% if day.has_conflict %}<span class="worker-calendar-conflict-mark">!</span>{% endif %}</summary>
+                {% if can_operate %}<label class="worker-calendar-select"><input type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date> {{ employer_t.support_worker_schedule_select_day }}</label>{% endif %}
                 {% for shift in day.shifts %}
                   <div class="worker-calendar-time{% if shift.is_preview %} is-preview{% endif %}"{% if shift.is_preview %} data-draft-preview="true"{% endif %}>
                     {{ shift.starts_at|time:"H:i" }} — {{ shift.ends_at|time:"H:i" }}<br>{{ employer_t.support_worker_break }}: {{ shift.break_minutes }}{% if shift.worker_label %}<br>{{ shift.worker_label }}{% endif %}<br><span class="jh-status {% if shift.state == 'published' %}success{% else %}warning{% endif %}">{% if shift.is_preview %}{{ employer_t.support_worker_schedule_draft_preview }}{% else %}{{ shift.state_label }}{% endif %}</span>
                   </div>
                 {% endfor %}
                 {% if day.has_conflict %}<div class="worker-calendar-conflict">{% if day.has_assignment_conflict %}{{ employer_t.support_worker_assignment_overlap }}{% else %}{{ employer_t.support_worker_schedule_overlap }}{% endif %}</div>{% endif %}
-                {% if can_operate and has_schedule_templates %}
-                  <form class="worker-quick-shift" method="post" data-quick-shift-form>
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="scheduled_shift_from_template">
-                    <input type="hidden" name="work_date" value="{{ day.date|date:'Y-m-d' }}">
-                    <input type="hidden" name="return_tab" value="company">
-                    <input type="hidden" name="return_month" value="{{ calendar_month }}">
-                    <label class="jh-field"><span>{{ employer_t.support_worker_quick_shift_project }}</span>
-                      <select class="jh-input" name="project_id" required data-quick-shift-project>
-                        {% for project in quick_shift_projects %}
-                          <option value="{{ project.public_id }}">{{ project.worker_visible_name }}</option>
-                        {% endfor %}
-                      </select>
-                    </label>
-                    <label class="jh-field"><span>{{ employer_t.support_worker_quick_shift_template }}</span>
-                      <select class="jh-input" name="schedule_template_id" required data-quick-shift-template>
-                        {% for project in quick_shift_projects %}
-                          {% if project.schedule_templates.all %}
-                            {% for template in project.schedule_templates.all %}<option value="{{ template.public_id }}" data-project-id="{{ project.public_id }}">{{ template.name }} · {{ template.starts_at_time|time:"H:i" }}–{{ template.ends_at_time|time:"H:i" }}</option>{% endfor %}
-                          {% endif %}
-                        {% endfor %}
-                      </select>
-                    </label>
-                    <button class="jh-btn" type="submit">{{ employer_t.support_worker_quick_shift }}</button>
-                  </form>
-                {% endif %}
               </details>
             {% else %}<div class="worker-calendar-empty"></div>{% endif %}
           {% endfor %}
         </div>
+        {% if can_operate %}</form>{% endif %}
         {% for shift in scheduled_shifts %}<article class="worker-item"><div><h3>{{ shift.work_date|date:"d.m.Y" }} · {{ shift.starts_at|time:"H:i" }} — {{ shift.ends_at|time:"H:i" }}</h3><p>{{ employer_t.support_worker_break }}: {{ shift.break_minutes }}{% if shift.worker_label %}<br>{{ shift.worker_label }}{% endif %}</p></div><div class="worker-status"><span class="jh-status {% if shift.state == 'published' %}success{% else %}warning{% endif %}">{{ shift.state_label }}</span>{% if can_operate %}<details class="worker-edit"><summary>{{ employer_t.support_worker_edit_shift }}</summary><form method="post">{% csrf_token %}<input type="hidden" name="action" value="scheduled_shift_replace"><input type="hidden" name="shift_id" value="{{ shift.public_id }}"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><div class="worker-form-grid"><label class="jh-field"><span>{{ employer_t.support_time_work_date }}</span><input class="jh-input" type="date" name="work_date" value="{{ shift.work_date|date:'Y-m-d' }}" required></label><label class="jh-field"><span>{{ employer_t.support_worker_shift_time }}</span><input class="jh-input" type="datetime-local" name="starts_at" value="{{ shift.starts_at|date:'Y-m-d' }}T{{ shift.starts_at|time:'H:i' }}" required></label><label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" type="datetime-local" name="ends_at" value="{{ shift.ends_at|date:'Y-m-d' }}T{{ shift.ends_at|time:'H:i' }}" required></label><label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" type="number" min="0" max="720" name="break_minutes" value="{{ shift.break_minutes }}" required></label><label class="jh-field"><span>{{ employer_t.support_time_label }}</span><input class="jh-input" name="worker_label" maxlength="160" value="{{ shift.worker_label }}"></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_time_save_change }}</button></div></form></details>{% endif %}{% if shift.state == 'draft' and can_operate %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="scheduled_shift_publish"><input type="hidden" name="shift_id" value="{{ shift.public_id }}"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form><form method="post" onsubmit="return confirm('{{ employer_t.support_draft_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="scheduled_shift_delete"><input type="hidden" name="shift_id" value="{{ shift.public_id }}"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><button class="jh-btn" type="submit">{{ employer_t.support_draft_delete }}</button></form>{% elif shift.state != 'cancelled' and can_operate %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="scheduled_shift_cancel"><input type="hidden" name="shift_id" value="{{ shift.public_id }}"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><button class="jh-btn" type="submit">{{ employer_t.support_worker_cancel }}</button></form>{% endif %}</div></article>{% empty %}<div class="worker-empty">{{ employer_t.support_time_no_shifts }}</div>{% endfor %}
         {% if can_operate %}<form class="worker-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="scheduled_shift_create"><input type="hidden" name="return_tab" value="company"><input type="hidden" name="return_month" value="{{ calendar_month }}"><h3>{{ employer_t.support_worker_new_shift }}</h3><div class="worker-form-grid"><label class="jh-field"><span>{{ employer_t.support_time_work_date }}</span><input class="jh-input" type="date" name="work_date" required></label><label class="jh-field"><span>{{ employer_t.support_worker_shift_time }}</span><input class="jh-input" type="datetime-local" name="starts_at" required></label><label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" type="datetime-local" name="ends_at" required></label><label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" type="number" min="0" max="720" name="break_minutes" value="0" required></label><label class="jh-field"><span>{{ employer_t.support_time_label }}</span><input class="jh-input" name="worker_label" maxlength="160"></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_create_draft }}</button></div></form>{% endif %}
       </section>

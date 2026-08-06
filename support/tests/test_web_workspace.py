@@ -664,7 +664,6 @@ class SupportWorkspaceWebTests(TestCase):
             name="Late packing",
             starts_at_time="14:00",
             ends_at_time="22:00",
-            calendar_dates=[timezone.localdate().isoformat()],
             created_by=self.owner,
         )
         worker_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
@@ -774,7 +773,6 @@ class SupportWorkspaceWebTests(TestCase):
             name="Evening packing",
             starts_at_time="14:00",
             ends_at_time="22:00",
-            calendar_dates=[work_date.isoformat()],
             created_by=self.owner,
         )
 
@@ -810,13 +808,12 @@ class SupportWorkspaceWebTests(TestCase):
             "The shift for this day was replaced and published immediately from the selected template.",
         )
 
-    def test_owner_creates_project_templates_and_selects_several_for_worker(self):
-        """A project is employer-facing, while its address stays operational data."""
+    def test_owner_creates_date_free_templates_and_applies_them_to_selected_worker_days(self):
+        """Templates store one shift; the worker calendar owns its actual dates."""
 
         self.client.force_login(self.owner)
         projects_url = f"/employer/support/projects/?organization={self.organization.public_id}"
-        project_starts = timezone.localdate() + timedelta(days=1)
-
+        project_starts = timezone.localdate()
         response = self.client.post(
             projects_url,
             {
@@ -836,219 +833,98 @@ class SupportWorkspaceWebTests(TestCase):
                 "instructions": "Bring safety shoes.",
             },
         )
-        project = WorkProject.objects.get(
-            organization=self.organization,
-            internal_name="Flevosap BV",
-        )
-        detail_url = (
-            f"/employer/support/projects/{project.public_id}/"
-            f"?organization={self.organization.public_id}"
-        )
+        project = WorkProject.objects.get(organization=self.organization, internal_name="Flevosap BV")
+        detail_url = f"/employer/support/projects/{project.public_id}/?organization={self.organization.public_id}"
         self.assertRedirects(response, detail_url)
-        self.assertEqual(project.worker_capacity, 12)
-        self.assertEqual(project.worksite.street, "Zuurlaan")
-        self.assertEqual(project.contact_email, "rafal@example.com")
 
-        project_page = self.client.get(detail_url)
-        self.assertContains(project_page, 'name="starts_at_time" type="time" value="06:00"')
-        self.assertContains(project_page, 'name="ends_at_time" type="time" value="14:45"')
-        missing_dates_response = self.client.post(
-            detail_url,
-            {
-                "action": "project_schedule_template_create",
-                "return_month": project_starts.strftime("%Y-%m"),
-                "name": "No dates",
-                "starts_at_time": "06:00",
-                "ends_at_time": "14:30",
-                "break_minutes": "30",
-            },
-            follow=True,
-        )
-        self.assertContains(
-            missing_dates_response,
-            "Select at least one calendar day for the template.",
-        )
-
-        template_dates = [(project_starts + timedelta(days=1)).isoformat()]
         response = self.client.post(
             detail_url,
             {
                 "action": "project_schedule_template_create",
-                "return_month": project_starts.strftime("%Y-%m"),
                 "name": "Morning shift",
                 "starts_at_time": "06:00",
                 "ends_at_time": "14:30",
                 "break_minutes": "30",
                 "worker_label": "Packing",
-                "calendar_dates": template_dates,
             },
         )
-        self.assertRedirects(
-            response,
-            f"{detail_url}&month={project_starts.strftime('%Y-%m')}",
-        )
+        self.assertRedirects(response, detail_url)
         morning = ProjectScheduleTemplate.objects.get(project=project, name="Morning shift")
-        self.assertEqual(morning.calendar_dates, template_dates)
-
         evening = ProjectScheduleTemplate.objects.create(
             project=project,
             name="Evening shift",
             starts_at_time="14:30",
             ends_at_time="23:00",
-            calendar_dates=[project_starts.isoformat()],
             created_by=self.owner,
         )
+
         worker_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
         worker_page = self.client.get(worker_url)
-        self.assertNotContains(worker_page, 'name="starts_at" type="datetime-local"')
-        self.assertNotContains(worker_page, 'name="ends_at" type="datetime-local"')
+        self.assertContains(worker_page, 'name="work_dates"')
+        self.assertNotContains(worker_page, 'name="calendar_dates"')
+        self.assertContains(worker_page, 'value="scheduled_shifts_from_template"')
+
+        first_day = project_starts + timedelta(days=1)
+        second_day = project_starts + timedelta(days=3)
         response = self.client.post(
             worker_url,
             {
-                "action": "work_draft",
-                "project_id": str(project.public_id),
-                "worker_role": "Operator",
-                "schedule_template_ids": [
-                    str(morning.public_id),
-                    str(evening.public_id),
-                ],
-            },
-            follow=True,
-        )
-        assignment = WorkerProjectAssignment.objects.get(
-            connection=self.worker_connection,
-            project=project,
-        )
-        self.assertEqual(
-            set(
-                assignment.schedule_template_selections.values_list(
-                    "template_id", flat=True
-                )
-            ),
-            {morning.id, evening.id},
-        )
-        self.assertEqual(assignment.starts_at.date(), project_starts)
-        self.assertEqual(assignment.starts_at.strftime("%H:%M"), "14:30")
-        self.assertIsNone(assignment.ends_at)
-        self.assertContains(response, "Morning shift")
-        self.assertContains(response, "Evening shift")
-
-        preview_page = self.client.get(worker_url)
-        self.assertContains(preview_page, 'data-draft-preview="true"', count=2)
-        self.assertNotContains(preview_page, "Overlaps another shift")
-
-        overlapping_template = ProjectScheduleTemplate.objects.create(
-            project=project,
-            name="Overlapping shift",
-            starts_at_time="08:00",
-            ends_at_time="16:00",
-            calendar_dates=template_dates,
-            created_by=self.owner,
-        )
-        assignment.schedule_template_selections.create(template=overlapping_template)
-        conflicting_preview_page = self.client.get(worker_url)
-        self.assertContains(conflicting_preview_page, "Overlaps another shift")
-        self.assertContains(conflicting_preview_page, "has-conflict")
-        assignment.schedule_template_selections.filter(
-            template=overlapping_template
-        ).delete()
-
-        active_assignment = WorkerProjectAssignment.objects.create(
-            organization=self.organization,
-            connection=self.worker_connection,
-            project=project,
-            worker_role="Existing assignment",
-            starts_at=assignment.starts_at - timedelta(minutes=1),
-            state=WorkerProjectAssignment.STATE_PUBLISHED,
-            created_by=self.owner,
-            published_by=self.owner,
-            published_at=timezone.now(),
-        )
-        assignment_conflict_page = self.client.get(worker_url)
-        self.assertContains(assignment_conflict_page, "Overlaps an active assignment")
-        self.assertContains(assignment_conflict_page, "worker-calendar-conflict-mark")
-        active_assignment.delete()
-
-        response = self.client.post(
-            worker_url,
-            {
-                "action": "publish_work",
-                "assignment_id": str(assignment.public_id),
-                "return_tab": "company",
-            },
-            follow=True,
-        )
-        assignment.refresh_from_db()
-        self.assertEqual(assignment.state, WorkerProjectAssignment.STATE_PUBLISHED)
-        created_shifts = list(
-            ScheduledWorkShift.objects.filter(
-                work_assignment=assignment,
-                state=ScheduledWorkShift.STATE_PUBLISHED,
-            ).order_by("work_date")
-        )
-        self.assertEqual([item.work_date for item in created_shifts], [
-            project_starts,
-            project_starts + timedelta(days=1),
-        ])
-        self.assertEqual(created_shifts[0].starts_at.strftime("%H:%M"), "14:30")
-        self.assertEqual(created_shifts[1].starts_at.strftime("%H:%M"), "06:00")
-        self.assertContains(response, "14:30")
-        self.assertContains(response, "06:00")
-        self.assertContains(response, 'data-calendar-day')
-        self.assertContains(response, 'data-quick-shift-project')
-        self.assertContains(response, 'data-quick-shift-template')
-
-        quick_date = project_starts + timedelta(days=3)
-        quick_response = self.client.post(
-            worker_url,
-            {
-                "action": "scheduled_shift_from_template",
-                "work_date": quick_date.isoformat(),
+                "action": "scheduled_shifts_from_template",
                 "project_id": str(project.public_id),
                 "schedule_template_id": str(morning.public_id),
+                "work_dates": [first_day.isoformat(), second_day.isoformat()],
                 "return_tab": "company",
-                "return_month": quick_date.strftime("%Y-%m"),
+                "return_month": first_day.strftime("%Y-%m"),
             },
             follow=True,
         )
-        quick_shift = ScheduledWorkShift.objects.get(
+        shifts = ScheduledWorkShift.objects.filter(
             connection=self.worker_connection,
-            work_date=quick_date,
-        )
-        self.assertEqual(quick_shift.state, ScheduledWorkShift.STATE_PUBLISHED)
-        self.assertEqual(quick_shift.work_assignment_id, assignment.id)
-        self.assertEqual(quick_shift.starts_at.strftime("%H:%M"), "06:00")
-        self.assertContains(
-            quick_response,
-            "The shift was added and published immediately from the selected template.",
-        )
-        self.assertContains(quick_response, "Shifts in this assignment: 3")
+            work_date__in=(first_day, second_day),
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        ).order_by("work_date")
+        self.assertEqual(shifts.count(), 2)
+        self.assertEqual({item.starts_at.strftime("%H:%M") for item in shifts}, {"06:00"})
+        self.assertContains(response, "selected days")
 
-        replaced_quick_response = self.client.post(
+        response = self.client.post(
             worker_url,
             {
-                "action": "scheduled_shift_from_template",
-                "work_date": quick_date.isoformat(),
+                "action": "scheduled_shifts_from_template",
                 "project_id": str(project.public_id),
                 "schedule_template_id": str(evening.public_id),
+                "work_dates": [second_day.isoformat()],
                 "return_tab": "company",
-                "return_month": quick_date.strftime("%Y-%m"),
+                "return_month": second_day.strftime("%Y-%m"),
             },
             follow=True,
         )
-        quick_shift.refresh_from_db()
-        self.assertEqual(quick_shift.state, ScheduledWorkShift.STATE_CANCELLED)
         replacement = ScheduledWorkShift.objects.get(
             connection=self.worker_connection,
-            work_date=quick_date,
+            work_date=second_day,
             state=ScheduledWorkShift.STATE_PUBLISHED,
         )
-        self.assertEqual(replacement.work_assignment_id, assignment.id)
         self.assertEqual(replacement.starts_at.strftime("%H:%M"), "14:30")
-        self.assertContains(
-            replaced_quick_response,
-            "The shift for this day was replaced and published immediately from the selected template.",
+        self.assertContains(response, "replaced")
+
+        response = self.client.post(
+            worker_url,
+            {
+                "action": "scheduled_shifts_clear",
+                "work_dates": [first_day.isoformat(), second_day.isoformat()],
+                "return_tab": "company",
+                "return_month": first_day.strftime("%Y-%m"),
+            },
+            follow=True,
         )
+        self.assertFalse(
+            ScheduledWorkShift.objects.filter(
+                connection=self.worker_connection,
+                work_date__in=(first_day, second_day),
+                state__in=(ScheduledWorkShift.STATE_DRAFT, ScheduledWorkShift.STATE_PUBLISHED),
+            ).exists()
+        )
+        self.assertContains(response, "cleared")
 
     def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):
         self.client.force_login(self.owner)

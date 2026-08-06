@@ -620,21 +620,12 @@ class ProjectScheduleTemplateCreateSerializer(StrictInputSerializer):
     ends_at_time = serializers.TimeField()
     break_minutes = serializers.IntegerField(min_value=0, max_value=720, default=0)
     worker_label = serializers.CharField(max_length=160, required=False, allow_blank=True, default="")
-    calendar_dates = serializers.ListField(
-        child=serializers.DateField(), min_length=1, max_length=366
-    )
 
     def validate_name(self, value):
         normalized = value.strip()
         if not normalized:
             raise serializers.ValidationError("project_schedule_template_name_required")
         return normalized
-
-    def validate_calendar_dates(self, value):
-        if len(set(value)) != len(value):
-            raise serializers.ValidationError("project_schedule_template_duplicate_date")
-        return sorted(value)
-
 
 class VehicleCreateSerializer(StrictInputSerializer):
     internal_name = serializers.CharField(max_length=120)

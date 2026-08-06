@@ -230,27 +230,19 @@ def update_project(*, actor, project, name, **data):
 
 
 def create_project_schedule_template(
-    *, actor, project, name, starts_at_time, ends_at_time, break_minutes, worker_label, calendar_dates
+    *, actor, project, name, starts_at_time, ends_at_time, break_minutes, worker_label
 ):
-    """Store one reusable, explicitly dated template for a project."""
+    """Store one reusable shift pattern for a project, without calendar days."""
 
     organization = project.organization
     require_permission(user=actor, organization=organization, permission_code=SCHEDULE_MANAGE)
     normalized_name = (name or "").strip()
     if not normalized_name:
         raise ValidationError({"name": "project_schedule_template_name_required"})
-    normalized_dates = sorted({item.isoformat() for item in calendar_dates})
-    if not normalized_dates:
-        raise ValidationError({"calendar_dates": "project_schedule_template_dates_required"})
     with transaction.atomic():
         project = WorkProject.objects.select_for_update().get(pk=project.pk)
         if not project.is_active:
             raise ValidationError({"project": "work_project_not_available"})
-        if any(item < project.starts_on.isoformat() for item in normalized_dates) or (
-            project.ends_on is not None
-            and any(item > project.ends_on.isoformat() for item in normalized_dates)
-        ):
-            raise ValidationError({"calendar_dates": "project_schedule_template_dates_outside_project"})
         try:
             template = ProjectScheduleTemplate.objects.create(
                 project=project,
@@ -259,7 +251,6 @@ def create_project_schedule_template(
                 ends_at_time=ends_at_time,
                 break_minutes=break_minutes,
                 worker_label=(worker_label or "").strip(),
-                calendar_dates=normalized_dates,
                 created_by=actor,
             )
         except IntegrityError as exc:
@@ -269,7 +260,11 @@ def create_project_schedule_template(
             actor=actor,
             action="work.project_schedule_template_created",
             target=template,
-            details={"project": str(project.public_id), "calendar_date_count": len(normalized_dates)},
+            details={
+                "project": str(project.public_id),
+                "starts_at_time": starts_at_time.isoformat(),
+                "ends_at_time": ends_at_time.isoformat(),
+            },
         )
     return template
 
