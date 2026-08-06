@@ -825,9 +825,9 @@ def _worker_card_operation(request, *, snapshot):
                         assignment=draft_assignment,
                         replace_conflicting_assignments=True,
                     )
-                current_shifts = {
-                    item.work_date: item
-                    for item in ScheduledWorkShift.objects.select_for_update()
+                current_shifts = {}
+                for item in (
+                    ScheduledWorkShift.objects.select_for_update()
                     .filter(
                         organization=organization,
                         connection=connection,
@@ -837,11 +837,38 @@ def _worker_card_operation(request, *, snapshot):
                             ScheduledWorkShift.STATE_PUBLISHED,
                         ),
                     )
-                    .order_by("work_date", "-created_at", "-id")
-                }
+                    .order_by("work_date", "-published_at", "-created_at", "-id")
+                ):
+                    current_shifts.setdefault(item.work_date, []).append(item)
                 replaced_count = 0
                 for work_date, starts_at, ends_at in shift_values:
-                    current_shift = current_shifts.get(work_date)
+                    day_shifts = current_shifts.get(work_date, [])
+                    had_current_shift = bool(day_shifts)
+                    published_shifts = [
+                        item
+                        for item in day_shifts
+                        if item.state == ScheduledWorkShift.STATE_PUBLISHED
+                    ]
+                    draft_shifts = [
+                        item
+                        for item in day_shifts
+                        if item.state == ScheduledWorkShift.STATE_DRAFT
+                    ]
+                    # A date may contain legacy duplicates from the earlier
+                    # one-day editor.  Drafts were never visible to the worker,
+                    # so remove them.  Keep one published record as the version
+                    # replaced below and cancel any extra published records.
+                    for draft_shift in draft_shifts:
+                        delete_scheduled_shift_draft(
+                            actor=request.user,
+                            shift=draft_shift,
+                        )
+                    current_shift = published_shifts[0] if published_shifts else None
+                    for duplicate_shift in published_shifts[1:]:
+                        cancel_scheduled_shift(
+                            actor=request.user,
+                            shift=duplicate_shift,
+                        )
                     if current_shift is not None:
                         replace_scheduled_shift(
                             actor=request.user,
@@ -854,7 +881,6 @@ def _worker_card_operation(request, *, snapshot):
                             work_assignment=work_assignment,
                             replacement_state=ScheduledWorkShift.STATE_PUBLISHED,
                         )
-                        replaced_count += 1
                     else:
                         shift = create_scheduled_shift(
                             actor=request.user,
@@ -868,6 +894,8 @@ def _worker_card_operation(request, *, snapshot):
                             work_assignment=work_assignment,
                         )
                         publish_scheduled_shift(actor=request.user, shift=shift)
+                    if had_current_shift:
+                        replaced_count += 1
             if action == "scheduled_shift_from_template" and len(work_dates) == 1:
                 message_key = (
                     "support_worker_quick_shift_replaced"
@@ -903,7 +931,10 @@ def _worker_card_operation(request, *, snapshot):
                     {"work_dates": "selected_schedule_days_have_no_shifts"}
                 )
             for shift in current_shifts:
-                cancel_scheduled_shift(actor=request.user, shift=shift)
+                if shift.state == ScheduledWorkShift.STATE_DRAFT:
+                    delete_scheduled_shift_draft(actor=request.user, shift=shift)
+                else:
+                    cancel_scheduled_shift(actor=request.user, shift=shift)
             messages.success(request, tr(request, "support_worker_quick_shifts_cleared"))
         elif action == "scheduled_shift_publish":
             shift = get_object_or_404(
@@ -1122,6 +1153,14 @@ def worker_card(request, connection_public_id):
                 if snapshot["calendar_next_month"]
                 else None
             ),
+            "calendar_today_url": (
+                f"{worker_base_url}?tab=company&month="
+                f"{timezone.localdate().strftime('%Y-%m')}"
+            ),
+            "calendar_weekday_labels": [
+                tr(request, f"support_calendar_weekday_{weekday}")
+                for weekday in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+            ],
         }
     )
     return render(request, "support/worker_card.html", snapshot)

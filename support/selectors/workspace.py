@@ -784,25 +784,37 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         calendar_days = [None] * first_weekday
         for day_number in range(1, days_in_month + 1):
             current_date = date(month_start.year, month_start.month, day_number)
+            day_shifts = shifts_by_date.get(current_date, [])
+            display_shift = max(
+                day_shifts,
+                key=lambda item: (
+                    item.state == ScheduledWorkShift.STATE_PUBLISHED,
+                    item.created_at,
+                    item.id,
+                ),
+                default=None,
+            )
             calendar_days.append(
                 {
                     "date": current_date,
-                    "shifts": shifts_by_date.get(current_date, []),
+                    "shifts": day_shifts,
+                    "display_shift": display_shift,
+                    "active_shift_count": len(day_shifts),
                     "has_published": any(
                         item.state == ScheduledWorkShift.STATE_PUBLISHED
-                        for item in shifts_by_date.get(current_date, [])
+                        for item in day_shifts
                     ),
                     "has_draft": any(
                         item.state == ScheduledWorkShift.STATE_DRAFT
-                        for item in shifts_by_date.get(current_date, [])
+                        for item in day_shifts
                     ),
                     "has_conflict": any(
                         item.has_conflict
-                        for item in shifts_by_date.get(current_date, [])
+                        for item in day_shifts
                     ),
                     "has_assignment_conflict": any(
                         getattr(item, "has_assignment_conflict", False)
-                        for item in shifts_by_date.get(current_date, [])
+                        for item in day_shifts
                     ),
                     "is_today": current_date == timezone.localdate(),
                 }

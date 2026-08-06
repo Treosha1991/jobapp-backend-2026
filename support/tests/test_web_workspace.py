@@ -863,6 +863,9 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(worker_page, 'name="work_dates"')
         self.assertNotContains(worker_page, 'name="calendar_dates"')
         self.assertContains(worker_page, 'value="scheduled_shifts_from_template"')
+        self.assertContains(worker_page, 'data-calendar-actions')
+        self.assertContains(worker_page, 'class="worker-calendar-checkbox"')
+        self.assertNotContains(worker_page, '<details data-calendar-day')
 
         first_day = project_starts + timedelta(days=1)
         second_day = project_starts + timedelta(days=3)
@@ -886,6 +889,7 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(shifts.count(), 2)
         self.assertEqual({item.starts_at.strftime("%H:%M") for item in shifts}, {"06:00"})
         self.assertContains(response, "selected days")
+        self.assertContains(response, 'class="worker-calendar-time">06:00–14:30</span>')
 
         response = self.client.post(
             worker_url,
@@ -905,13 +909,67 @@ class SupportWorkspaceWebTests(TestCase):
             state=ScheduledWorkShift.STATE_PUBLISHED,
         )
         self.assertEqual(replacement.starts_at.strftime("%H:%M"), "14:30")
+        self.assertEqual(
+            ScheduledWorkShift.objects.filter(
+                connection=self.worker_connection,
+                work_date=second_day,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
+            ).count(),
+            1,
+        )
+        self.assertContains(response, "replaced")
+
+        draft_day = project_starts + timedelta(days=5)
+        clearable_draft = ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            work_assignment=None,
+            work_date=draft_day,
+            starts_at=timezone.make_aware(
+                datetime.combine(draft_day, datetime.min.time())
+            ),
+            ends_at=timezone.make_aware(
+                datetime.combine(draft_day, datetime.min.time())
+            )
+            + timedelta(hours=3),
+            state=ScheduledWorkShift.STATE_DRAFT,
+            created_by=self.owner,
+        )
+        response = self.client.post(
+            worker_url,
+            {
+                "action": "scheduled_shifts_from_template",
+                "project_id": str(project.public_id),
+                "schedule_template_id": str(evening.public_id),
+                "work_dates": [draft_day.isoformat()],
+                "return_tab": "company",
+                "return_month": draft_day.strftime("%Y-%m"),
+            },
+            follow=True,
+        )
+        self.assertFalse(
+            ScheduledWorkShift.objects.filter(pk=clearable_draft.pk).exists()
+        )
+        replacement_for_draft = ScheduledWorkShift.objects.get(
+            connection=self.worker_connection,
+            work_date=draft_day,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(replacement_for_draft.starts_at.strftime("%H:%M"), "14:30")
         self.assertContains(response, "replaced")
 
         response = self.client.post(
             worker_url,
             {
                 "action": "scheduled_shifts_clear",
-                "work_dates": [first_day.isoformat(), second_day.isoformat()],
+                "work_dates": [
+                    first_day.isoformat(),
+                    second_day.isoformat(),
+                    draft_day.isoformat(),
+                ],
                 "return_tab": "company",
                 "return_month": first_day.strftime("%Y-%m"),
             },
@@ -920,8 +978,18 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertFalse(
             ScheduledWorkShift.objects.filter(
                 connection=self.worker_connection,
-                work_date__in=(first_day, second_day),
+                work_date__in=(first_day, second_day, draft_day),
                 state__in=(ScheduledWorkShift.STATE_DRAFT, ScheduledWorkShift.STATE_PUBLISHED),
+            ).exists()
+        )
+        self.assertFalse(
+            ScheduledWorkShift.objects.filter(
+                connection=self.worker_connection,
+                work_date=draft_day,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
             ).exists()
         )
         self.assertContains(response, "cleared")
