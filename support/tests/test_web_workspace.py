@@ -864,6 +864,9 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertNotContains(worker_page, 'name="calendar_dates"')
         self.assertContains(worker_page, 'value="scheduled_shifts_from_template"')
         self.assertContains(worker_page, 'data-calendar-actions')
+        self.assertContains(worker_page, 'data-worker-calendar-section')
+        self.assertContains(worker_page, 'data-calendar-navigation>', count=3)
+        self.assertContains(worker_page, "window.scrollTo(scrollX, scrollY)")
         self.assertContains(worker_page, 'class="worker-calendar-checkbox"')
         self.assertNotContains(worker_page, '<details data-calendar-day')
 

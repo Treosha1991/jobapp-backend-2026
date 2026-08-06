@@ -148,8 +148,11 @@
       filter.addEventListener('change', updateChoices);
       updateChoices();
       });
-      document.querySelectorAll('[data-quick-shift-form]').forEach(function (form) {
-        var project = form.querySelector('[data-quick-shift-project]');
+      var initializeQuickShiftForms = function (root) {
+        (root || document).querySelectorAll('[data-quick-shift-form]').forEach(function (form) {
+          if (form.dataset.calendarReady === '1') return;
+          form.dataset.calendarReady = '1';
+          var project = form.querySelector('[data-quick-shift-project]');
         var template = form.querySelector('[data-quick-shift-template]');
         var inputs = Array.prototype.slice.call(form.querySelectorAll('[data-schedule-date]'));
         var actions = form.querySelector('[data-calendar-actions]');
@@ -190,6 +193,57 @@
           syncTemplates();
         }
         syncSelection();
+      });
+      };
+      initializeQuickShiftForms(document);
+
+      var calendarRequest = null;
+      var loadCalendar = function (url, updateHistory) {
+        var currentSection = document.querySelector('[data-worker-calendar-section]');
+        if (!currentSection) return;
+        var scrollX = window.scrollX;
+        var scrollY = window.scrollY;
+        if (calendarRequest) calendarRequest.abort();
+        var request = new AbortController();
+        calendarRequest = request;
+        currentSection.setAttribute('aria-busy', 'true');
+        fetch(url, {
+          credentials: 'same-origin',
+          headers: {'X-Requested-With': 'XMLHttpRequest'},
+          signal: request.signal
+        }).then(function (response) {
+          if (!response.ok) throw new Error('calendar_request_failed');
+          return response.text();
+        }).then(function (html) {
+          var page = new DOMParser().parseFromString(html, 'text/html');
+          var nextSection = page.querySelector('[data-worker-calendar-section]');
+          if (!nextSection) throw new Error('calendar_section_missing');
+          currentSection.replaceWith(nextSection);
+          initializeQuickShiftForms(nextSection);
+          if (updateHistory) history.pushState({jobhubCalendar: true}, '', url);
+          window.requestAnimationFrame(function () {
+            window.scrollTo(scrollX, scrollY);
+          });
+        }).catch(function (error) {
+          if (error.name === 'AbortError') return;
+          currentSection.removeAttribute('aria-busy');
+          window.location.assign(url);
+        }).finally(function () {
+          if (calendarRequest === request) calendarRequest = null;
+        });
+      };
+
+      document.addEventListener('click', function (event) {
+        var link = event.target.closest('[data-calendar-navigation]');
+        if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        loadCalendar(link.href, true);
+      });
+
+      window.addEventListener('popstate', function () {
+        if (document.querySelector('[data-worker-calendar-section]')) {
+          loadCalendar(window.location.href, false);
+        }
       });
     });
 </script>
@@ -277,7 +331,7 @@
           </form>
         {% endif %}
       </section>
-      <section class="worker-section">
+      <section class="worker-section" data-worker-calendar-section>
         <h2>{{ employer_t.support_worker_schedule_calendar }}</h2>
         <p>{{ employer_t.support_worker_schedule_hint }}</p>
         {% if can_operate %}
@@ -290,9 +344,9 @@
         {% endif %}
           <div class="worker-calendar-shell">
             <div class="worker-calendar-toolbar">
-              <div class="worker-calendar-nav"><a class="jh-btn" href="{{ calendar_previous_url }}" aria-label="{{ employer_t.support_calendar_previous_month }}">←</a></div>
+              <div class="worker-calendar-nav"><a class="jh-btn" href="{{ calendar_previous_url }}" aria-label="{{ employer_t.support_calendar_previous_month }}" data-calendar-navigation>←</a></div>
               <div class="worker-calendar-toolbar-copy"><span>{{ employer_t.support_calendar_month_navigation }}</span><strong>{{ selected_calendar_date|date:"F Y" }}</strong></div>
-              <div class="worker-calendar-nav"><a class="jh-btn worker-calendar-today" href="{{ calendar_today_url }}">{{ employer_t.support_calendar_today }}</a><a class="jh-btn" href="{{ calendar_next_url }}" aria-label="{{ employer_t.support_calendar_next_month }}">→</a></div>
+              <div class="worker-calendar-nav"><a class="jh-btn worker-calendar-today" href="{{ calendar_today_url }}" data-calendar-navigation>{{ employer_t.support_calendar_today }}</a><a class="jh-btn" href="{{ calendar_next_url }}" aria-label="{{ employer_t.support_calendar_next_month }}" data-calendar-navigation>→</a></div>
             </div>
             <div class="worker-calendar-weekdays" aria-hidden="true">{% for weekday in calendar_weekday_labels %}<span>{{ weekday }}</span>{% endfor %}</div>
             <div class="worker-calendar">
