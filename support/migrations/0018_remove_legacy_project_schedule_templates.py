@@ -18,6 +18,11 @@ def remove_legacy_project_schedule_templates(apps, schema_editor):
 
 class Migration(migrations.Migration):
 
+    # PostgreSQL cannot alter this table in the same transaction that deletes
+    # rows referenced by its foreign-key triggers.  Running the operations in
+    # separate transactions lets the cleanup finish before the schema change.
+    atomic = False
+
     dependencies = [
         ("support", "0017_backfill_legacy_project_capacity"),
     ]
