@@ -784,7 +784,10 @@ class SupportWorkspaceWebTests(TestCase):
             {
                 "action": "scheduled_shift_from_template",
                 "work_date": work_date.isoformat(),
-                "project_id": str(second_project.public_id),
+                # Simulate a quick manager change: the visible template is
+                # correct, while the browser's project filter still carries
+                # the previous project id.  The template must win.
+                "project_id": str(first_project.public_id),
                 "schedule_template_id": str(template.public_id),
                 "return_tab": "company",
                 "return_month": work_date.strftime("%Y-%m"),

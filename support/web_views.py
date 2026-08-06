@@ -370,6 +370,8 @@ def _worker_operation_error_key(error):
         return "support_worker_schedule_conflicts_with_existing_shift"
     if "project_schedule_template_break_invalid" in detail:
         return "support_worker_project_template_break_invalid"
+    if "project_schedule_template_not_available" in detail:
+        return "support_worker_project_template_not_available"
     if "current_scheduled_shift_already_exists" in detail:
         return "support_worker_schedule_day_already_has_shift"
     if "published_assignment_for_selected_project_required" in detail:
@@ -762,19 +764,26 @@ def _worker_card_operation(request, *, snapshot):
             messages.success(request, tr(request, "support_worker_draft_created"))
         elif action == "scheduled_shift_from_template":
             work_date = _operation_date(request.POST.get("work_date"))
-            project = get_object_or_404(
-                WorkProject.objects.filter(
-                    organization=organization,
+            # The template is the authoritative choice.  The project selector
+            # only filters its options in the browser and may be stale if a
+            # manager changes both fields quickly.  Deriving the project here
+            # keeps the selected template usable instead of producing a 404/500.
+            template = (
+                ProjectScheduleTemplate.objects.select_related("project")
+                .filter(
+                    public_id=request.POST.get("schedule_template_id"),
+                    project__organization=organization,
+                    project__is_active=True,
+                    project__worksite__is_active=True,
                     is_active=True,
-                ),
-                public_id=request.POST.get("project_id"),
+                )
+                .first()
             )
-            template = get_object_or_404(
-                ProjectScheduleTemplate.objects.select_related("project"),
-                public_id=request.POST.get("schedule_template_id"),
-                project=project,
-                is_active=True,
-            )
+            if template is None:
+                raise ValidationError(
+                    {"schedule_template": "project_schedule_template_not_available"}
+                )
+            project = template.project
             current_timezone = timezone.get_current_timezone()
             starts_at = timezone.make_aware(
                 datetime.combine(work_date, template.starts_at_time),
