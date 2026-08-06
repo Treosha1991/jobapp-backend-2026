@@ -877,7 +877,11 @@ def replace_scheduled_shift(
     with transaction.atomic():
         shift = (
             ScheduledWorkShift.objects.select_for_update()
-            .select_related("organization", "connection__candidate", "work_assignment")
+            # work_assignment is nullable. PostgreSQL rejects FOR UPDATE when
+            # the locked query contains the outer join generated for that
+            # relation. Load it lazily only if the caller did not provide a
+            # replacement assignment.
+            .select_related("organization", "connection__candidate")
             .get(pk=shift.pk)
         )
         if shift.state == ScheduledWorkShift.STATE_CANCELLED:

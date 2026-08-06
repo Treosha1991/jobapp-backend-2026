@@ -947,6 +947,28 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertContains(response, "replaced")
 
+        third_day = project_starts + timedelta(days=4)
+        response = self.client.post(
+            worker_url,
+            {
+                "action": "scheduled_shifts_from_template",
+                "project_id": str(project.public_id),
+                "schedule_template_id": str(morning.public_id),
+                "work_dates": [second_day.isoformat(), third_day.isoformat()],
+                "return_tab": "company",
+                "return_month": second_day.strftime("%Y-%m"),
+            },
+            follow=True,
+        )
+        mixed_shifts = ScheduledWorkShift.objects.filter(
+            connection=self.worker_connection,
+            work_date__in=(second_day, third_day),
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(mixed_shifts.count(), 2)
+        self.assertEqual({item.starts_at.strftime("%H:%M") for item in mixed_shifts}, {"06:00"})
+        self.assertContains(response, "replaced")
+
         draft_day = project_starts + timedelta(days=5)
         clearable_draft = ScheduledWorkShift.objects.create(
             organization=self.organization,

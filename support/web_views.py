@@ -1053,7 +1053,17 @@ def _worker_card_operation(request, *, snapshot):
             "[SUPPORT-WORKER-OPERATION-ERROR] "
             f"action={action} type={type(error).__name__} detail={error}"
         )
-        messages.error(request, tr(request, "support_worker_operation_error"))
+        messages.error(
+            request,
+            tr(
+                request,
+                (
+                    "support_worker_schedule_apply_unexpected_error"
+                    if action in {"scheduled_shift_from_template", "scheduled_shifts_from_template"}
+                    else "support_worker_operation_error"
+                ),
+            ),
+        )
     return _worker_card_redirect(
         connection,
         tab=request.POST.get("return_tab"),
