@@ -7,6 +7,7 @@ hide columns, because that would still expose data through a direct URL.
 
 from calendar import monthrange
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 from django.http import Http404
 from django.db.models import Prefetch, Q
@@ -554,6 +555,7 @@ def worker_card_snapshot(
     calendar_month=None,
     housing_site_public_id=None,
     transport_template_public_id=None,
+    transport_crew_key=None,
 ):
     """Return one worker card without expanding access beyond its organization.
 
@@ -845,6 +847,8 @@ def worker_card_snapshot(
     worksites = []
     transport_driver_connection = None
     transport_driver_assignment = None
+    transport_crews = []
+    selected_transport_crew = None
     transport_templates = []
     selected_transport_template = None
     selected_transport_route = None
@@ -1082,11 +1086,11 @@ def worker_card_snapshot(
         for assignment in driver_assignments:
             assignment.route_for_driver = routes_by_driver_assignment_id.get(assignment.id)
 
-        # The new employer transport screen is schedule-first.  A worker can
-        # open it either as the driver or as one of that driver's passengers;
-        # both paths resolve to the same crew and template switcher.
+        # One worker may belong to several crews on different projects and
+        # schedules.  Build a stable crew list from the driver/template pair,
+        # instead of stopping after the first passenger route we find.
         today = timezone.localdate()
-        transport_driver_assignment = (
+        current_driver_assignment = (
             DriverVehicleAssignment.objects.filter(
                 organization=organization,
                 driver_connection=connection,
@@ -1098,129 +1102,191 @@ def worker_card_snapshot(
             .order_by("-starts_on", "-id")
             .first()
         )
-        if transport_driver_assignment is None:
-            current_passenger = (
-                TransportPassengerAssignment.objects.filter(
-                    connection=connection,
-                    route__state=TransportRoute.STATE_PUBLISHED,
-                    route__starts_on__lte=today,
-                )
-                .filter(Q(route__ends_on__isnull=True) | Q(route__ends_on__gte=today))
-                .select_related(
-                    "route__driver_vehicle_assignment__driver_connection__candidate",
-                    "route__driver_vehicle_assignment__vehicle",
-                )
-                .order_by("-route__starts_on", "-id")
-                .first()
+        crew_routes = list(
+            TransportRoute.objects.filter(
+                organization=organization,
+                schedule_template__isnull=False,
+                state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
             )
-            if current_passenger is not None:
-                transport_driver_assignment = current_passenger.route.driver_vehicle_assignment
-        if transport_driver_assignment is not None:
-            transport_driver_connection = transport_driver_assignment.driver_connection
-            transport_templates = list(
+            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+            .filter(
+                Q(driver_vehicle_assignment__driver_connection=connection)
+                | Q(passenger_assignments__connection=connection)
+            )
+            .select_related(
+                "driver_vehicle_assignment__driver_connection__candidate",
+                "driver_vehicle_assignment__vehicle",
+                "schedule_template__project__worksite",
+            )
+            .prefetch_related(
+                "passenger_assignments__connection__candidate",
+                "passenger_assignments__pickup_stop__housing_site",
+            )
+            .distinct()
+            .order_by(
+                "schedule_template__project__internal_name",
+                "schedule_template__starts_at_time",
+                "id",
+            )
+        )
+        crews_by_key = {}
+
+        def add_transport_crew(*, assignment, schedule_template, route=None):
+            key = f"{assignment.public_id}.{schedule_template.public_id}"
+            if key in crews_by_key:
+                if route is not None:
+                    crews_by_key[key].route = route
+                return crews_by_key[key]
+            crew = SimpleNamespace(
+                key=key,
+                driver_assignment=assignment,
+                driver_connection=assignment.driver_connection,
+                schedule_template=schedule_template,
+                route=route,
+                is_selected_worker_driver=assignment.driver_connection_id == connection.id,
+                is_selected_worker_passenger=False,
+            )
+            crews_by_key[key] = crew
+            return crew
+
+        for route in crew_routes:
+            crew = add_transport_crew(
+                assignment=route.driver_vehicle_assignment,
+                schedule_template=route.schedule_template,
+                route=route,
+            )
+            crew.is_selected_worker_passenger = any(
+                item.connection_id == connection.id
+                for item in route.passenger_assignments.all()
+            )
+
+        if current_driver_assignment is not None:
+            driver_schedule_templates = list(
                 ProjectScheduleTemplate.objects.filter(
                     is_active=True,
                     project__organization=organization,
-                    scheduled_shifts__connection=transport_driver_connection,
+                    scheduled_shifts__connection=connection,
                     scheduled_shifts__state=ScheduledWorkShift.STATE_PUBLISHED,
                     scheduled_shifts__work_date__gte=today,
                 )
                 .select_related("project__worksite")
                 .distinct()
-                .order_by("project__internal_name", "name", "id")
+                .order_by("project__internal_name", "starts_at_time", "name", "id")
             )
-            if transport_template_public_id:
-                selected_transport_template = next(
-                    (
-                        item
-                        for item in transport_templates
-                        if str(item.public_id) == str(transport_template_public_id)
-                    ),
-                    None,
-                )
-                if selected_transport_template is None:
-                    raise Http404("support_transport_template_not_found")
-            elif transport_templates:
-                selected_transport_template = transport_templates[0]
-
-            if selected_transport_template is not None:
-                transport_driver_shifts = list(
-                    ScheduledWorkShift.objects.filter(
-                        organization=organization,
-                        connection=transport_driver_connection,
-                        schedule_template=selected_transport_template,
-                        state=ScheduledWorkShift.STATE_PUBLISHED,
-                        work_date__gte=today,
-                    )
-                    .order_by("work_date", "starts_at", "id")
-                )
-                selected_transport_route = (
-                    TransportRoute.objects.filter(
-                        driver_vehicle_assignment=transport_driver_assignment,
-                        schedule_template=selected_transport_template,
-                        state__in=(
-                            TransportRoute.STATE_DRAFT,
-                            TransportRoute.STATE_PUBLISHED,
+            for schedule_template in driver_schedule_templates:
+                add_transport_crew(
+                    assignment=current_driver_assignment,
+                    schedule_template=schedule_template,
+                    route=next(
+                        (
+                            route
+                            for route in crew_routes
+                            if route.driver_vehicle_assignment_id
+                            == current_driver_assignment.id
+                            and route.schedule_template_id == schedule_template.id
                         ),
-                    )
-                    .prefetch_related(
-                        "passenger_assignments__connection__candidate",
-                        "passenger_assignments__pickup_stop__housing_site",
-                    )
-                    .first()
+                        None,
+                    ),
                 )
-                if selected_transport_route is not None:
-                    transport_passengers = list(
-                        selected_transport_route.passenger_assignments.all()
-                    )
-                    for passenger in transport_passengers:
-                        passenger.is_selected_worker = passenger.connection_id == connection.id
-                transport_free_seats = max(
-                    0,
-                    transport_driver_assignment.vehicle.seat_capacity
-                    - 1
-                    - len(transport_passengers),
+
+        transport_crews = sorted(
+            crews_by_key.values(),
+            key=lambda item: (
+                item.schedule_template.project.internal_name.casefold(),
+                item.schedule_template.starts_at_time,
+                _display_name(item.driver_connection.candidate).casefold(),
+                item.key,
+            ),
+        )
+        if transport_crew_key:
+            selected_transport_crew = next(
+                (item for item in transport_crews if item.key == transport_crew_key),
+                None,
+            )
+            if selected_transport_crew is None:
+                raise Http404("support_transport_crew_not_found")
+        elif transport_template_public_id:
+            selected_transport_crew = next(
+                (
+                    item
+                    for item in transport_crews
+                    if str(item.schedule_template.public_id)
+                    == str(transport_template_public_id)
+                ),
+                None,
+            )
+            if selected_transport_crew is None:
+                raise Http404("support_transport_template_not_found")
+        elif transport_crews:
+            selected_transport_crew = transport_crews[0]
+
+        transport_templates = [item.schedule_template for item in transport_crews]
+        if selected_transport_crew is not None:
+            transport_driver_assignment = selected_transport_crew.driver_assignment
+            transport_driver_connection = selected_transport_crew.driver_connection
+            selected_transport_template = selected_transport_crew.schedule_template
+            selected_transport_route = selected_transport_crew.route
+            transport_driver_shifts = list(
+                ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    connection=transport_driver_connection,
+                    schedule_template=selected_transport_template,
+                    state=ScheduledWorkShift.STATE_PUBLISHED,
+                    work_date__gte=today,
+                ).order_by("work_date", "starts_at", "id")
+            )
+            if selected_transport_route is not None:
+                transport_passengers = list(
+                    selected_transport_route.passenger_assignments.all()
                 )
-                assigned_ids = {item.connection_id for item in transport_passengers}
-                published_housing = {}
-                for housing in (
-                    HousingAssignment.objects.filter(
-                        organization=organization,
-                        state=HousingAssignment.STATE_PUBLISHED,
-                        check_in_at__lte=now,
-                    )
-                    .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
-                    .select_related("place__room__site")
-                    .order_by("-check_in_at", "-id")
+                for passenger in transport_passengers:
+                    passenger.is_selected_worker = passenger.connection_id == connection.id
+            transport_free_seats = max(
+                0,
+                transport_driver_assignment.vehicle.seat_capacity
+                - 1
+                - len(transport_passengers),
+            )
+            assigned_ids = {item.connection_id for item in transport_passengers}
+            published_housing = {}
+            for housing in (
+                HousingAssignment.objects.filter(
+                    organization=organization,
+                    state=HousingAssignment.STATE_PUBLISHED,
+                    check_in_at__lte=now,
+                )
+                .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
+                .select_related("place__room__site")
+                .order_by("-check_in_at", "-id")
+            ):
+                published_housing.setdefault(housing.connection_id, housing)
+            active_driver_ids = set(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                    starts_on__lte=today,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .values_list("driver_connection_id", flat=True)
+            )
+            for item in transport_workers:
+                if (
+                    item.id == transport_driver_connection.id
+                    or item.id in assigned_ids
+                    or item.id in active_driver_ids
                 ):
-                    published_housing.setdefault(housing.connection_id, housing)
-                active_driver_ids = set(
-                    DriverVehicleAssignment.objects.filter(
-                        organization=organization,
-                        state=DriverVehicleAssignment.STATE_PUBLISHED,
-                        starts_on__lte=today,
-                    )
-                    .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
-                    .values_list("driver_connection_id", flat=True)
+                    continue
+                housing = published_housing.get(item.id)
+                if housing is None:
+                    continue
+                item.transport_housing_label = (
+                    f"{housing.place.room.site.internal_name} · "
+                    f"{housing.place.room.label} · {housing.place.label}"
                 )
-                for item in transport_workers:
-                    if (
-                        item.id == transport_driver_connection.id
-                        or item.id in assigned_ids
-                        or item.id in active_driver_ids
-                    ):
-                        continue
-                    housing = published_housing.get(item.id)
-                    if housing is None:
-                        continue
-                    item.transport_housing_label = (
-                        f"{housing.place.room.site.internal_name} · "
-                        f"{housing.place.room.label} · {housing.place.label}"
-                    )
-                    item.transport_option_label = (
-                        f"{_display_name(item.candidate)} · {item.transport_housing_label}"
-                    )
-                    transport_passenger_candidates.append(item)
+                item.transport_option_label = (
+                    f"{_display_name(item.candidate)} · {item.transport_housing_label}"
+                )
+                transport_passenger_candidates.append(item)
 
             transport_driver_conversation = (
                 SupportConversation.objects.filter(
@@ -1274,6 +1340,8 @@ def worker_card_snapshot(
         "worksites": worksites,
         "transport_driver_connection": transport_driver_connection,
         "transport_driver_assignment": transport_driver_assignment,
+        "transport_crews": transport_crews,
+        "selected_transport_crew": selected_transport_crew,
         "transport_templates": transport_templates,
         "selected_transport_template": selected_transport_template,
         "selected_transport_route": selected_transport_route,

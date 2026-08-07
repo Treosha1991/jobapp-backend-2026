@@ -1687,6 +1687,147 @@ class SupportWorkspaceWebTests(TestCase):
             ).exists()
         )
 
+    def test_worker_transport_card_lists_each_passenger_crew_as_a_tab(self):
+        today = timezone.localdate()
+
+        def connection_for(username, first_name, last_name):
+            user = User.objects.create_user(
+                username=username,
+                first_name=first_name,
+                last_name=last_name,
+                email=f"{username}@example.com",
+                password="password",
+            )
+            application = SupportApplication.objects.create(
+                vacancy=self.worker_connection.vacancy,
+                candidate=user,
+                revision=1,
+                preferred_language="ru",
+                consent_version="support-application-v1",
+                consented_at=timezone.now(),
+                status=SupportApplication.STATUS_APPROVED,
+            )
+            return SupportConnection.objects.create(
+                organization=self.organization,
+                vacancy=self.worker_connection.vacancy,
+                application=application,
+                candidate=user,
+                stage=SupportConnection.STAGE_ACTIVE_WORKER,
+            )
+
+        passenger = connection_for("multi-crew-worker", "Multi", "Crew Worker")
+        second_driver = connection_for("second-crew-driver", "Second", "Driver")
+
+        def crew_for(*, suffix, driver, project_name, start_time, end_time):
+            worksite = Worksite.objects.create(
+                organization=self.organization,
+                internal_name=f"Crew site {suffix}",
+                country_code="NL",
+                city="Lelystad",
+                street=f"Project road {suffix}",
+                building="10",
+                created_by=self.owner,
+            )
+            project = WorkProject.objects.create(
+                organization=self.organization,
+                worksite=worksite,
+                internal_name=project_name,
+                worker_visible_name=project_name,
+                worker_capacity=20,
+                starts_on=today,
+                created_by=self.owner,
+            )
+            schedule_template = ProjectScheduleTemplate.objects.create(
+                project=project,
+                name=f"Schedule {suffix}",
+                starts_at_time=datetime.strptime(start_time, "%H:%M").time(),
+                ends_at_time=datetime.strptime(end_time, "%H:%M").time(),
+                break_minutes=30,
+                created_by=self.owner,
+            )
+            vehicle = Vehicle.objects.create(
+                organization=self.organization,
+                internal_name=f"Crew vehicle {suffix}",
+                registration_identifier=f"CREW-{suffix}",
+                seat_capacity=4,
+                created_by=self.owner,
+            )
+            driver_assignment = DriverVehicleAssignment.objects.create(
+                organization=self.organization,
+                driver_connection=driver,
+                vehicle=vehicle,
+                starts_on=today,
+                state=DriverVehicleAssignment.STATE_PUBLISHED,
+                created_by=self.owner,
+                published_by=self.owner,
+                published_at=timezone.now(),
+            )
+            route = TransportRoute.objects.create(
+                organization=self.organization,
+                internal_name=f"Crew route {suffix}",
+                worksite=worksite,
+                schedule_template=schedule_template,
+                driver_vehicle_assignment=driver_assignment,
+                starts_on=today,
+                ends_on=today + timedelta(days=14),
+                state=TransportRoute.STATE_PUBLISHED,
+                created_by=self.owner,
+                published_by=self.owner,
+                published_at=timezone.now(),
+            )
+            pickup = RouteStop.objects.create(
+                route=route,
+                kind=RouteStop.KIND_PICKUP,
+                sequence=1,
+                label=f"Pickup {suffix}",
+            )
+            dropoff = RouteStop.objects.create(
+                route=route,
+                kind=RouteStop.KIND_DROPOFF,
+                sequence=2,
+                label=f"Dropoff {suffix}",
+            )
+            TransportPassengerAssignment.objects.create(
+                route=route,
+                connection=passenger,
+                pickup_stop=pickup,
+                dropoff_stop=dropoff,
+                boarding_order=1,
+            )
+            return driver_assignment, schedule_template
+
+        first_assignment, first_template = crew_for(
+            suffix="A",
+            driver=self.worker_connection,
+            project_name="Alpha project",
+            start_time="06:00",
+            end_time="14:00",
+        )
+        second_assignment, second_template = crew_for(
+            suffix="B",
+            driver=second_driver,
+            project_name="Beta project",
+            start_time="15:00",
+            end_time="23:00",
+        )
+        self.client.force_login(self.owner)
+        base_url = f"/employer/support/workers/{passenger.public_id}/?tab=transport"
+
+        page = self.client.get(base_url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Alpha project")
+        self.assertContains(page, "Beta project")
+        first_key = f"{first_assignment.public_id}.{first_template.public_id}"
+        second_key = f"{second_assignment.public_id}.{second_template.public_id}"
+        self.assertContains(page, f"transport_crew={first_key}")
+        self.assertContains(page, f"transport_crew={second_key}")
+
+        second_page = self.client.get(f"{base_url}&transport_crew={second_key}")
+        self.assertEqual(second_page.status_code, 200)
+        self.assertContains(second_page, "Second Driver")
+        self.assertContains(second_page, "CREW-B")
+        self.assertContains(second_page, "Pickup B")
+
     def test_worker_card_allows_one_day_route_and_explains_invalid_period(self):
         vehicle = Vehicle.objects.create(
             organization=self.organization,

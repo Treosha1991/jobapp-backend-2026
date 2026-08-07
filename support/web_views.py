@@ -303,6 +303,7 @@ def _worker_card_redirect(
     month=None,
     site=None,
     transport_template=None,
+    transport_crew=None,
 ):
     """Return to the same focused worker tab after a safe POST operation."""
 
@@ -315,6 +316,8 @@ def _worker_card_redirect(
         query["site"] = site
     if tab == "transport" and transport_template:
         query["transport_template"] = transport_template
+    if tab == "transport" and transport_crew:
+        query["transport_crew"] = transport_crew
     base_url = reverse(
         "support:worker-card",
         kwargs={"connection_public_id": connection.public_id},
@@ -1129,6 +1132,7 @@ def _worker_card_operation(request, *, snapshot):
         month=request.POST.get("return_month"),
         site=request.POST.get("return_site"),
         transport_template=request.POST.get("return_transport_template"),
+        transport_crew=request.POST.get("return_transport_crew"),
     )
 
 
@@ -1142,6 +1146,7 @@ def worker_card(request, connection_public_id):
         calendar_month=request.GET.get("month"),
         housing_site_public_id=request.GET.get("site"),
         transport_template_public_id=request.GET.get("transport_template"),
+        transport_crew_key=request.GET.get("transport_crew"),
     )
     if request.method == "POST":
         return _worker_card_operation(request, snapshot=snapshot)
@@ -1234,9 +1239,9 @@ def worker_card(request, connection_public_id):
             ],
         }
     )
-    for template in snapshot["transport_templates"]:
-        template.transport_url = (
-            f"{worker_base_url}?tab=transport&transport_template={template.public_id}"
+    for crew in snapshot["transport_crews"]:
+        crew.transport_url = (
+            f"{worker_base_url}?tab=transport&transport_crew={crew.key}"
         )
     snapshot["transport_driver_chat_url"] = (
         reverse(
