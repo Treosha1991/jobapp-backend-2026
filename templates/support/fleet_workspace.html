@@ -5,6 +5,9 @@
 {% block extra_head %}
 <style>
   .fleet-head { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:start; }
+  .fleet-add { min-width:min(100%, 420px); }
+  .fleet-add[open] { padding:14px; border:1px solid rgba(24,223,103,.42); border-radius:16px; background:rgba(24,223,103,.06); }
+  .fleet-add[open] > summary { margin-bottom:12px; }
   .fleet-card { margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.25); }
   .fleet-card h2, .fleet-card h3 { margin:0 0 7px; }
   .fleet-card p { margin:0; color:var(--muted); line-height:1.45; }
@@ -24,7 +27,19 @@
 {% block content %}
   <div class="jh-actions"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_workspace_back }}</a></div>
   <section class="jh-card">
-    <div class="fleet-head"><div><p class="worker-kicker">JobHub Support · {{ organization.display_name }}</p><h1 class="jh-title">{{ employer_t.support_fleet_title }}</h1><p class="jh-subtitle">{{ employer_t.support_fleet_subtitle }}</p></div></div>
+    <div class="fleet-head">
+      <div><p class="worker-kicker">JobHub Support · {{ organization.display_name }}</p><h1 class="jh-title">{{ employer_t.support_fleet_title }}</h1><p class="jh-subtitle">{{ employer_t.support_fleet_subtitle }}</p></div>
+      <details class="fleet-add">
+        <summary class="jh-btn primary">{{ employer_t.support_registry_add_vehicle }}</summary>
+        <form method="post" class="fleet-form">
+          {% csrf_token %}<input type="hidden" name="action" value="vehicle_create">
+          <label class="jh-field"><span>{{ employer_t.support_registry_internal_name }}</span><input class="jh-input" name="internal_name" maxlength="120" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_registry_registration }}</span><input class="jh-input" name="registration_identifier" maxlength="64" required></label>
+          <label class="jh-field"><span>{{ employer_t.support_registry_capacity }}</span><input class="jh-input" name="seat_capacity" type="number" min="2" max="100" required></label>
+          <div class="jh-actions wide"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
+        </form>
+      </details>
+    </div>
 
     <div class="jh-table-wrap">
       <table class="jh-table"><thead><tr><th>Авто</th><th>Госномер</th><th>{{ employer_t.support_fleet_free_seats }}</th><th>{{ employer_t.support_fleet_current_driver }}</th><th>{{ employer_t.support_fleet_route }}</th><th></th></tr></thead>

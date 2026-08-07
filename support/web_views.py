@@ -1642,8 +1642,17 @@ def fleet_workspace(request):
     organization = snapshot["organization"]
     if request.method == "POST":
         action = (request.POST.get("action") or "driver_vehicle_draft_create").strip()
+        redirect_vehicle_id = request.POST.get("vehicle_id", "")
         try:
-            if action == "driver_vehicle_draft_publish":
+            if action == "vehicle_create":
+                vehicle = create_vehicle(
+                    actor=request.user,
+                    organization=organization,
+                    **_validated_post(VehicleCreateSerializer, request),
+                )
+                redirect_vehicle_id = str(vehicle.public_id)
+                success_key = "support_registry_created"
+            elif action == "driver_vehicle_draft_publish":
                 assignment = get_object_or_404(
                     DriverVehicleAssignment,
                     organization=organization,
@@ -1708,7 +1717,9 @@ def fleet_workspace(request):
         except (APIException, ValueError) as error:
             detail = str(getattr(error, "detail", error))
             message_key = (
-                "support_fleet_delete_error"
+                "support_registry_operation_error"
+                if action == "vehicle_create"
+                else "support_fleet_delete_error"
                 if action == "driver_vehicle_draft_delete"
                 else "support_fleet_capacity_error"
                 if action == "driver_vehicle_draft_publish"
@@ -1725,7 +1736,7 @@ def fleet_workspace(request):
             )
         else:
             messages.success(request, tr(request, success_key))
-        query = urlencode({"organization": organization.public_id, "vehicle": request.POST.get("vehicle_id", "")})
+        query = urlencode({"organization": organization.public_id, "vehicle": redirect_vehicle_id})
         return redirect(f"{reverse('support:fleet')}?{query}")
     snapshot["workspace_url"] = f"{reverse('support:workspace')}?organization={organization.public_id}"
     return render(request, "support/fleet_workspace.html", snapshot)

@@ -446,6 +446,36 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "FLEET-123")
         self.assertContains(response, "workspace-active-worker")
 
+    def test_owner_can_add_vehicle_from_fleet_workspace(self):
+        self.client.force_login(self.owner)
+        fleet_url = (
+            f"/employer/support/fleet/?organization={self.organization.public_id}"
+        )
+
+        page = self.client.get(fleet_url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Add vehicle")
+
+        created = self.client.post(
+            fleet_url,
+            {
+                "action": "vehicle_create",
+                "internal_name": "Crew van",
+                "registration_identifier": "NL-CREW-10",
+                "seat_capacity": "9",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(created.status_code, 200)
+        self.assertContains(created, "Crew van")
+        self.assertContains(created, "NL-CREW-10")
+        vehicle = Vehicle.objects.get(
+            organization=self.organization,
+            registration_identifier="NL-CREW-10",
+        )
+        self.assertEqual(vehicle.seat_capacity, 9)
+
     def test_fleet_marks_driverless_vehicle_without_counting_previous_drivers_crew(self):
         vehicle = Vehicle.objects.create(
             organization=self.organization,
