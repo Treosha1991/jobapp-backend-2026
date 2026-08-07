@@ -446,7 +446,7 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "FLEET-123")
         self.assertContains(response, "workspace-active-worker")
 
-    def test_fleet_marks_driverless_crew_and_keeps_route_passenger_count(self):
+    def test_fleet_marks_driverless_vehicle_without_counting_previous_drivers_crew(self):
         vehicle = Vehicle.objects.create(
             organization=self.organization,
             internal_name="Driverless crew car",
@@ -519,7 +519,103 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Driver absent")
         self.assertContains(response, "Crew route without driver")
-        self.assertContains(response, "3/4")
+        self.assertContains(response, "4/4")
+
+    def test_fleet_lists_passengers_to_exclude_when_driver_moves_to_smaller_car(self):
+        starts_on = date.today() - timedelta(days=1)
+        source_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Large crew car",
+            registration_identifier="FLEET-LARGE",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        target_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Small crew car",
+            registration_identifier="FLEET-SMALL",
+            seat_capacity=2,
+            created_by=self.owner,
+        )
+        source_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            vehicle=source_vehicle,
+            driver_connection=self.worker_connection,
+            starts_on=starts_on,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            vehicle=target_vehicle,
+            driver_connection=self.worker_connection,
+            starts_on=date.today(),
+            state=DriverVehicleAssignment.STATE_DRAFT,
+            created_by=self.owner,
+        )
+        route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Crew follows driver",
+            driver_vehicle_assignment=source_assignment,
+            starts_on=starts_on,
+            state=TransportRoute.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        pickup = RouteStop.objects.create(
+            route=route,
+            sequence=1,
+            kind=RouteStop.KIND_PICKUP,
+            label="Housing",
+        )
+        dropoff = RouteStop.objects.create(
+            route=route,
+            sequence=2,
+            kind=RouteStop.KIND_DROPOFF,
+            label="Project",
+        )
+        for index, name in enumerate(("Anna Passenger", "Boris Passenger"), start=1):
+            first_name, last_name = name.split()
+            passenger_user = User.objects.create_user(
+                username=f"fleet-capacity-passenger-{index}",
+                first_name=first_name,
+                last_name=last_name,
+                email=f"fleet-capacity-passenger-{index}@example.com",
+                password="password",
+            )
+            passenger_application = SupportApplication.objects.create(
+                vacancy=self.worker_connection.vacancy,
+                candidate=passenger_user,
+                revision=1,
+                preferred_language="ru",
+                consent_version="support-application-v1",
+                consented_at=timezone.now(),
+                status=SupportApplication.STATUS_APPROVED,
+            )
+            passenger_connection = SupportConnection.objects.create(
+                organization=self.organization,
+                vacancy=self.worker_connection.vacancy,
+                application=passenger_application,
+                candidate=passenger_user,
+                stage=SupportConnection.STAGE_COORDINATOR,
+            )
+            TransportPassengerAssignment.objects.create(
+                route=route,
+                connection=passenger_connection,
+                pickup_stop=pickup,
+                dropoff_stop=dropoff,
+                boarding_order=index,
+            )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            f"/employer/support/fleet/?organization={self.organization.public_id}&vehicle={target_vehicle.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The new vehicle does not have enough seats")
+        self.assertContains(response, "Anna Passenger")
+        self.assertContains(response, "Boris Passenger")
+        self.assertContains(response, "Exclude selected and publish")
 
     def test_transport_manager_can_toggle_worker_driving_license_mark(self):
         self.client.force_login(self.owner)
@@ -1434,7 +1530,10 @@ class SupportWorkspaceWebTests(TestCase):
         card = self.client.get(card_url)
         self.assertEqual(card.status_code, 200)
         self.assertContains(card, "Publish vehicle assignment")
-        self.assertContains(card, "Publish this driver change?")
+        self.assertContains(
+            card,
+            "Publish the driver transfer together with their route and passengers",
+        )
         vehicle_published = self.client.post(
             card_url,
             {

@@ -1574,7 +1574,13 @@ def fleet_workspace(request):
                     organization=organization,
                     public_id=request.POST.get("assignment_id"),
                 )
-                publish_driver_vehicle_assignment(actor=request.user, assignment=assignment)
+                publish_driver_vehicle_assignment(
+                    actor=request.user,
+                    assignment=assignment,
+                    excluded_passenger_public_ids=request.POST.getlist(
+                        "exclude_passenger_ids"
+                    ),
+                )
                 success_key = "support_transport_driver_vehicle_published"
             elif action == "driver_vehicle_draft_delete":
                 assignment = get_object_or_404(
@@ -1624,10 +1630,14 @@ def fleet_workspace(request):
                     success_key = "support_fleet_draft_created"
                 else:
                     raise ValueError("fleet_operation_unknown")
-        except (APIException, ValueError):
+        except (APIException, ValueError) as error:
+            detail = str(getattr(error, "detail", error))
             message_key = (
                 "support_fleet_delete_error"
                 if action == "driver_vehicle_draft_delete"
+                else "support_fleet_capacity_error"
+                if action == "driver_vehicle_draft_publish"
+                and "driver_crew_capacity_exceeded" in detail
                 else "support_fleet_publish_error"
                 if action == "driver_vehicle_draft_publish"
                 else "support_fleet_edit_error"

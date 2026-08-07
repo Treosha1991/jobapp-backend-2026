@@ -1469,14 +1469,68 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
         Vehicle.objects.filter(organization=organization)
         .prefetch_related(
             "driver_assignments__driver_connection__candidate",
-            "driver_assignments__routes__passenger_assignments",
+            "driver_assignments__routes__passenger_assignments__connection__candidate",
         )
         .order_by("internal_name", "id")
     )
+    assignments_by_vehicle_id = {}
+    all_assignments = []
     for vehicle in vehicles:
         assignments = list(vehicle.driver_assignments.all())
         assignments.sort(key=lambda item: (item.starts_on, item.id), reverse=True)
+        assignments_by_vehicle_id[vehicle.id] = assignments
+        all_assignments.extend(assignments)
+
+    def periods_overlap(first_start, first_end, second_start, second_end):
+        return (
+            (first_end is None or first_end >= second_start)
+            and (second_end is None or second_end >= first_start)
+        )
+
+    for vehicle in vehicles:
+        assignments = assignments_by_vehicle_id[vehicle.id]
         vehicle.assignments_for_fleet = assignments
+        for draft in assignments:
+            draft.transfer_routes = []
+            draft.transfer_passengers = []
+            draft.transfer_excess_count = 0
+            draft.transfer_over_capacity = False
+            if draft.state != DriverVehicleAssignment.STATE_DRAFT:
+                continue
+            draft.transfer_routes = [
+                route
+                for source_assignment in all_assignments
+                if source_assignment.driver_connection_id == draft.driver_connection_id
+                and source_assignment.id != draft.id
+                for route in source_assignment.routes.all()
+                if route.state in (TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED)
+                and periods_overlap(
+                    route.starts_on,
+                    route.ends_on,
+                    draft.starts_on,
+                    draft.ends_on,
+                )
+            ]
+            draft.transfer_passengers = sorted(
+                [
+                    passenger
+                    for route in draft.transfer_routes
+                    for passenger in route.passenger_assignments.all()
+                ],
+                key=lambda item: (item.boarding_order, item.id),
+            )
+            passenger_counts_by_route = [
+                route.passenger_assignments.count()
+                for route in draft.transfer_routes
+            ]
+            draft.transfer_excess_count = max(
+                (
+                    max(0, passenger_count - (vehicle.seat_capacity - 1))
+                    for passenger_count in passenger_counts_by_route
+                ),
+                default=0,
+            )
+            draft.transfer_over_capacity = draft.transfer_excess_count > 0
         active = [
             item for item in assignments
             if item.state in (DriverVehicleAssignment.STATE_DRAFT, DriverVehicleAssignment.STATE_PUBLISHED)
@@ -1485,18 +1539,17 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
         ]
         active.sort(key=lambda item: (item.state == DriverVehicleAssignment.STATE_PUBLISHED, item.starts_on), reverse=True)
         vehicle.current_assignment = active[0] if active else None
-        routes = [
-            route
-            for driver_assignment in assignments
-            for route in driver_assignment.routes.all()
-            if route.state in (TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED)
-            and route.starts_on <= today
-            and (route.ends_on is None or route.ends_on >= today)
-        ]
+        routes = []
+        if vehicle.current_assignment is not None:
+            routes = [
+                route
+                for route in vehicle.current_assignment.routes.all()
+                if route.state in (TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED)
+                and route.starts_on <= today
+                and (route.ends_on is None or route.ends_on >= today)
+            ]
         routes.sort(
             key=lambda item: (
-                vehicle.current_assignment is not None
-                and item.driver_vehicle_assignment_id == vehicle.current_assignment.id,
                 item.state == TransportRoute.STATE_PUBLISHED,
                 item.starts_on,
                 item.id,
@@ -1504,8 +1557,10 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
             reverse=True,
         )
         vehicle.current_route = routes[0] if routes else None
-        vehicle.driver_absent = (
-            vehicle.current_assignment is None and vehicle.current_route is not None
+        vehicle.driver_absent = vehicle.current_assignment is None and any(
+            item.state == DriverVehicleAssignment.STATE_CANCELLED
+            and item.starts_on <= today
+            for item in assignments
         )
         passenger_count = (
             vehicle.current_route.passenger_assignments.count()

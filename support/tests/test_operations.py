@@ -532,7 +532,7 @@ class SupportOperationsTests(TestCase):
         publish_driver_vehicle_assignment(actor=self.owner, assignment=previous_assignment)
         route = TransportRoute.objects.create(
             organization=self.organization,
-            internal_name="Route follows car",
+            internal_name="Route stays with previous driver",
             driver_vehicle_assignment=previous_assignment,
             starts_on=starts_on,
             state=TransportRoute.STATE_PUBLISHED,
@@ -556,7 +556,7 @@ class SupportOperationsTests(TestCase):
         self.assertIsNone(published.ends_on)
         self.assertEqual(previous_assignment.state, DriverVehicleAssignment.STATE_CANCELLED)
         self.assertIsNone(previous_assignment.ends_on)
-        self.assertEqual(route.driver_vehicle_assignment, published)
+        self.assertEqual(route.driver_vehicle_assignment, previous_assignment)
 
     def test_publishing_driver_change_moves_driver_from_other_vehicle_without_route(self):
         starts_on = date.today() + timedelta(days=3)
@@ -615,9 +615,9 @@ class SupportOperationsTests(TestCase):
         self.assertEqual(published.state, DriverVehicleAssignment.STATE_PUBLISHED)
         self.assertEqual(driver_previous.state, DriverVehicleAssignment.STATE_CANCELLED)
         self.assertEqual(target_previous.state, DriverVehicleAssignment.STATE_CANCELLED)
-        self.assertEqual(target_route.driver_vehicle_assignment, published)
+        self.assertEqual(target_route.driver_vehicle_assignment, target_previous)
 
-    def test_driver_move_keeps_previous_vehicle_route_and_passengers(self):
+    def test_driver_move_transfers_previous_route_and_passengers(self):
         starts_on = date.today() + timedelta(days=3)
         old_vehicle = Vehicle.objects.create(
             organization=self.organization,
@@ -643,7 +643,7 @@ class SupportOperationsTests(TestCase):
         publish_driver_vehicle_assignment(actor=self.owner, assignment=driver_previous)
         route = TransportRoute.objects.create(
             organization=self.organization,
-            internal_name="Crew remains on old car",
+            internal_name="Crew follows driver",
             driver_vehicle_assignment=driver_previous,
             starts_on=starts_on,
             state=TransportRoute.STATE_PUBLISHED,
@@ -684,10 +684,10 @@ class SupportOperationsTests(TestCase):
         self.assertEqual(published.state, DriverVehicleAssignment.STATE_PUBLISHED)
         self.assertEqual(driver_previous.state, DriverVehicleAssignment.STATE_CANCELLED)
         self.assertEqual(route.state, TransportRoute.STATE_PUBLISHED)
-        self.assertEqual(route.driver_vehicle_assignment, driver_previous)
+        self.assertEqual(route.driver_vehicle_assignment, published)
         self.assertEqual(passenger.route, route)
 
-    def test_new_driver_reconnects_route_left_without_driver(self):
+    def test_new_driver_does_not_take_previous_drivers_route(self):
         starts_on = date.today() + timedelta(days=3)
         vehicle = Vehicle.objects.create(
             organization=self.organization,
@@ -726,7 +726,99 @@ class SupportOperationsTests(TestCase):
         published = publish_driver_vehicle_assignment(actor=self.owner, assignment=replacement)
 
         route.refresh_from_db()
+        self.assertEqual(route.driver_vehicle_assignment, previous_assignment)
+
+    def test_driver_move_requires_exclusions_when_new_vehicle_is_too_small(self):
+        starts_on = date.today() + timedelta(days=3)
+        old_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Large crew car",
+            registration_identifier="JH-LARGE-CREW",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        small_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Small crew car",
+            registration_identifier="JH-SMALL-CREW",
+            seat_capacity=2,
+            created_by=self.owner,
+        )
+        driver_previous = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.passenger_connection,
+            vehicle=old_vehicle,
+            starts_on=starts_on,
+        )
+        publish_driver_vehicle_assignment(actor=self.owner, assignment=driver_previous)
+        route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Crew that needs two passenger seats",
+            driver_vehicle_assignment=driver_previous,
+            starts_on=starts_on,
+            state=TransportRoute.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        pickup = RouteStop.objects.create(
+            route=route,
+            sequence=1,
+            kind=RouteStop.KIND_PICKUP,
+            label="Worker housing",
+        )
+        dropoff = RouteStop.objects.create(
+            route=route,
+            sequence=2,
+            kind=RouteStop.KIND_DROPOFF,
+            label="Work project",
+        )
+        first_passenger = TransportPassengerAssignment.objects.create(
+            route=route,
+            connection=self.connection,
+            pickup_stop=pickup,
+            dropoff_stop=dropoff,
+        )
+        extra_user = User.objects.create_user(
+            username="operations-extra-passenger",
+            email="operations-extra-passenger@example.com",
+            password="password",
+        )
+        extra_connection = self._create_connection(extra_user, suffix="extra-passenger")
+        second_passenger = TransportPassengerAssignment.objects.create(
+            route=route,
+            connection=extra_connection,
+            pickup_stop=pickup,
+            dropoff_stop=dropoff,
+        )
+        replacement = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.passenger_connection,
+            vehicle=small_vehicle,
+            starts_on=starts_on,
+        )
+
+        with self.assertRaises(ValidationError) as error:
+            publish_driver_vehicle_assignment(actor=self.owner, assignment=replacement)
+
+        self.assertIn("driver_crew_capacity_exceeded", str(error.exception.detail))
+        replacement.refresh_from_db()
+        route.refresh_from_db()
+        self.assertEqual(replacement.state, DriverVehicleAssignment.STATE_DRAFT)
+        self.assertEqual(route.driver_vehicle_assignment, driver_previous)
+        self.assertTrue(TransportPassengerAssignment.objects.filter(pk=first_passenger.pk).exists())
+        self.assertTrue(TransportPassengerAssignment.objects.filter(pk=second_passenger.pk).exists())
+
+        published = publish_driver_vehicle_assignment(
+            actor=self.owner,
+            assignment=replacement,
+            excluded_passenger_public_ids=[second_passenger.public_id],
+        )
+
+        route.refresh_from_db()
         self.assertEqual(route.driver_vehicle_assignment, published)
+        self.assertTrue(TransportPassengerAssignment.objects.filter(pk=first_passenger.pk).exists())
+        self.assertFalse(TransportPassengerAssignment.objects.filter(pk=second_passenger.pk).exists())
 
     def test_transport_draft_can_be_deleted_without_deleting_vehicle_assignment(self):
         starts_on = date.today() + timedelta(days=3)

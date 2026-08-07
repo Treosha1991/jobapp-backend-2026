@@ -559,7 +559,9 @@ def create_driver_vehicle_assignment(*, actor, organization, driver_connection, 
     return assignment
 
 
-def publish_driver_vehicle_assignment(*, actor, assignment):
+def publish_driver_vehicle_assignment(
+    *, actor, assignment, excluded_passenger_public_ids=()
+):
     """Publish a driver--vehicle assignment even when no route is needed yet.
 
     A vehicle can be assigned to a driver before the transport coordinator knows
@@ -618,15 +620,84 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
                 ends_at=assignment.ends_on,
             )
         )
+        driver_routes_to_transfer = list(
+            _period_overlaps(
+                TransportRoute.objects.select_for_update()
+                .filter(
+                    driver_vehicle_assignment__driver_connection=assignment.driver_connection,
+                    state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
+                )
+                .exclude(driver_vehicle_assignment=assignment),
+                starts_field="starts_on",
+                ends_field="ends_on",
+                starts_at=assignment.starts_on,
+                ends_at=assignment.ends_on,
+            )
+        )
+        excluded_ids = {str(item) for item in excluded_passenger_public_ids if item}
+        transferable_passengers = list(
+            TransportPassengerAssignment.objects.select_for_update()
+            .select_related("connection__candidate", "route")
+            .filter(route__in=driver_routes_to_transfer)
+            .order_by("route_id", "boarding_order", "id")
+        )
+        transferable_ids = {str(item.public_id) for item in transferable_passengers}
+        if excluded_ids - transferable_ids:
+            raise ValidationError(
+                {"passengers": "driver_crew_excluded_passenger_not_found"}
+            )
+        passengers_to_exclude = [
+            item for item in transferable_passengers if str(item.public_id) in excluded_ids
+        ]
+        available_passenger_seats = assignment.vehicle.seat_capacity - 1
+        remaining_by_route = {
+            route.id: sum(
+                1
+                for passenger in transferable_passengers
+                if passenger.route_id == route.id
+                and str(passenger.public_id) not in excluded_ids
+            )
+            for route in driver_routes_to_transfer
+        }
+        required_exclusions = max(
+            (
+                max(0, passenger_count - available_passenger_seats)
+                for passenger_count in remaining_by_route.values()
+            ),
+            default=0,
+        )
+        if required_exclusions:
+            raise ValidationError(
+                {
+                    "passengers": "driver_crew_capacity_exceeded",
+                    "required_exclusions": required_exclusions,
+                }
+            )
         now = timezone.now()
-        # Moving a driver must not dismantle the crew of their previous car.
-        # Its route, stops and passengers stay published, while the driver
-        # assignment is closed so the fleet can clearly show "driver absent".
+        for passenger in passengers_to_exclude:
+            route_public_id = str(passenger.route.public_id)
+            connection_public_id = str(passenger.connection.public_id)
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="transport.passenger_excluded_for_vehicle_change",
+                target=passenger,
+                details={
+                    "route": route_public_id,
+                    "connection": connection_public_id,
+                    "replacement_assignment": str(assignment.public_id),
+                    "new_vehicle": str(assignment.vehicle.public_id),
+                },
+            )
+            passenger.delete()
+
+        # The crew belongs to the driver: active routes, stops and remaining
+        # passengers move together to the driver's new vehicle assignment.
+        for route in driver_routes_to_transfer:
+            route.driver_vehicle_assignment = assignment
+            route.save(update_fields=["driver_vehicle_assignment", "updated_at"])
+
         for previous_assignment in driver_replacement_assignments:
-            retained_route_count = TransportRoute.objects.select_for_update().filter(
-                driver_vehicle_assignment=previous_assignment,
-                state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
-            ).count()
             previous_assignment.state = DriverVehicleAssignment.STATE_CANCELLED
             previous_assignment.cancelled_at = now
             previous_assignment.ends_on = None
@@ -642,36 +713,13 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
                     "replacement_assignment": str(assignment.public_id),
                     "previous_vehicle": str(previous_assignment.vehicle.public_id),
                     "new_vehicle": str(assignment.vehicle.public_id),
-                    "retained_route_count": retained_route_count,
+                    "transferred_route_count": len(driver_routes_to_transfer),
+                    "excluded_passenger_count": len(passengers_to_exclude),
                 },
             )
         # Publishing a new draft for the same car deliberately replaces its
         # previous driver. Driver appointments are open-ended: their history
         # is defined by the next appointment, not by a manually entered end.
-        # Routes belong to the car's crew, so they move with the car instead
-        # of disappearing when the driver is changed.
-        routes_to_transfer = list(
-            _period_overlaps(
-                TransportRoute.objects.select_for_update()
-                .filter(
-                    driver_vehicle_assignment__vehicle=assignment.vehicle,
-                    state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
-                )
-                .exclude(driver_vehicle_assignment=assignment),
-                starts_field="starts_on",
-                ends_field="ends_on",
-                starts_at=assignment.starts_on,
-                ends_at=assignment.ends_on,
-            )
-        )
-        transferred_by_assignment = {}
-        for route in routes_to_transfer:
-            previous_assignment_id = route.driver_vehicle_assignment_id
-            transferred_by_assignment[previous_assignment_id] = (
-                transferred_by_assignment.get(previous_assignment_id, 0) + 1
-            )
-            route.driver_vehicle_assignment = assignment
-            route.save(update_fields=["driver_vehicle_assignment", "updated_at"])
         for previous_assignment in replacement_assignments:
             previous_assignment.state = DriverVehicleAssignment.STATE_CANCELLED
             previous_assignment.cancelled_at = now
@@ -684,9 +732,7 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
                 target=previous_assignment,
                 details={
                     "replacement_assignment": str(assignment.public_id),
-                    "transferred_route_count": transferred_by_assignment.get(
-                        previous_assignment.id, 0
-                    ),
+                    "crew_retained_with_previous_driver": True,
                 },
             )
         assignment.state = DriverVehicleAssignment.STATE_PUBLISHED
