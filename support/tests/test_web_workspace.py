@@ -1336,7 +1336,9 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertContains(company_card, "Flevosap line A")
         self.assertContains(housing_card, "Lelystad home")
-        self.assertContains(transport_card, "Transport 1")
+        # Unassigned vehicles are managed in Fleet and no longer clutter the
+        # worker's schedule-first Transport tab.
+        self.assertNotContains(transport_card, "Transport 1")
 
     def test_transport_staff_builds_and_publishes_one_complete_route(self):
         vehicle = Vehicle.objects.create(
@@ -1485,6 +1487,33 @@ class SupportWorkspaceWebTests(TestCase):
         )
 
     def test_owner_builds_a_route_and_adds_a_passenger_from_driver_card(self):
+        today = timezone.localdate()
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Crew worksite",
+            country_code="NL",
+            city="Lelystad",
+            street="Work road",
+            building="10",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Crew project",
+            worker_visible_name="Crew project",
+            worker_capacity=20,
+            starts_on=today,
+            created_by=self.owner,
+        )
+        template = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Morning crew",
+            starts_at_time=datetime.strptime("06:00", "%H:%M").time(),
+            ends_at_time=datetime.strptime("14:00", "%H:%M").time(),
+            break_minutes=30,
+            created_by=self.owner,
+        )
         vehicle = Vehicle.objects.create(
             organization=self.organization,
             internal_name="Driver car",
@@ -1515,125 +1544,117 @@ class SupportWorkspaceWebTests(TestCase):
             candidate=passenger_user,
             stage=SupportConnection.STAGE_COORDINATOR,
         )
-        starts_on = date.today() + timedelta(days=7)
+        housing_site = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="Passenger house",
+            country_code="NL",
+            city="Lelystad",
+            street="Home road",
+            building="2",
+            created_by=self.owner,
+        )
+        room = HousingRoom.objects.create(site=housing_site, label="2A", capacity=2)
+        place = HousingPlace.objects.create(room=room, label="1")
+        HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=passenger_connection,
+            place=place,
+            check_in_at=timezone.now() - timedelta(days=1),
+            state=HousingAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        driver_work = WorkerProjectAssignment.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            project=project,
+            starts_at=timezone.now(),
+            state=WorkerProjectAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        shift_date = today + timedelta(days=1)
+        shift_start = timezone.make_aware(datetime.combine(shift_date, template.starts_at_time))
+        shift_end = timezone.make_aware(datetime.combine(shift_date, template.ends_at_time))
+        ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            work_assignment=driver_work,
+            schedule_template=template,
+            work_date=shift_date,
+            starts_at=shift_start,
+            ends_at=shift_end,
+            break_minutes=template.break_minutes,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
         driver_assignment = DriverVehicleAssignment.objects.create(
             organization=self.organization,
             driver_connection=self.worker_connection,
             vehicle=vehicle,
-            starts_on=starts_on,
-            ends_on=starts_on + timedelta(days=14),
+            starts_on=today,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
             created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
         )
-        card_url = f"/employer/support/workers/{self.worker_connection.public_id}/?tab=transport"
+        card_url = (
+            f"/employer/support/workers/{self.worker_connection.public_id}/"
+            f"?tab=transport&transport_template={template.public_id}"
+        )
         self.client.force_login(self.owner)
 
         card = self.client.get(card_url)
         self.assertEqual(card.status_code, 200)
-        self.assertContains(card, "Publish vehicle assignment")
-        self.assertContains(
-            card,
-            "Publish the driver transfer together with their route and passengers",
-        )
-        vehicle_published = self.client.post(
-            card_url,
-            {
-                "action": "driver_vehicle_publish",
-                "driver_vehicle_assignment_id": str(driver_assignment.public_id),
-                "return_tab": "transport",
-            },
-            follow=True,
-        )
-        self.assertEqual(vehicle_published.status_code, 200)
-        self.assertContains(vehicle_published, "The vehicle was assigned to the driver")
-        driver_assignment.refresh_from_db()
-        self.assertEqual(driver_assignment.state, DriverVehicleAssignment.STATE_PUBLISHED)
-
-        created = self.client.post(
-            card_url,
-            {
-                "action": "route_create",
-                "driver_vehicle_assignment_id": str(driver_assignment.public_id),
-                "internal_name": "Card route",
-                "worksite_id": "",
-                "starts_on": starts_on.isoformat(),
-                "ends_on": "",
-                "departure_time": "",
-                "return_tab": "transport",
-            },
-            follow=True,
-        )
-        self.assertEqual(created.status_code, 200)
-        self.assertContains(created, "The route draft was created.")
-        route = TransportRoute.objects.get(organization=self.organization, internal_name="Card route")
-        self.assertIsNone(route.ends_on)
-
-        for sequence, kind, label in (
-            (1, "pickup", "Home"),
-            (2, "dropoff", "Work"),
-        ):
-            response = self.client.post(
-                card_url,
-                {
-                    "action": "route_stop_create",
-                    "route_id": str(route.public_id),
-                    "sequence": str(sequence),
-                    "kind": kind,
-                    "label": label,
-                    "housing_site_id": "",
-                    "return_tab": "transport",
-                },
-                follow=True,
-            )
-            self.assertEqual(response.status_code, 200)
-
-        stops = list(RouteStop.objects.filter(route=route).order_by("sequence"))
-        edited_stop = self.client.post(
-            card_url,
-            {
-                "action": "route_stop_edit",
-                "route_id": str(route.public_id),
-                "stop_id": str(stops[0].public_id),
-                "sequence": "1",
-                "kind": "pickup",
-                "label": "Home updated",
-                "housing_site_id": "",
-                "return_tab": "transport",
-            },
-            follow=True,
-        )
-        self.assertEqual(edited_stop.status_code, 200)
-        self.assertContains(edited_stop, "Stop updated.")
-        stops[0].refresh_from_db()
-        self.assertEqual(stops[0].label, "Home updated")
+        self.assertContains(card, "Morning crew")
+        self.assertContains(card, "Ihor Passenger")
+        self.assertNotContains(card, "Create route draft")
         passenger_added = self.client.post(
             card_url,
             {
-                "action": "route_passenger_create",
-                "route_id": str(route.public_id),
-                "connection_id": str(passenger_connection.public_id),
-                "pickup_stop_id": str(stops[0].public_id),
-                "dropoff_stop_id": str(stops[1].public_id),
-                "boarding_order": "1",
+                "action": "transport_schedule_passenger_add",
+                "driver_connection_id": str(self.worker_connection.public_id),
+                "passenger_connection_id": str(passenger_connection.public_id),
+                "schedule_template_id": str(template.public_id),
                 "return_tab": "transport",
+                "return_transport_template": str(template.public_id),
             },
             follow=True,
         )
         self.assertEqual(passenger_added.status_code, 200)
-        self.assertContains(passenger_added, "The passenger was added")
-
-        published = self.client.post(
-            card_url,
-            {
-                "action": "route_publish",
-                "route_id": str(route.public_id),
-                "return_tab": "transport",
-            },
-            follow=True,
+        self.assertContains(passenger_added, "Passenger added")
+        route = TransportRoute.objects.get(
+            organization=self.organization,
+            driver_vehicle_assignment=driver_assignment,
+            schedule_template=template,
         )
-        self.assertEqual(published.status_code, 200)
-        route.refresh_from_db()
         self.assertEqual(route.state, TransportRoute.STATE_PUBLISHED)
-        self.assertContains(published, "Card route")
+        self.assertTrue(
+            TransportPassengerAssignment.objects.filter(
+                route=route,
+                connection=passenger_connection,
+                pickup_stop__housing_site=housing_site,
+                dropoff_stop__label__contains="Crew project",
+            ).exists()
+        )
+        passenger_shift = ScheduledWorkShift.objects.get(
+            connection=passenger_connection,
+            work_date=shift_date,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(passenger_shift.schedule_template, template)
+        self.assertEqual(passenger_shift.starts_at, shift_start)
+        self.assertTrue(
+            WorkerProjectAssignment.objects.filter(
+                connection=passenger_connection,
+                project=project,
+                state=WorkerProjectAssignment.STATE_PUBLISHED,
+            ).exists()
+        )
 
     def test_worker_card_allows_one_day_route_and_explains_invalid_period(self):
         vehicle = Vehicle.objects.create(

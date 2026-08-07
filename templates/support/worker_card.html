@@ -278,7 +278,7 @@
 
     {% if not can_operate %}<div class="worker-warning">{{ employer_t.support_worker_not_ready }}</div>{% endif %}
 
-    {% if permissions.document_request %}
+    {% if permissions.document_request and active_tab != 'transport' %}
       <details class="worker-documents">
         <summary>{{ employer_t.support_documents_title }}</summary>
         <div class="worker-documents-content">
@@ -374,6 +374,74 @@
     {% endif %}
 
     {% if active_tab == 'transport' and permissions.transport %}
+      <section class="worker-section worker-transport-dashboard">
+        <h2>{{ employer_t.support_worker_transport_roles }}</h2>
+        <p>{{ employer_t.support_transport_schedule_switcher_text }}</p>
+
+        {% if transport_driver_assignment %}
+          <nav class="worker-site-list worker-transport-templates" aria-label="{{ employer_t.support_transport_schedule_switcher }}">
+            {% for template in transport_templates %}
+              <a class="worker-site-link {% if selected_transport_template.id == template.id %}active{% endif %}" href="{{ template.transport_url }}">
+                <strong>{{ template.name }}</strong>
+                <span>{{ template.project.worker_visible_name }} · {{ template.starts_at_time|time:'H:i' }}—{{ template.ends_at_time|time:'H:i' }}</span>
+              </a>
+            {% empty %}
+              <div class="worker-empty">{{ employer_t.support_transport_no_driver_templates }}</div>
+            {% endfor %}
+          </nav>
+
+          <article class="worker-route worker-transport-driver-card">
+            <div class="worker-route-head">
+              <div>
+                <h3>{{ employer_t.support_transport_driver_card }}</h3>
+                <p><strong>{{ transport_driver_connection.candidate.get_full_name|default:transport_driver_connection.candidate.username }}</strong><br>{{ transport_driver_assignment.vehicle.registration_identifier }} · {{ transport_driver_assignment.vehicle.internal_name }}</p>
+              </div>
+              {% if transport_driver_chat_url %}<a class="jh-btn" href="{{ transport_driver_chat_url }}">{{ employer_t.support_transport_write_driver }}</a>{% else %}<span class="jh-status">{{ employer_t.support_transport_chat_unavailable }}</span>{% endif %}
+            </div>
+          </article>
+
+          {% if selected_transport_template %}
+            <div class="worker-route-grid">
+              <div class="worker-route-box"><h4>{{ employer_t.support_transport_selected_schedule }}</h4><p>{{ selected_transport_template.project.worker_visible_name }}<br>{{ selected_transport_template.name }} · {{ selected_transport_template.starts_at_time|time:'H:i' }}—{{ selected_transport_template.ends_at_time|time:'H:i' }}<br>{{ employer_t.support_worker_break }}: {{ selected_transport_template.break_minutes }}</p></div>
+              <div class="worker-route-box"><h4>{{ employer_t.support_worker_occupancy }}</h4><p>{{ transport_passengers|length|add:'1' }} / {{ transport_driver_assignment.vehicle.seat_capacity }} · {{ employer_t.support_transport_free_seats }}: {{ transport_free_seats }}</p></div>
+            </div>
+
+            <h3 style="margin-top:20px">{{ employer_t.support_transport_passenger_list }}</h3>
+            <div class="worker-list">
+              {% for passenger in transport_passengers %}
+                <article class="worker-item">
+                  <div><h3>{{ passenger.connection.candidate.get_full_name|default:passenger.connection.candidate.username }}{% if passenger.is_selected_worker %} <span class="worker-selected">{{ employer_t.support_worker_selected_worker }}</span>{% endif %}</h3><p>{{ passenger.pickup_stop.label }}<br>{{ selected_transport_template.project.worker_visible_name }} · {{ selected_transport_template.starts_at_time|time:'H:i' }}—{{ selected_transport_template.ends_at_time|time:'H:i' }}</p></div>
+                </article>
+              {% empty %}<div class="worker-empty">{{ employer_t.support_transport_no_schedule_passengers }}</div>{% endfor %}
+            </div>
+
+            {% if transport_free_seats and transport_passenger_candidates and can_operate and permissions.work %}
+              <form class="worker-form" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="transport_schedule_passenger_add">
+                <input type="hidden" name="driver_connection_id" value="{{ transport_driver_connection.public_id }}">
+                <input type="hidden" name="schedule_template_id" value="{{ selected_transport_template.public_id }}">
+                <input type="hidden" name="return_tab" value="transport">
+                <input type="hidden" name="return_transport_template" value="{{ selected_transport_template.public_id }}">
+                <h3>{{ employer_t.support_transport_add_passenger_auto }}</h3>
+                <p>{{ employer_t.support_transport_add_passenger_auto_text }}</p>
+                <div class="worker-form-grid">
+                  <label class="jh-field"><span>{{ employer_t.support_workspace_workers }}</span><select class="jh-input" name="passenger_connection_id" required>{% for item in transport_passenger_candidates %}<option value="{{ item.public_id }}">{{ item.transport_option_label }}</option>{% endfor %}</select></label>
+                </div>
+                <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_add_passenger }}</button></div>
+              </form>
+            {% elif not transport_free_seats %}<div class="worker-warning">{{ employer_t.support_transport_crew_full }}</div>
+            {% elif can_operate and permissions.work %}<div class="worker-empty">{{ employer_t.support_transport_passenger_requires_housing }}</div>{% endif %}
+          {% else %}<div class="worker-warning">{{ employer_t.support_transport_no_driver_templates_text }}</div>{% endif %}
+
+          <details class="worker-schedule-details" style="margin-top:20px"><summary>{{ employer_t.support_transport_history }}</summary><div class="worker-schedule-details-content">{% for route in driver_routes %}<p>{{ route.internal_name }} · {{ route.starts_on|date:'d.m.Y' }}{% if route.ends_on %}—{{ route.ends_on|date:'d.m.Y' }}{% endif %}</p>{% empty %}<div class="worker-empty">{{ employer_t.support_worker_no_driver_routes }}</div>{% endfor %}</div></details>
+        {% else %}
+          <div class="worker-empty">{{ employer_t.support_worker_no_driver_routes }}</div>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if False %}
       <section class="worker-section"><h2>{{ employer_t.support_worker_transport_roles }}</h2><p>{{ employer_t.support_worker_transport_roles_text }}</p>
         <div class="worker-warning">{{ employer_t.support_worker_transport_building_text }}</div>
         <h3>{{ employer_t.support_transport_driver_vehicle }}</h3>

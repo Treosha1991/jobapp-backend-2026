@@ -1,5 +1,6 @@
 """Transactional creation and publication of Support operational assignments."""
 
+import uuid
 from datetime import timedelta
 
 from django.db import transaction
@@ -11,6 +12,7 @@ from support.models import (
     DriverVehicleAssignment,
     HousingAssignment,
     HousingPlace,
+    ProjectScheduleTemplate,
     RouteStop,
     ScheduledWorkShift,
     SupportConnection,
@@ -1107,6 +1109,350 @@ def add_route_passenger(*, actor, route, connection, pickup_stop, dropoff_stop, 
             action="transport.passenger_added",
             target=passenger,
             details={"route": str(route.public_id), "connection": str(connection.public_id)},
+        )
+    return passenger
+
+
+def add_passenger_to_driver_schedule(
+    *,
+    actor,
+    driver_connection,
+    schedule_template,
+    passenger_connection,
+):
+    """Add a passenger to one driver's schedule and publish all related data.
+
+    The crew, route, project assignment and copied shifts are one atomic
+    operation.  A validation error rolls every write back, so the employer
+    never gets a passenger without the matching work schedule.
+    """
+
+    organization = driver_connection.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=TRANSPORT_MANAGE,
+    )
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    from .timekeeping import (
+        cancel_scheduled_shift,
+        create_scheduled_shift,
+        delete_scheduled_shift_draft,
+        publish_scheduled_shift,
+        replace_scheduled_shift,
+    )
+
+    with transaction.atomic():
+        driver_connection = SupportConnection.objects.select_for_update().get(
+            pk=driver_connection.pk
+        )
+        passenger_connection = SupportConnection.objects.select_for_update().get(
+            pk=passenger_connection.pk
+        )
+        schedule_template = (
+            ProjectScheduleTemplate.objects.select_for_update()
+            .select_related("project__worksite")
+            .get(pk=schedule_template.pk)
+        )
+        project = schedule_template.project
+        _require_connection_for_operations(
+            connection=driver_connection,
+            organization=organization,
+        )
+        _require_connection_for_operations(
+            connection=passenger_connection,
+            organization=organization,
+        )
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=driver_connection,
+        )
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=passenger_connection,
+        )
+        if passenger_connection.pk == driver_connection.pk:
+            raise ValidationError({"connection": "driver_cannot_be_route_passenger"})
+        if (
+            project.organization_id != organization.id
+            or not project.is_active
+            or not project.worksite.is_active
+            or not schedule_template.is_active
+        ):
+            raise ValidationError(
+                {"schedule_template": "project_schedule_template_not_available"}
+            )
+
+        today = timezone.localdate()
+        driver_assignment = (
+            DriverVehicleAssignment.objects.select_for_update()
+            .select_related("vehicle", "driver_connection__candidate")
+            .filter(
+                organization=organization,
+                driver_connection=driver_connection,
+                state=DriverVehicleAssignment.STATE_PUBLISHED,
+                starts_on__lte=today,
+            )
+            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+            .order_by("-starts_on", "-id")
+            .first()
+        )
+        if driver_assignment is None:
+            raise ValidationError(
+                {"driver_vehicle_assignment": "driver_vehicle_assignment_required"}
+            )
+
+        driver_shifts = list(
+            ScheduledWorkShift.objects.select_for_update()
+            .filter(
+                organization=organization,
+                connection=driver_connection,
+                schedule_template=schedule_template,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+                work_date__gte=today,
+            )
+            .select_related("work_assignment")
+            .order_by("work_date", "starts_at", "id")
+        )
+        if not driver_shifts:
+            raise ValidationError(
+                {"schedule_template": "driver_template_schedule_required"}
+            )
+
+        now = timezone.now()
+        housing = (
+            HousingAssignment.objects.select_for_update()
+            .select_related("place__room__site")
+            .filter(
+                organization=organization,
+                connection=passenger_connection,
+                state=HousingAssignment.STATE_PUBLISHED,
+                check_in_at__lte=now,
+            )
+            .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
+            .order_by("-check_in_at", "-id")
+            .first()
+        )
+        if housing is None:
+            raise ValidationError({"housing": "passenger_housing_required"})
+
+        route = (
+            TransportRoute.objects.select_for_update()
+            .filter(
+                driver_vehicle_assignment=driver_assignment,
+                schedule_template=schedule_template,
+                state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
+            )
+            .first()
+        )
+        first_date = driver_shifts[0].work_date
+        last_date = driver_shifts[-1].work_date
+        if route is None:
+            route = TransportRoute.objects.create(
+                organization=organization,
+                internal_name=(
+                    f"Crew {str(driver_connection.public_id)[:8]} "
+                    f"{str(schedule_template.public_id)[:8]} {uuid.uuid4().hex[:6]}"
+                ),
+                worksite=project.worksite,
+                schedule_template=schedule_template,
+                driver_vehicle_assignment=driver_assignment,
+                starts_on=first_date,
+                ends_on=last_date,
+                departure_time=schedule_template.starts_at_time,
+                state=TransportRoute.STATE_PUBLISHED,
+                published_by=actor,
+                published_at=now,
+                created_by=actor,
+            )
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="transport.schedule_crew_created",
+                target=route,
+                details={"schedule_template": str(schedule_template.public_id)},
+            )
+        else:
+            update_fields = []
+            if route.state != TransportRoute.STATE_PUBLISHED:
+                route.state = TransportRoute.STATE_PUBLISHED
+                route.published_by = actor
+                route.published_at = now
+                update_fields.extend(("state", "published_by", "published_at"))
+            if route.starts_on != first_date:
+                route.starts_on = first_date
+                update_fields.append("starts_on")
+            if route.ends_on != last_date:
+                route.ends_on = last_date
+                update_fields.append("ends_on")
+            if route.worksite_id != project.worksite_id:
+                route.worksite = project.worksite
+                update_fields.append("worksite")
+            if update_fields:
+                route.save(update_fields=[*update_fields, "updated_at"])
+
+        passenger_count = TransportPassengerAssignment.objects.select_for_update().filter(
+            route=route
+        ).count()
+        if passenger_count >= driver_assignment.vehicle.seat_capacity - 1:
+            raise ValidationError({"route": "transport_crew_full"})
+        if TransportPassengerAssignment.objects.filter(
+            route=route,
+            connection=passenger_connection,
+        ).exists():
+            raise ValidationError({"connection": "connection_already_in_route"})
+        if DriverVehicleAssignment.objects.select_for_update().filter(
+            organization=organization,
+            driver_connection=passenger_connection,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            starts_on__lte=today,
+        ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today)).exists():
+            raise ValidationError({"connection": "driver_already_has_vehicle_assignment"})
+
+        pickup_stop, _ = RouteStop.objects.get_or_create(
+            route=route,
+            kind=RouteStop.KIND_PICKUP,
+            housing_site=housing.place.room.site,
+            defaults={
+                "sequence": RouteStop.objects.filter(
+                    route=route,
+                    kind=RouteStop.KIND_PICKUP,
+                ).count()
+                + 1,
+                "label": (
+                    f"{housing.place.room.site.internal_name} · "
+                    f"{housing.place.room.label} · {housing.place.label}"
+                ),
+            },
+        )
+        dropoff_stop, _ = RouteStop.objects.get_or_create(
+            route=route,
+            kind=RouteStop.KIND_DROPOFF,
+            housing_site=None,
+            defaults={
+                "sequence": 500,
+                "label": (
+                    f"{project.worker_visible_name} · {project.worksite.city}, "
+                    f"{project.worksite.street} {project.worksite.building}"
+                ),
+            },
+        )
+        passenger = TransportPassengerAssignment.objects.create(
+            route=route,
+            connection=passenger_connection,
+            pickup_stop=pickup_stop,
+            dropoff_stop=dropoff_stop,
+            boarding_order=passenger_count + 1,
+        )
+
+        work_assignment = (
+            WorkerProjectAssignment.objects.select_for_update()
+            .filter(
+                organization=organization,
+                connection=passenger_connection,
+                project=project,
+                state=WorkerProjectAssignment.STATE_PUBLISHED,
+            )
+            .order_by("-starts_at", "-id")
+            .first()
+        )
+        if work_assignment is None:
+            work_assignment = create_worker_project_assignment(
+                actor=actor,
+                organization=organization,
+                connection=passenger_connection,
+                project=project,
+                worker_role="",
+                starts_at=driver_shifts[0].starts_at,
+            )
+            work_assignment = publish_worker_project_assignment(
+                actor=actor,
+                assignment=work_assignment,
+                replace_conflicting_assignments=True,
+            )
+
+        for driver_shift in driver_shifts:
+            day_shifts = list(
+                ScheduledWorkShift.objects.select_for_update().filter(
+                    organization=organization,
+                    connection=passenger_connection,
+                    work_date=driver_shift.work_date,
+                    state__in=(
+                        ScheduledWorkShift.STATE_DRAFT,
+                        ScheduledWorkShift.STATE_PUBLISHED,
+                    ),
+                )
+            )
+            published_shift = next(
+                (
+                    item
+                    for item in day_shifts
+                    if item.state == ScheduledWorkShift.STATE_PUBLISHED
+                ),
+                None,
+            )
+            for item in day_shifts:
+                if item.state == ScheduledWorkShift.STATE_DRAFT:
+                    delete_scheduled_shift_draft(actor=actor, shift=item)
+                elif item.pk != getattr(published_shift, "pk", None):
+                    cancel_scheduled_shift(actor=actor, shift=item)
+            if published_shift is not None:
+                replace_scheduled_shift(
+                    actor=actor,
+                    shift=published_shift,
+                    work_date=driver_shift.work_date,
+                    starts_at=driver_shift.starts_at,
+                    ends_at=driver_shift.ends_at,
+                    break_minutes=driver_shift.break_minutes,
+                    worker_label="",
+                    work_assignment=work_assignment,
+                    replacement_state=ScheduledWorkShift.STATE_PUBLISHED,
+                    schedule_template=schedule_template,
+                )
+            else:
+                shift = create_scheduled_shift(
+                    actor=actor,
+                    organization=organization,
+                    connection=passenger_connection,
+                    work_date=driver_shift.work_date,
+                    starts_at=driver_shift.starts_at,
+                    ends_at=driver_shift.ends_at,
+                    break_minutes=driver_shift.break_minutes,
+                    worker_label="",
+                    work_assignment=work_assignment,
+                    schedule_template=schedule_template,
+                )
+                publish_scheduled_shift(actor=actor, shift=shift)
+
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.schedule_passenger_added",
+            target=passenger,
+            details={
+                "route": str(route.public_id),
+                "schedule_template": str(schedule_template.public_id),
+                "connection": str(passenger_connection.public_id),
+                "copied_shift_count": len(driver_shifts),
+            },
+        )
+        enqueue_support_notification(
+            organization=organization,
+            recipient=passenger_connection.candidate,
+            notification_code="transport.route_published",
+            target_kind="transport_route",
+            target_public_id=route.public_id,
+            target_key=f"support:transport-route:{route.public_id}",
+            collapse_key=f"support:transport:{passenger_connection.public_id}",
+            dedupe_key=(
+                f"transport.schedule-passenger:{passenger.public_id}:{now.isoformat()}"
+            ),
         )
     return passenger
 

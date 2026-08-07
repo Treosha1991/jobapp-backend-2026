@@ -661,6 +661,7 @@ def create_scheduled_shift(
     break_minutes,
     worker_label="",
     work_assignment=None,
+    schedule_template=None,
 ):
     """Create a staff-only draft.  The worker sees it only after publication."""
 
@@ -684,6 +685,11 @@ def create_scheduled_shift(
                 or work_assignment.state != work_assignment.STATE_PUBLISHED
             ):
                 raise ValidationError({"work_assignment": "published_assignment_for_worker_required"})
+        if schedule_template is not None:
+            if schedule_template.project.organization_id != organization.id:
+                raise ValidationError({"schedule_template": "project_schedule_template_not_available"})
+            if work_assignment is not None and schedule_template.project_id != work_assignment.project_id:
+                raise ValidationError({"schedule_template": "project_schedule_template_not_available"})
         _worked_minutes(
             started_at=starts_at,
             ended_at=ends_at,
@@ -703,6 +709,7 @@ def create_scheduled_shift(
             organization=organization,
             connection=connection,
             work_assignment=work_assignment,
+            schedule_template=schedule_template,
             work_date=work_date,
             starts_at=starts_at,
             ends_at=ends_at,
@@ -860,6 +867,7 @@ def replace_scheduled_shift(
     worker_label="",
     work_assignment=None,
     replacement_state=None,
+    schedule_template=None,
 ):
     """Replace one planned shift while preserving the old audit record.
 
@@ -922,6 +930,14 @@ def replace_scheduled_shift(
         ):
             raise ValidationError({"work_assignment": "published_assignment_for_worker_required"})
 
+        if schedule_template is None:
+            schedule_template = shift.schedule_template
+        elif schedule_template.project.organization_id != organization.id or (
+            work_assignment is not None
+            and schedule_template.project_id != work_assignment.project_id
+        ):
+            raise ValidationError({"schedule_template": "project_schedule_template_not_available"})
+
         next_state = replacement_state or shift.state
         if next_state not in {
             ScheduledWorkShift.STATE_DRAFT,
@@ -937,6 +953,7 @@ def replace_scheduled_shift(
             organization=organization,
             connection=shift.connection,
             work_assignment=work_assignment,
+            schedule_template=schedule_template,
             work_date=work_date,
             starts_at=starts_at,
             ends_at=ends_at,

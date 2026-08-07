@@ -70,6 +70,7 @@ from .serializers import (
     ProjectScheduleTemplateCreateSerializer,
 )
 from .services.operations import (
+    add_passenger_to_driver_schedule,
     create_driver_vehicle_assignment,
     create_housing_assignment,
     create_worker_project_assignment,
@@ -295,7 +296,14 @@ def _operation_date_start(value, *, required=True):
     )
 
 
-def _worker_card_redirect(connection, *, tab=None, month=None, site=None):
+def _worker_card_redirect(
+    connection,
+    *,
+    tab=None,
+    month=None,
+    site=None,
+    transport_template=None,
+):
     """Return to the same focused worker tab after a safe POST operation."""
 
     query = {}
@@ -305,6 +313,8 @@ def _worker_card_redirect(connection, *, tab=None, month=None, site=None):
         query["month"] = month
     if site:
         query["site"] = site
+    if tab == "transport" and transport_template:
+        query["transport_template"] = transport_template
     base_url = reverse(
         "support:worker-card",
         kwargs={"connection_public_id": connection.public_id},
@@ -374,6 +384,14 @@ def _worker_operation_error_key(error):
         return "support_worker_schedule_days_already_free"
     if "current_scheduled_shift_already_exists" in detail:
         return "support_worker_schedule_day_already_has_shift"
+    if "driver_vehicle_assignment_required" in detail:
+        return "support_transport_crew_add_no_vehicle"
+    if "driver_template_schedule_required" in detail:
+        return "support_transport_crew_add_no_schedule"
+    if "passenger_housing_required" in detail:
+        return "support_transport_crew_add_no_housing"
+    if "transport_crew_full" in detail:
+        return "support_transport_crew_full"
     if "published_assignment_for_selected_project_required" in detail:
         return "support_worker_quick_shift_active_assignment_required"
     return "support_worker_operation_error"
@@ -656,6 +674,45 @@ def _worker_card_operation(request, *, snapshot):
                 **data,
             )
             messages.success(request, tr(request, "support_transport_passenger_added"))
+        elif action == "transport_schedule_passenger_add":
+            driver_connection = get_object_or_404(
+                worker_connection_queryset_for(
+                    user=request.user,
+                    organization=organization,
+                    queryset=SupportConnection.objects.filter(
+                        organization=organization,
+                        is_archived=False,
+                    ),
+                ),
+                public_id=request.POST.get("driver_connection_id"),
+            )
+            passenger_connection = get_object_or_404(
+                worker_connection_queryset_for(
+                    user=request.user,
+                    organization=organization,
+                    queryset=SupportConnection.objects.filter(
+                        organization=organization,
+                        is_archived=False,
+                    ),
+                ),
+                public_id=request.POST.get("passenger_connection_id"),
+            )
+            schedule_template = get_object_or_404(
+                ProjectScheduleTemplate.objects.select_related("project__worksite"),
+                project__organization=organization,
+                is_active=True,
+                public_id=request.POST.get("schedule_template_id"),
+            )
+            add_passenger_to_driver_schedule(
+                actor=request.user,
+                driver_connection=driver_connection,
+                schedule_template=schedule_template,
+                passenger_connection=passenger_connection,
+            )
+            messages.success(
+                request,
+                tr(request, "support_transport_passenger_added_and_scheduled"),
+            )
         elif action == "route_stop_edit":
             route = get_object_or_404(
                 TransportRoute.objects.filter(
@@ -880,6 +937,7 @@ def _worker_card_operation(request, *, snapshot):
                             worker_label="",
                             work_assignment=work_assignment,
                             replacement_state=ScheduledWorkShift.STATE_PUBLISHED,
+                            schedule_template=template,
                         )
                     else:
                         shift = create_scheduled_shift(
@@ -892,6 +950,7 @@ def _worker_card_operation(request, *, snapshot):
                             break_minutes=template.break_minutes,
                             worker_label="",
                             work_assignment=work_assignment,
+                            schedule_template=template,
                         )
                         publish_scheduled_shift(actor=request.user, shift=shift)
                     if had_current_shift:
@@ -1069,6 +1128,7 @@ def _worker_card_operation(request, *, snapshot):
         tab=request.POST.get("return_tab"),
         month=request.POST.get("return_month"),
         site=request.POST.get("return_site"),
+        transport_template=request.POST.get("return_transport_template"),
     )
 
 
@@ -1081,6 +1141,7 @@ def worker_card(request, connection_public_id):
         connection_public_id=connection_public_id,
         calendar_month=request.GET.get("month"),
         housing_site_public_id=request.GET.get("site"),
+        transport_template_public_id=request.GET.get("transport_template"),
     )
     if request.method == "POST":
         return _worker_card_operation(request, snapshot=snapshot)
@@ -1172,6 +1233,20 @@ def worker_card(request, connection_public_id):
                 for weekday in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
             ],
         }
+    )
+    for template in snapshot["transport_templates"]:
+        template.transport_url = (
+            f"{worker_base_url}?tab=transport&transport_template={template.public_id}"
+        )
+    snapshot["transport_driver_chat_url"] = (
+        reverse(
+            "support:conversation-detail",
+            kwargs={
+                "conversation_public_id": snapshot["transport_driver_conversation"].public_id
+            },
+        )
+        if snapshot["transport_driver_conversation"] is not None
+        else None
     )
     return render(request, "support/worker_card.html", snapshot)
 

@@ -547,7 +547,14 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
     }
 
 
-def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, housing_site_public_id=None):
+def worker_card_snapshot(
+    *,
+    user,
+    connection_public_id,
+    calendar_month=None,
+    housing_site_public_id=None,
+    transport_template_public_id=None,
+):
     """Return one worker card without expanding access beyond its organization.
 
     A specialized coordinator may open the card with their operational right
@@ -836,6 +843,16 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
     passenger_routes = []
     vehicles = []
     worksites = []
+    transport_driver_connection = None
+    transport_driver_assignment = None
+    transport_templates = []
+    selected_transport_template = None
+    selected_transport_route = None
+    transport_passengers = []
+    transport_passenger_candidates = []
+    transport_free_seats = 0
+    transport_driver_shifts = []
+    transport_driver_conversation = None
     if permissions["transport"]:
         driver_assignments = list(
             DriverVehicleAssignment.objects.filter(
@@ -1065,6 +1082,159 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         for assignment in driver_assignments:
             assignment.route_for_driver = routes_by_driver_assignment_id.get(assignment.id)
 
+        # The new employer transport screen is schedule-first.  A worker can
+        # open it either as the driver or as one of that driver's passengers;
+        # both paths resolve to the same crew and template switcher.
+        today = timezone.localdate()
+        transport_driver_assignment = (
+            DriverVehicleAssignment.objects.filter(
+                organization=organization,
+                driver_connection=connection,
+                state=DriverVehicleAssignment.STATE_PUBLISHED,
+                starts_on__lte=today,
+            )
+            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+            .select_related("driver_connection__candidate", "vehicle")
+            .order_by("-starts_on", "-id")
+            .first()
+        )
+        if transport_driver_assignment is None:
+            current_passenger = (
+                TransportPassengerAssignment.objects.filter(
+                    connection=connection,
+                    route__state=TransportRoute.STATE_PUBLISHED,
+                    route__starts_on__lte=today,
+                )
+                .filter(Q(route__ends_on__isnull=True) | Q(route__ends_on__gte=today))
+                .select_related(
+                    "route__driver_vehicle_assignment__driver_connection__candidate",
+                    "route__driver_vehicle_assignment__vehicle",
+                )
+                .order_by("-route__starts_on", "-id")
+                .first()
+            )
+            if current_passenger is not None:
+                transport_driver_assignment = current_passenger.route.driver_vehicle_assignment
+        if transport_driver_assignment is not None:
+            transport_driver_connection = transport_driver_assignment.driver_connection
+            transport_templates = list(
+                ProjectScheduleTemplate.objects.filter(
+                    is_active=True,
+                    project__organization=organization,
+                    scheduled_shifts__connection=transport_driver_connection,
+                    scheduled_shifts__state=ScheduledWorkShift.STATE_PUBLISHED,
+                    scheduled_shifts__work_date__gte=today,
+                )
+                .select_related("project__worksite")
+                .distinct()
+                .order_by("project__internal_name", "name", "id")
+            )
+            if transport_template_public_id:
+                selected_transport_template = next(
+                    (
+                        item
+                        for item in transport_templates
+                        if str(item.public_id) == str(transport_template_public_id)
+                    ),
+                    None,
+                )
+                if selected_transport_template is None:
+                    raise Http404("support_transport_template_not_found")
+            elif transport_templates:
+                selected_transport_template = transport_templates[0]
+
+            if selected_transport_template is not None:
+                transport_driver_shifts = list(
+                    ScheduledWorkShift.objects.filter(
+                        organization=organization,
+                        connection=transport_driver_connection,
+                        schedule_template=selected_transport_template,
+                        state=ScheduledWorkShift.STATE_PUBLISHED,
+                        work_date__gte=today,
+                    )
+                    .order_by("work_date", "starts_at", "id")
+                )
+                selected_transport_route = (
+                    TransportRoute.objects.filter(
+                        driver_vehicle_assignment=transport_driver_assignment,
+                        schedule_template=selected_transport_template,
+                        state__in=(
+                            TransportRoute.STATE_DRAFT,
+                            TransportRoute.STATE_PUBLISHED,
+                        ),
+                    )
+                    .prefetch_related(
+                        "passenger_assignments__connection__candidate",
+                        "passenger_assignments__pickup_stop__housing_site",
+                    )
+                    .first()
+                )
+                if selected_transport_route is not None:
+                    transport_passengers = list(
+                        selected_transport_route.passenger_assignments.all()
+                    )
+                    for passenger in transport_passengers:
+                        passenger.is_selected_worker = passenger.connection_id == connection.id
+                transport_free_seats = max(
+                    0,
+                    transport_driver_assignment.vehicle.seat_capacity
+                    - 1
+                    - len(transport_passengers),
+                )
+                assigned_ids = {item.connection_id for item in transport_passengers}
+                published_housing = {}
+                for housing in (
+                    HousingAssignment.objects.filter(
+                        organization=organization,
+                        state=HousingAssignment.STATE_PUBLISHED,
+                        check_in_at__lte=now,
+                    )
+                    .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
+                    .select_related("place__room__site")
+                    .order_by("-check_in_at", "-id")
+                ):
+                    published_housing.setdefault(housing.connection_id, housing)
+                active_driver_ids = set(
+                    DriverVehicleAssignment.objects.filter(
+                        organization=organization,
+                        state=DriverVehicleAssignment.STATE_PUBLISHED,
+                        starts_on__lte=today,
+                    )
+                    .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                    .values_list("driver_connection_id", flat=True)
+                )
+                for item in transport_workers:
+                    if (
+                        item.id == transport_driver_connection.id
+                        or item.id in assigned_ids
+                        or item.id in active_driver_ids
+                    ):
+                        continue
+                    housing = published_housing.get(item.id)
+                    if housing is None:
+                        continue
+                    item.transport_housing_label = (
+                        f"{housing.place.room.site.internal_name} · "
+                        f"{housing.place.room.label} · {housing.place.label}"
+                    )
+                    item.transport_option_label = (
+                        f"{_display_name(item.candidate)} · {item.transport_housing_label}"
+                    )
+                    transport_passenger_candidates.append(item)
+
+            transport_driver_conversation = (
+                SupportConversation.objects.filter(
+                    organization=organization,
+                    connection=transport_driver_connection,
+                    state=SupportConversation.STATE_ACTIVE,
+                    members__user=user,
+                    members__left_at__isnull=True,
+                )
+                .distinct()
+                .order_by("-updated_at", "-id")
+                .first()
+            )
+
     document_packages = []
     if permissions["document_request"]:
         document_packages = list(
@@ -1102,6 +1272,16 @@ def worker_card_snapshot(*, user, connection_public_id, calendar_month=None, hou
         "passenger_routes": passenger_routes,
         "vehicles": vehicles,
         "worksites": worksites,
+        "transport_driver_connection": transport_driver_connection,
+        "transport_driver_assignment": transport_driver_assignment,
+        "transport_templates": transport_templates,
+        "selected_transport_template": selected_transport_template,
+        "selected_transport_route": selected_transport_route,
+        "transport_passengers": transport_passengers,
+        "transport_passenger_candidates": transport_passenger_candidates,
+        "transport_free_seats": transport_free_seats,
+        "transport_driver_shifts": transport_driver_shifts,
+        "transport_driver_conversation": transport_driver_conversation,
         "document_packages": document_packages,
     }
 

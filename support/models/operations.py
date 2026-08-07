@@ -285,6 +285,13 @@ class TransportRoute(models.Model):
     organization = models.ForeignKey(SupportOrganization, on_delete=models.CASCADE, related_name="transport_routes")
     internal_name = models.CharField(max_length=160)
     worksite = models.ForeignKey(Worksite, on_delete=models.PROTECT, null=True, blank=True, related_name="transport_routes")
+    schedule_template = models.ForeignKey(
+        ProjectScheduleTemplate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transport_routes",
+    )
     driver_vehicle_assignment = models.ForeignKey(DriverVehicleAssignment, on_delete=models.PROTECT, related_name="routes")
     starts_on = models.DateField()
     ends_on = models.DateField(null=True, blank=True)
@@ -302,6 +309,14 @@ class TransportRoute(models.Model):
         ordering = ("-starts_on", "-id")
         constraints = [
             models.UniqueConstraint(fields=("organization", "internal_name"), name="support_unique_transport_route_internal_name"),
+            models.UniqueConstraint(
+                fields=("driver_vehicle_assignment", "schedule_template"),
+                condition=Q(
+                    schedule_template__isnull=False,
+                    state__in=("draft", "published"),
+                ),
+                name="support_one_active_crew_per_driver_template",
+            ),
             models.CheckConstraint(condition=Q(ends_on__isnull=True) | Q(starts_on__lte=F("ends_on")), name="support_transport_route_valid_period"),
         ]
         indexes = [
