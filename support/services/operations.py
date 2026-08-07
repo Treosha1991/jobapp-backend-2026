@@ -1217,7 +1217,9 @@ def add_passenger_to_driver_schedule(
                 state=ScheduledWorkShift.STATE_PUBLISHED,
                 work_date__gte=today,
             )
-            .select_related("work_assignment")
+            # Do not join the nullable work_assignment while locking rows.
+            # PostgreSQL rejects FOR UPDATE on the nullable side of an outer
+            # join; the assignment is not used while building this crew.
             .order_by("work_date", "starts_at", "id")
         )
         if not driver_shifts:
