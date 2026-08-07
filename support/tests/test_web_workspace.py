@@ -455,6 +455,7 @@ class SupportWorkspaceWebTests(TestCase):
         page = self.client.get(fleet_url)
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "Add vehicle")
+        self.assertContains(page, 'id="fleet-add-vehicle-modal"')
 
         created = self.client.post(
             fleet_url,

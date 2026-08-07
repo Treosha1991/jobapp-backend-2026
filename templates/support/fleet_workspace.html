@@ -5,9 +5,13 @@
 {% block extra_head %}
 <style>
   .fleet-head { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:start; }
-  .fleet-add { min-width:min(100%, 420px); }
-  .fleet-add[open] { padding:14px; border:1px solid rgba(24,223,103,.42); border-radius:16px; background:rgba(24,223,103,.06); }
-  .fleet-add[open] > summary { margin-bottom:12px; }
+  .fleet-modal { width:min(92vw, 680px); max-height:90vh; margin:auto; padding:0; overflow:auto; color:var(--text); border:1px solid rgba(24,223,103,.42); border-radius:20px; background:#103753; box-shadow:0 28px 80px rgba(0,0,0,.55); }
+  .fleet-modal::backdrop { background:rgba(1,13,25,.72); backdrop-filter:blur(4px); }
+  .fleet-modal-card { padding:22px; }
+  .fleet-modal-head { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+  .fleet-modal-head h2 { margin:0; }
+  .fleet-modal-close { width:42px; height:42px; padding:0; display:grid; place-items:center; font-size:26px; line-height:1; }
+  body:has(.fleet-modal[open]) { overflow:hidden; }
   .fleet-card { margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.25); }
   .fleet-card h2, .fleet-card h3 { margin:0 0 7px; }
   .fleet-card p { margin:0; color:var(--muted); line-height:1.45; }
@@ -29,8 +33,15 @@
   <section class="jh-card">
     <div class="fleet-head">
       <div><p class="worker-kicker">JobHub Support · {{ organization.display_name }}</p><h1 class="jh-title">{{ employer_t.support_fleet_title }}</h1><p class="jh-subtitle">{{ employer_t.support_fleet_subtitle }}</p></div>
-      <details class="fleet-add">
-        <summary class="jh-btn primary">{{ employer_t.support_registry_add_vehicle }}</summary>
+      <button class="jh-btn primary" type="button" data-fleet-modal-open>{{ employer_t.support_registry_add_vehicle }}</button>
+    </div>
+
+    <dialog class="fleet-modal" id="fleet-add-vehicle-modal" aria-labelledby="fleet-add-vehicle-title">
+      <div class="fleet-modal-card">
+        <div class="fleet-modal-head">
+          <h2 id="fleet-add-vehicle-title">{{ employer_t.support_registry_add_vehicle }}</h2>
+          <button class="jh-btn fleet-modal-close" type="button" data-fleet-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button>
+        </div>
         <form method="post" class="fleet-form">
           {% csrf_token %}<input type="hidden" name="action" value="vehicle_create">
           <label class="jh-field"><span>{{ employer_t.support_registry_internal_name }}</span><input class="jh-input" name="internal_name" maxlength="120" required></label>
@@ -38,8 +49,8 @@
           <label class="jh-field"><span>{{ employer_t.support_registry_capacity }}</span><input class="jh-input" name="seat_capacity" type="number" min="2" max="100" required></label>
           <div class="jh-actions wide"><button class="jh-btn primary" type="submit">{{ employer_t.support_registry_add }}</button></div>
         </form>
-      </details>
-    </div>
+      </div>
+    </dialog>
 
     <div class="jh-table-wrap">
       <table class="jh-table"><thead><tr><th>Авто</th><th>Госномер</th><th>{{ employer_t.support_fleet_free_seats }}</th><th>{{ employer_t.support_fleet_current_driver }}</th><th>{{ employer_t.support_fleet_route }}</th><th></th></tr></thead>
@@ -91,4 +102,16 @@
       </section>
     {% endif %}
   </section>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const modal = document.getElementById('fleet-add-vehicle-modal');
+      const openButton = document.querySelector('[data-fleet-modal-open]');
+      const closeButton = modal?.querySelector('[data-fleet-modal-close]');
+      openButton?.addEventListener('click', function () { modal?.showModal(); });
+      closeButton?.addEventListener('click', function () { modal?.close(); });
+      modal?.addEventListener('click', function (event) {
+        if (event.target === modal) modal.close();
+      });
+    });
+  </script>
 {% endblock %}
