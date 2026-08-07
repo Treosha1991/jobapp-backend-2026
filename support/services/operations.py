@@ -618,19 +618,15 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
                 ends_at=assignment.ends_on,
             )
         )
-        driver_route_conflict = TransportRoute.objects.select_for_update().filter(
-            driver_vehicle_assignment__in=driver_replacement_assignments,
-            state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
-        ).exists()
-        if driver_route_conflict:
-            raise ValidationError(
-                {"driver_vehicle_assignment": "driver_has_active_route_on_other_vehicle"}
-            )
-
         now = timezone.now()
-        # A driver may move from another car only when that previous crew has
-        # no active route. The old car becomes unassigned; its history remains.
+        # Moving a driver must not dismantle the crew of their previous car.
+        # Its route, stops and passengers stay published, while the driver
+        # assignment is closed so the fleet can clearly show "driver absent".
         for previous_assignment in driver_replacement_assignments:
+            retained_route_count = TransportRoute.objects.select_for_update().filter(
+                driver_vehicle_assignment=previous_assignment,
+                state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
+            ).count()
             previous_assignment.state = DriverVehicleAssignment.STATE_CANCELLED
             previous_assignment.cancelled_at = now
             previous_assignment.ends_on = None
@@ -646,6 +642,7 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
                     "replacement_assignment": str(assignment.public_id),
                     "previous_vehicle": str(previous_assignment.vehicle.public_id),
                     "new_vehicle": str(assignment.vehicle.public_id),
+                    "retained_route_count": retained_route_count,
                 },
             )
         # Publishing a new draft for the same car deliberately replaces its
@@ -653,15 +650,29 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
         # is defined by the next appointment, not by a manually entered end.
         # Routes belong to the car's crew, so they move with the car instead
         # of disappearing when the driver is changed.
-        for previous_assignment in replacement_assignments:
-            routes = list(
+        routes_to_transfer = list(
+            _period_overlaps(
                 TransportRoute.objects.select_for_update()
-                .filter(driver_vehicle_assignment=previous_assignment)
-                .exclude(state=TransportRoute.STATE_CANCELLED)
+                .filter(
+                    driver_vehicle_assignment__vehicle=assignment.vehicle,
+                    state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
+                )
+                .exclude(driver_vehicle_assignment=assignment),
+                starts_field="starts_on",
+                ends_field="ends_on",
+                starts_at=assignment.starts_on,
+                ends_at=assignment.ends_on,
             )
-            for route in routes:
-                route.driver_vehicle_assignment = assignment
-                route.save(update_fields=["driver_vehicle_assignment", "updated_at"])
+        )
+        transferred_by_assignment = {}
+        for route in routes_to_transfer:
+            previous_assignment_id = route.driver_vehicle_assignment_id
+            transferred_by_assignment[previous_assignment_id] = (
+                transferred_by_assignment.get(previous_assignment_id, 0) + 1
+            )
+            route.driver_vehicle_assignment = assignment
+            route.save(update_fields=["driver_vehicle_assignment", "updated_at"])
+        for previous_assignment in replacement_assignments:
             previous_assignment.state = DriverVehicleAssignment.STATE_CANCELLED
             previous_assignment.cancelled_at = now
             previous_assignment.ends_on = None
@@ -673,7 +684,9 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
                 target=previous_assignment,
                 details={
                     "replacement_assignment": str(assignment.public_id),
-                    "transferred_route_count": len(routes),
+                    "transferred_route_count": transferred_by_assignment.get(
+                        previous_assignment.id, 0
+                    ),
                 },
             )
         assignment.state = DriverVehicleAssignment.STATE_PUBLISHED

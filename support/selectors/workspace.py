@@ -1485,14 +1485,28 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
         ]
         active.sort(key=lambda item: (item.state == DriverVehicleAssignment.STATE_PUBLISHED, item.starts_on), reverse=True)
         vehicle.current_assignment = active[0] if active else None
-        vehicle.current_route = None
-        if vehicle.current_assignment:
-            routes = [
-                route for route in vehicle.current_assignment.routes.all()
-                if route.state in (TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED)
-            ]
-            routes.sort(key=lambda item: (item.state == TransportRoute.STATE_PUBLISHED, item.starts_on), reverse=True)
-            vehicle.current_route = routes[0] if routes else None
+        routes = [
+            route
+            for driver_assignment in assignments
+            for route in driver_assignment.routes.all()
+            if route.state in (TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED)
+            and route.starts_on <= today
+            and (route.ends_on is None or route.ends_on >= today)
+        ]
+        routes.sort(
+            key=lambda item: (
+                vehicle.current_assignment is not None
+                and item.driver_vehicle_assignment_id == vehicle.current_assignment.id,
+                item.state == TransportRoute.STATE_PUBLISHED,
+                item.starts_on,
+                item.id,
+            ),
+            reverse=True,
+        )
+        vehicle.current_route = routes[0] if routes else None
+        vehicle.driver_absent = (
+            vehicle.current_assignment is None and vehicle.current_route is not None
+        )
         passenger_count = (
             vehicle.current_route.passenger_assignments.count()
             if vehicle.current_route is not None

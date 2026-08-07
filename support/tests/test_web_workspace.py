@@ -23,6 +23,7 @@ from support.models import (
     SupportMessage,
     SupportVacancy,
     TransportRoute,
+    TransportPassengerAssignment,
     Vehicle,
     WorkerProjectAssignment,
     WorkProject,
@@ -444,6 +445,81 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "Fleet test car")
         self.assertContains(response, "FLEET-123")
         self.assertContains(response, "workspace-active-worker")
+
+    def test_fleet_marks_driverless_crew_and_keeps_route_passenger_count(self):
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Driverless crew car",
+            registration_identifier="FLEET-NO-DRIVER",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            vehicle=vehicle,
+            driver_connection=self.worker_connection,
+            starts_on=date.today() - timedelta(days=1),
+            state=DriverVehicleAssignment.STATE_CANCELLED,
+            cancelled_at=timezone.now(),
+            created_by=self.owner,
+        )
+        route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Crew route without driver",
+            driver_vehicle_assignment=assignment,
+            starts_on=date.today() - timedelta(days=1),
+            state=TransportRoute.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        pickup = RouteStop.objects.create(
+            route=route,
+            sequence=1,
+            kind=RouteStop.KIND_PICKUP,
+            label="Housing",
+        )
+        dropoff = RouteStop.objects.create(
+            route=route,
+            sequence=2,
+            kind=RouteStop.KIND_DROPOFF,
+            label="Project",
+        )
+        passenger_user = User.objects.create_user(
+            username="driverless-crew-passenger",
+            email="driverless-crew-passenger@example.com",
+            password="password",
+        )
+        passenger_application = SupportApplication.objects.create(
+            vacancy=self.worker_connection.vacancy,
+            candidate=passenger_user,
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        passenger_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=passenger_application,
+            candidate=passenger_user,
+            stage=SupportConnection.STAGE_COORDINATOR,
+        )
+        TransportPassengerAssignment.objects.create(
+            route=route,
+            connection=passenger_connection,
+            pickup_stop=pickup,
+            dropoff_stop=dropoff,
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            f"/employer/support/fleet/?organization={self.organization.public_id}&vehicle={vehicle.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Driver absent")
+        self.assertContains(response, "Crew route without driver")
+        self.assertContains(response, "3/4")
 
     def test_transport_manager_can_toggle_worker_driving_license_mark(self):
         self.client.force_login(self.owner)
