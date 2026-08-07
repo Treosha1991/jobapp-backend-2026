@@ -1624,10 +1624,14 @@ def fleet_workspace(request):
                     success_key = "support_fleet_draft_created"
                 else:
                     raise ValueError("fleet_operation_unknown")
-        except (APIException, ValueError):
+        except (APIException, ValueError) as error:
+            detail = str(getattr(error, "detail", error))
             message_key = (
                 "support_fleet_delete_error"
                 if action == "driver_vehicle_draft_delete"
+                else "support_fleet_driver_other_route_error"
+                if action == "driver_vehicle_draft_publish"
+                and "driver_has_active_route_on_other_vehicle" in detail
                 else "support_fleet_publish_error"
                 if action == "driver_vehicle_draft_publish"
                 else "support_fleet_edit_error"

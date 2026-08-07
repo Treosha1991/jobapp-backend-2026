@@ -558,6 +558,111 @@ class SupportOperationsTests(TestCase):
         self.assertIsNone(previous_assignment.ends_on)
         self.assertEqual(route.driver_vehicle_assignment, published)
 
+    def test_publishing_driver_change_moves_driver_from_other_vehicle_without_route(self):
+        starts_on = date.today() + timedelta(days=3)
+        old_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Old driver car",
+            registration_identifier="JH-MOVE-OLD",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        target_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Target driver car",
+            registration_identifier="JH-MOVE-TARGET",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        driver_previous = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.passenger_connection,
+            vehicle=old_vehicle,
+            starts_on=starts_on,
+        )
+        publish_driver_vehicle_assignment(actor=self.owner, assignment=driver_previous)
+        target_previous = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.connection,
+            vehicle=target_vehicle,
+            starts_on=starts_on,
+        )
+        publish_driver_vehicle_assignment(actor=self.owner, assignment=target_previous)
+        target_route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Target crew route",
+            driver_vehicle_assignment=target_previous,
+            starts_on=starts_on,
+            state=TransportRoute.STATE_PUBLISHED,
+            reservation_expires_at=timezone.now() + timedelta(hours=1),
+            created_by=self.owner,
+        )
+        replacement = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.passenger_connection,
+            vehicle=target_vehicle,
+            starts_on=starts_on,
+        )
+
+        published = publish_driver_vehicle_assignment(actor=self.owner, assignment=replacement)
+
+        driver_previous.refresh_from_db()
+        target_previous.refresh_from_db()
+        target_route.refresh_from_db()
+        self.assertEqual(published.state, DriverVehicleAssignment.STATE_PUBLISHED)
+        self.assertEqual(driver_previous.state, DriverVehicleAssignment.STATE_CANCELLED)
+        self.assertEqual(target_previous.state, DriverVehicleAssignment.STATE_CANCELLED)
+        self.assertEqual(target_route.driver_vehicle_assignment, published)
+
+    def test_driver_move_requires_other_vehicle_route_to_be_resolved_first(self):
+        starts_on = date.today() + timedelta(days=3)
+        old_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Routed old car",
+            registration_identifier="JH-MOVE-ROUTE",
+            seat_capacity=3,
+            created_by=self.owner,
+        )
+        target_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Blocked target car",
+            registration_identifier="JH-MOVE-BLOCKED",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        driver_previous = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.passenger_connection,
+            vehicle=old_vehicle,
+            starts_on=starts_on,
+        )
+        publish_driver_vehicle_assignment(actor=self.owner, assignment=driver_previous)
+        TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Route must be resolved",
+            driver_vehicle_assignment=driver_previous,
+            starts_on=starts_on,
+            state=TransportRoute.STATE_PUBLISHED,
+            reservation_expires_at=timezone.now() + timedelta(hours=1),
+            created_by=self.owner,
+        )
+        replacement = create_driver_vehicle_assignment(
+            actor=self.owner,
+            organization=self.organization,
+            driver_connection=self.passenger_connection,
+            vehicle=target_vehicle,
+            starts_on=starts_on,
+        )
+
+        with self.assertRaises(ValidationError) as error:
+            publish_driver_vehicle_assignment(actor=self.owner, assignment=replacement)
+
+        self.assertIn("driver_has_active_route_on_other_vehicle", str(error.exception.detail))
+
     def test_transport_draft_can_be_deleted_without_deleting_vehicle_assignment(self):
         starts_on = date.today() + timedelta(days=3)
         vehicle = Vehicle.objects.create(

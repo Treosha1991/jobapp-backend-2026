@@ -603,23 +603,51 @@ def publish_driver_vehicle_assignment(*, actor, assignment):
                 ends_at=assignment.ends_on,
             )
         )
-        driver_conflict = _period_overlaps(
-            DriverVehicleAssignment.objects.select_for_update()
-            .filter(
-                driver_connection=assignment.driver_connection,
-                state=DriverVehicleAssignment.STATE_PUBLISHED,
+        driver_replacement_assignments = list(
+            _period_overlaps(
+                DriverVehicleAssignment.objects.select_for_update()
+                .filter(
+                    driver_connection=assignment.driver_connection,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                )
+                .exclude(pk=assignment.pk)
+                .exclude(pk__in=[item.pk for item in replacement_assignments]),
+                starts_field="starts_on",
+                ends_field="ends_on",
+                starts_at=assignment.starts_on,
+                ends_at=assignment.ends_on,
             )
-            .exclude(pk=assignment.pk)
-            .exclude(pk__in=[item.pk for item in replacement_assignments]),
-            starts_field="starts_on",
-            ends_field="ends_on",
-            starts_at=assignment.starts_on,
-            ends_at=assignment.ends_on,
+        )
+        driver_route_conflict = TransportRoute.objects.select_for_update().filter(
+            driver_vehicle_assignment__in=driver_replacement_assignments,
+            state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
         ).exists()
-        if driver_conflict:
-            raise ValidationError({"driver_vehicle_assignment": "vehicle_or_driver_has_published_assignment_conflict"})
+        if driver_route_conflict:
+            raise ValidationError(
+                {"driver_vehicle_assignment": "driver_has_active_route_on_other_vehicle"}
+            )
 
         now = timezone.now()
+        # A driver may move from another car only when that previous crew has
+        # no active route. The old car becomes unassigned; its history remains.
+        for previous_assignment in driver_replacement_assignments:
+            previous_assignment.state = DriverVehicleAssignment.STATE_CANCELLED
+            previous_assignment.cancelled_at = now
+            previous_assignment.ends_on = None
+            previous_assignment.save(
+                update_fields=["state", "cancelled_at", "ends_on", "updated_at"]
+            )
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="transport.driver_moved_to_another_vehicle",
+                target=previous_assignment,
+                details={
+                    "replacement_assignment": str(assignment.public_id),
+                    "previous_vehicle": str(previous_assignment.vehicle.public_id),
+                    "new_vehicle": str(assignment.vehicle.public_id),
+                },
+            )
         # Publishing a new draft for the same car deliberately replaces its
         # previous driver. Driver appointments are open-ended: their history
         # is defined by the next appointment, not by a manually entered end.

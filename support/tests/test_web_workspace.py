@@ -1358,6 +1358,7 @@ class SupportWorkspaceWebTests(TestCase):
         card = self.client.get(card_url)
         self.assertEqual(card.status_code, 200)
         self.assertContains(card, "Publish vehicle assignment")
+        self.assertContains(card, "Publish this driver change?")
         vehicle_published = self.client.post(
             card_url,
             {
