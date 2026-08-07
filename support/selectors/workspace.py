@@ -1717,7 +1717,15 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
         Vehicle.objects.filter(organization=organization)
         .prefetch_related(
             "driver_assignments__driver_connection__candidate",
-            "driver_assignments__routes__passenger_assignments__connection__candidate",
+            Prefetch(
+                "driver_assignments__routes",
+                queryset=TransportRoute.objects.select_related(
+                    "worksite",
+                    "schedule_template__project__worksite",
+                ).prefetch_related(
+                    "passenger_assignments__connection__candidate",
+                ),
+            ),
         )
         .order_by("internal_name", "id")
     )
@@ -1735,9 +1743,42 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
             and (second_end is None or second_end >= first_start)
         )
 
+    def prepare_route_for_fleet(route):
+        project = (
+            route.schedule_template.project
+            if route.schedule_template_id
+            else None
+        )
+        worksite = project.worksite if project is not None else route.worksite
+        route.fleet_project_name = (
+            (project.worker_visible_name or project.internal_name)
+            if project is not None
+            else (worksite.internal_name if worksite is not None else route.internal_name)
+        )
+        route.fleet_address_label = (
+            ", ".join(
+                item
+                for item in (
+                    worksite.city,
+                    " ".join(
+                        item
+                        for item in (worksite.street, worksite.building)
+                        if item
+                    ),
+                )
+                if item
+            )
+            if worksite is not None
+            else ""
+        )
+        return route
+
     for vehicle in vehicles:
         assignments = assignments_by_vehicle_id[vehicle.id]
         vehicle.assignments_for_fleet = assignments
+        for assignment in assignments:
+            for route in assignment.routes.all():
+                prepare_route_for_fleet(route)
         for draft in assignments:
             draft.transfer_routes = []
             draft.transfer_passengers = []

@@ -5,25 +5,37 @@
 {% block extra_head %}
 <style>
   .fleet-head { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:start; }
-  .fleet-modal { width:min(92vw, 680px); max-height:90vh; margin:auto; padding:0; overflow:auto; color:var(--text); border:1px solid rgba(24,223,103,.42); border-radius:20px; background:#103753; box-shadow:0 28px 80px rgba(0,0,0,.55); }
+  .fleet-modal { width:min(92vw, 660px); max-height:88vh; margin:auto; padding:0; overflow:hidden; color:var(--text); border:1px solid rgba(24,223,103,.42); border-radius:20px; background:#103753; box-shadow:0 28px 80px rgba(0,0,0,.55); }
   .fleet-modal::backdrop { background:rgba(1,13,25,.72); backdrop-filter:blur(4px); }
-  .fleet-modal-card { padding:22px; }
-  .fleet-modal-head { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-  .fleet-modal-head h2 { margin:0; }
-  .fleet-modal-close { width:42px; height:42px; padding:0; display:grid; place-items:center; font-size:26px; line-height:1; }
+  .fleet-modal-card { max-height:88vh; padding:20px; overflow:auto; }
+  .fleet-modal-head { position:sticky; top:-20px; z-index:2; display:flex; align-items:center; justify-content:space-between; gap:16px; margin:-20px -20px 14px; padding:18px 20px 12px; background:#103753; border-bottom:1px solid var(--line); }
+  .fleet-modal-head h2 { margin:0; font-size:1.3rem; }
+  .fleet-modal-close { width:38px; height:38px; padding:0; display:grid; place-items:center; font-size:24px; line-height:1; }
   body:has(.fleet-modal[open]) { overflow:hidden; }
-  .fleet-card { margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.25); }
-  .fleet-card h2, .fleet-card h3 { margin:0 0 7px; }
-  .fleet-card p { margin:0; color:var(--muted); line-height:1.45; }
-  .fleet-selected { border-color:rgba(24,223,103,.52); background:rgba(24,223,103,.06); }
-  .fleet-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:14px; }
+  .fleet-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:12px; }
   .fleet-form .wide { grid-column:1 / -1; }
   .fleet-form .wide .jh-input { width:min(100%, 520px); }
-  .fleet-history { margin:14px 0 0; padding-left:20px; line-height:1.55; }
+  .fleet-row-actions { display:flex; align-items:center; gap:7px; white-space:nowrap; }
+  .fleet-route strong, .fleet-route small { display:block; }
+  .fleet-route small { margin-top:3px; color:var(--muted); }
+  .fleet-current { margin:0 0 14px; padding:11px 13px; border:1px solid var(--line); border-radius:13px; background:rgba(5,22,36,.28); }
+  .fleet-current p { margin:3px 0 0; color:var(--muted); }
+  .fleet-assignment { margin-top:10px; padding:12px; border:1px solid var(--line); border-radius:14px; background:rgba(5,22,36,.25); }
+  .fleet-assignment > p { margin:3px 0; color:var(--muted); }
+  .fleet-assignment-head { display:flex; justify-content:space-between; gap:10px; align-items:start; }
+  .fleet-assignment-head h3 { margin:0; font-size:1rem; }
+  .fleet-history-list { display:grid; gap:10px; margin:0; padding:0; list-style:none; }
+  .fleet-history-route { margin-top:7px; padding-top:7px; border-top:1px solid var(--line); }
   .fleet-capacity { margin:10px 0; padding:12px; border:1px solid rgba(255,187,70,.45); border-radius:14px; background:rgba(255,187,70,.08); }
   .fleet-capacity-list { display:grid; gap:8px; margin:10px 0; padding:0; list-style:none; }
   .fleet-capacity-passenger { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 11px; border:1px solid var(--line); border-radius:12px; }
   .fleet-capacity-passenger label { cursor:pointer; }
+  .fleet-new-assignment { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+  .fleet-new-assignment h3 { margin:0; }
+  @media (max-width:900px) {
+    .fleet-row-actions { flex-direction:column; align-items:stretch; }
+    .fleet-row-actions .jh-btn { text-align:center; }
+  }
   @media (max-width:760px) { .fleet-form { grid-template-columns:1fr; } }
 </style>
 {% endblock %}
@@ -33,15 +45,30 @@
   <section class="jh-card">
     <div class="fleet-head">
       <div><p class="worker-kicker">JobHub Support · {{ organization.display_name }}</p><h1 class="jh-title">{{ employer_t.support_fleet_title }}</h1><p class="jh-subtitle">{{ employer_t.support_fleet_subtitle }}</p></div>
-      <button class="jh-btn primary" type="button" data-fleet-modal-open>{{ employer_t.support_registry_add_vehicle }}</button>
+      <button class="jh-btn primary" type="button" data-fleet-dialog-target="fleet-add-vehicle-modal">{{ employer_t.support_registry_add_vehicle }}</button>
+    </div>
+
+    <div class="jh-table-wrap">
+      <table class="jh-table">
+        <thead><tr><th>Авто</th><th>Госномер</th><th>{{ employer_t.support_fleet_free_seats }}</th><th>{{ employer_t.support_fleet_current_driver }}</th><th>{{ employer_t.support_fleet_route }}</th><th></th></tr></thead>
+        <tbody>
+          {% for vehicle in vehicles %}
+            <tr>
+              <td><strong>{{ vehicle.internal_name }}</strong></td>
+              <td>{{ vehicle.registration_identifier }}</td>
+              <td>{{ vehicle.occupancy_label }}</td>
+              <td>{% if vehicle.current_assignment %}{{ vehicle.current_assignment.driver_connection.candidate.get_full_name|default:vehicle.current_assignment.driver_connection.candidate.username }}<br><small class="jh-muted">{{ vehicle.current_assignment.get_state_display }}</small>{% elif vehicle.driver_absent %}<span class="jh-status warning">{{ employer_t.support_fleet_driver_absent }}</span>{% else %}<span class="jh-muted">{{ employer_t.support_fleet_no_driver }}</span>{% endif %}</td>
+              <td class="fleet-route">{% if vehicle.current_route %}<strong>{{ vehicle.current_route.fleet_project_name }}</strong>{% if vehicle.current_route.fleet_address_label %}<small>{{ vehicle.current_route.fleet_address_label }}</small>{% endif %}{% else %}<span class="jh-muted">{{ employer_t.support_fleet_no_route }}</span>{% endif %}</td>
+              <td><div class="fleet-row-actions"><button class="jh-btn primary" type="button" data-fleet-dialog-target="fleet-edit-{{ vehicle.public_id }}">{{ employer_t.support_project_edit }}</button><button class="jh-btn" type="button" data-fleet-dialog-target="fleet-history-{{ vehicle.public_id }}">{{ employer_t.support_worker_history }}</button></div></td>
+            </tr>
+          {% empty %}<tr><td colspan="6" class="jh-empty">{{ employer_t.support_registry_empty }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
     </div>
 
     <dialog class="fleet-modal" id="fleet-add-vehicle-modal" aria-labelledby="fleet-add-vehicle-title">
       <div class="fleet-modal-card">
-        <div class="fleet-modal-head">
-          <h2 id="fleet-add-vehicle-title">{{ employer_t.support_registry_add_vehicle }}</h2>
-          <button class="jh-btn fleet-modal-close" type="button" data-fleet-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button>
-        </div>
+        <div class="fleet-modal-head"><h2 id="fleet-add-vehicle-title">{{ employer_t.support_registry_add_vehicle }}</h2><button class="jh-btn fleet-modal-close" type="button" data-fleet-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div>
         <form method="post" class="fleet-form">
           {% csrf_token %}<input type="hidden" name="action" value="vehicle_create">
           <label class="jh-field"><span>{{ employer_t.support_registry_internal_name }}</span><input class="jh-input" name="internal_name" maxlength="120" required></label>
@@ -52,65 +79,74 @@
       </div>
     </dialog>
 
-    <div class="jh-table-wrap">
-      <table class="jh-table"><thead><tr><th>Авто</th><th>Госномер</th><th>{{ employer_t.support_fleet_free_seats }}</th><th>{{ employer_t.support_fleet_current_driver }}</th><th>{{ employer_t.support_fleet_route }}</th><th></th></tr></thead>
-      <tbody>{% for vehicle in vehicles %}<tr><td><strong>{{ vehicle.internal_name }}</strong></td><td>{{ vehicle.registration_identifier }}</td><td>{{ vehicle.occupancy_label }}</td><td>{% if vehicle.current_assignment %}{{ vehicle.current_assignment.driver_connection.candidate.get_full_name|default:vehicle.current_assignment.driver_connection.candidate.username }}<br><small class="jh-muted">{{ vehicle.current_assignment.get_state_display }}</small>{% elif vehicle.driver_absent %}<span class="jh-status warning">{{ employer_t.support_fleet_driver_absent }}</span>{% else %}<span class="jh-muted">{{ employer_t.support_fleet_no_driver }}</span>{% endif %}</td><td>{% if vehicle.current_route %}{{ vehicle.current_route.internal_name }}{% else %}<span class="jh-muted">{{ employer_t.support_fleet_no_route }}</span>{% endif %}</td><td><a class="jh-btn{% if selected_vehicle.id == vehicle.id %} primary{% endif %}" href="?organization={{ organization.public_id }}&vehicle={{ vehicle.public_id }}">{{ employer_t.support_fleet_open }}</a></td></tr>{% empty %}<tr><td colspan="6" class="jh-empty">{{ employer_t.support_registry_empty }}</td></tr>{% endfor %}</tbody></table>
-    </div>
+    {% for vehicle in vehicles %}
+      <dialog class="fleet-modal" id="fleet-edit-{{ vehicle.public_id }}" aria-labelledby="fleet-edit-title-{{ vehicle.public_id }}">
+        <div class="fleet-modal-card">
+          <div class="fleet-modal-head"><h2 id="fleet-edit-title-{{ vehicle.public_id }}">{{ employer_t.support_fleet_assign_driver }}</h2><button class="jh-btn fleet-modal-close" type="button" data-fleet-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div>
+          <div class="fleet-current">
+            <strong>{{ vehicle.internal_name }} · {{ vehicle.registration_identifier }}</strong>
+            <p>{{ employer_t.support_registry_capacity }}: {{ vehicle.seat_capacity }} · {{ employer_t.support_fleet_free_seats }}: {{ vehicle.occupancy_label }}</p>
+            <p>{% if vehicle.current_assignment %}{{ employer_t.support_fleet_current_driver }}: {{ vehicle.current_assignment.driver_connection.candidate.get_full_name|default:vehicle.current_assignment.driver_connection.candidate.username }}{% else %}{{ employer_t.support_fleet_no_driver }}{% endif %}</p>
+          </div>
 
-    {% if selected_vehicle %}
-      <section class="fleet-card fleet-selected">
-        <h2>{{ selected_vehicle.internal_name }} · {{ selected_vehicle.registration_identifier }}</h2>
-        <p>{{ employer_t.support_registry_capacity }}: {{ selected_vehicle.seat_capacity }} · {{ employer_t.support_fleet_free_seats }}: {{ selected_vehicle.occupancy_label }}</p>
-        <h3 style="margin-top:18px">{{ employer_t.support_fleet_history }}</h3>
-        <ul class="fleet-history">
-          {% for item in selected_vehicle.assignments_for_fleet %}
-            <li>
-              <strong>{{ item.driver_connection.candidate.get_full_name|default:item.driver_connection.candidate.username }}</strong> · {{ item.starts_on|date:"d.m.Y" }}{% if item.state == 'cancelled' and item.cancelled_at %}<br><small>{{ employer_t.support_fleet_replaced_on }}: {{ item.cancelled_at|date:"d.m.Y" }}</small>{% endif %} · {{ item.get_state_display }}
-              {% for route in item.routes.all %}{% if route.state != 'cancelled' %}<br><small>{{ employer_t.support_fleet_route }}: {{ route.internal_name }}</small>{% endif %}{% endfor %}
-              {% if item.state == 'draft' %}
-                <br><small class="jh-muted">{{ employer_t.support_fleet_publish_warning_short }}</small>
-                {% if item.transfer_over_capacity %}
-                  <form method="post" class="fleet-capacity" onsubmit="return confirm('{{ employer_t.support_fleet_publish_warning }}')">
-                    {% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_publish"><input type="hidden" name="vehicle_id" value="{{ selected_vehicle.public_id }}"><input type="hidden" name="assignment_id" value="{{ item.public_id }}">
-                    <strong>{{ employer_t.support_fleet_capacity_title }}</strong>
-                    <p>{{ employer_t.support_fleet_capacity_text }} {{ item.transfer_excess_count }}</p>
-                    <ul class="fleet-capacity-list">
-                      {% for passenger in item.transfer_passengers %}
-                        <li class="fleet-capacity-passenger"><span>{{ passenger.connection.candidate.get_full_name|default:passenger.connection.candidate.username }}</span><label class="jh-btn danger"><input type="checkbox" name="exclude_passenger_ids" value="{{ passenger.public_id }}"> {{ employer_t.support_fleet_exclude }}</label></li>
-                      {% endfor %}
-                    </ul>
-                    <button class="jh-btn primary" type="submit">{{ employer_t.support_fleet_exclude_and_publish }}</button>
-                  </form>
-                {% else %}
-                  <form method="post" class="jh-actions" onsubmit="return confirm('{{ employer_t.support_fleet_publish_warning }}')">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_publish"><input type="hidden" name="vehicle_id" value="{{ selected_vehicle.public_id }}"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form>
-                {% endif %}
-                <div class="jh-actions">
-                  <details><summary class="jh-btn">{{ employer_t.support_fleet_edit_draft }}</summary><form method="post" class="fleet-form">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_edit"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="vehicle_id" value="{{ selected_vehicle.public_id }}"><label class="jh-field wide"><span>{{ employer_t.support_fleet_driver }}</span><select class="jh-input" name="driver_connection_id" required>{% for worker in eligible_drivers %}<option value="{{ worker.public_id }}"{% if worker.id == item.driver_connection_id %} selected{% endif %}>{{ worker.display_name }}</option>{% endfor %}</select></label><label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="date" name="starts_on" value="{{ item.starts_on|date:'Y-m-d' }}" required></label><div class="jh-actions wide"><button class="jh-btn" type="submit">{{ employer_t.support_fleet_save_draft_changes }}</button></div></form></details>
-                  <form method="post" onsubmit="return confirm('{{ employer_t.support_draft_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_delete"><input type="hidden" name="vehicle_id" value="{{ selected_vehicle.public_id }}"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><button class="jh-btn danger" type="submit">{{ employer_t.support_draft_delete }}</button></form>
-                </div>
+          {% for item in vehicle.assignments_for_fleet %}{% if item.state == 'draft' %}
+            <article class="fleet-assignment">
+              <div class="fleet-assignment-head"><h3>{{ item.driver_connection.candidate.get_full_name|default:item.driver_connection.candidate.username }}</h3><span class="jh-status warning">{{ item.get_state_display }}</span></div>
+              <p>{{ employer_t.support_worker_starts }}: {{ item.starts_on|date:"d.m.Y" }}</p>
+              <small class="jh-muted">{{ employer_t.support_fleet_publish_warning_short }}</small>
+              {% if item.transfer_over_capacity %}
+                <form method="post" class="fleet-capacity" onsubmit="return confirm('{{ employer_t.support_fleet_publish_warning }}')">
+                  {% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_publish"><input type="hidden" name="vehicle_id" value="{{ vehicle.public_id }}"><input type="hidden" name="assignment_id" value="{{ item.public_id }}">
+                  <strong>{{ employer_t.support_fleet_capacity_title }}</strong><p>{{ employer_t.support_fleet_capacity_text }} {{ item.transfer_excess_count }}</p>
+                  <ul class="fleet-capacity-list">{% for passenger in item.transfer_passengers %}<li class="fleet-capacity-passenger"><span>{{ passenger.connection.candidate.get_full_name|default:passenger.connection.candidate.username }}</span><label class="jh-btn danger"><input type="checkbox" name="exclude_passenger_ids" value="{{ passenger.public_id }}"> {{ employer_t.support_fleet_exclude }}</label></li>{% endfor %}</ul>
+                  <button class="jh-btn primary" type="submit">{{ employer_t.support_fleet_exclude_and_publish }}</button>
+                </form>
+              {% else %}
+                <form method="post" class="jh-actions" onsubmit="return confirm('{{ employer_t.support_fleet_publish_warning }}')">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_publish"><input type="hidden" name="vehicle_id" value="{{ vehicle.public_id }}"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_worker_publish }}</button></form>
               {% endif %}
-            </li>
-          {% empty %}<li class="jh-muted">{{ employer_t.support_fleet_no_driver }}</li>{% endfor %}
-        </ul>
-        <h3 style="margin-top:18px">{{ employer_t.support_fleet_new_draft }}</h3>
-        <form method="post" class="fleet-form">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_create">
-          <input type="hidden" name="vehicle_id" value="{{ selected_vehicle.public_id }}">
-          <label class="jh-field wide"><span>{{ employer_t.support_fleet_assign_driver }}</span><select class="jh-input" name="driver_connection_id" required>{% for worker in eligible_drivers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% empty %}<option value="" disabled>{{ employer_t.support_fleet_license_only }}</option>{% endfor %}</select><small>{{ employer_t.support_fleet_license_only }}</small></label>
-          <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="date" name="starts_on" data-default-current required></label>
-          <div class="jh-actions wide"><button class="jh-btn primary" type="submit"{% if not eligible_drivers %} disabled{% endif %}>{{ employer_t.support_fleet_create_new_draft }}</button></div>
-        </form>
-      </section>
-    {% endif %}
+              <form method="post" class="fleet-form">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_edit"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><input type="hidden" name="vehicle_id" value="{{ vehicle.public_id }}"><label class="jh-field wide"><span>{{ employer_t.support_fleet_driver }}</span><select class="jh-input" name="driver_connection_id" required>{% for worker in eligible_drivers %}<option value="{{ worker.public_id }}"{% if worker.id == item.driver_connection_id %} selected{% endif %}>{{ worker.display_name }}</option>{% endfor %}</select></label><label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="date" name="starts_on" value="{{ item.starts_on|date:'Y-m-d' }}" required></label><div class="jh-actions wide"><button class="jh-btn" type="submit">{{ employer_t.support_fleet_save_draft_changes }}</button></div></form>
+              <form method="post" class="jh-actions" onsubmit="return confirm('{{ employer_t.support_draft_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_delete"><input type="hidden" name="vehicle_id" value="{{ vehicle.public_id }}"><input type="hidden" name="assignment_id" value="{{ item.public_id }}"><button class="jh-btn danger" type="submit">{{ employer_t.support_draft_delete }}</button></form>
+            </article>
+          {% endif %}{% endfor %}
+
+          <section class="fleet-new-assignment">
+            <h3>{{ employer_t.support_fleet_new_draft }}</h3>
+            <form method="post" class="fleet-form">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_create"><input type="hidden" name="vehicle_id" value="{{ vehicle.public_id }}">
+              <label class="jh-field wide"><span>{{ employer_t.support_fleet_assign_driver }}</span><select class="jh-input" name="driver_connection_id" required>{% for worker in eligible_drivers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% empty %}<option value="" disabled>{{ employer_t.support_fleet_license_only }}</option>{% endfor %}</select><small>{{ employer_t.support_fleet_license_only }}</small></label>
+              <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="date" name="starts_on" data-default-current required></label>
+              <div class="jh-actions wide"><button class="jh-btn primary" type="submit"{% if not eligible_drivers %} disabled{% endif %}>{{ employer_t.support_fleet_create_new_draft }}</button></div>
+            </form>
+          </section>
+        </div>
+      </dialog>
+
+      <dialog class="fleet-modal" id="fleet-history-{{ vehicle.public_id }}" aria-labelledby="fleet-history-title-{{ vehicle.public_id }}">
+        <div class="fleet-modal-card">
+          <div class="fleet-modal-head"><h2 id="fleet-history-title-{{ vehicle.public_id }}">{{ employer_t.support_fleet_history }}</h2><button class="jh-btn fleet-modal-close" type="button" data-fleet-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div>
+          <div class="fleet-current"><strong>{{ vehicle.internal_name }} · {{ vehicle.registration_identifier }}</strong><p>{{ employer_t.support_registry_capacity }}: {{ vehicle.seat_capacity }}</p></div>
+          <ul class="fleet-history-list">
+            {% for item in vehicle.assignments_for_fleet %}
+              <li class="fleet-assignment">
+                <div class="fleet-assignment-head"><h3>{{ item.driver_connection.candidate.get_full_name|default:item.driver_connection.candidate.username }}</h3><span class="jh-status {% if item.state == 'published' %}success{% elif item.state == 'draft' %}warning{% endif %}">{{ item.get_state_display }}</span></div>
+                <p>{{ item.starts_on|date:"d.m.Y" }}{% if item.state == 'cancelled' and item.cancelled_at %} · {{ employer_t.support_fleet_replaced_on }}: {{ item.cancelled_at|date:"d.m.Y" }}{% endif %}</p>
+                {% for route in item.routes.all %}{% if route.state != 'cancelled' %}<div class="fleet-history-route"><strong>{{ route.fleet_project_name }}</strong>{% if route.fleet_address_label %}<br><small class="jh-muted">{{ route.fleet_address_label }}</small>{% endif %}</div>{% endif %}{% endfor %}
+              </li>
+            {% empty %}<li class="jh-empty">{{ employer_t.support_fleet_no_driver }}</li>{% endfor %}
+          </ul>
+        </div>
+      </dialog>
+    {% endfor %}
   </section>
   <script>
     document.addEventListener('DOMContentLoaded', function () {
-      const modal = document.getElementById('fleet-add-vehicle-modal');
-      const openButton = document.querySelector('[data-fleet-modal-open]');
-      const closeButton = modal?.querySelector('[data-fleet-modal-close]');
-      openButton?.addEventListener('click', function () { modal?.showModal(); });
-      closeButton?.addEventListener('click', function () { modal?.close(); });
-      modal?.addEventListener('click', function (event) {
-        if (event.target === modal) modal.close();
+      document.querySelectorAll('[data-fleet-dialog-target]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          document.getElementById(button.dataset.fleetDialogTarget)?.showModal();
+        });
+      });
+      document.querySelectorAll('.fleet-modal').forEach(function (modal) {
+        modal.querySelector('[data-fleet-modal-close]')?.addEventListener('click', function () { modal.close(); });
+        modal.addEventListener('click', function (event) { if (event.target === modal) modal.close(); });
       });
     });
   </script>

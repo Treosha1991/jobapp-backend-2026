@@ -446,6 +446,77 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "FLEET-123")
         self.assertContains(response, "workspace-active-worker")
 
+    def test_fleet_shows_project_address_and_modal_vehicle_actions(self):
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Project crew car",
+            registration_identifier="PROJECT-123",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        driver_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            vehicle=vehicle,
+            driver_connection=self.worker_connection,
+            starts_on=date.today() - timedelta(days=1),
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Hidden worksite name",
+            country_code="NL",
+            city="Lelystad",
+            postal_code="8223 XP",
+            street="Zandbang",
+            building="22",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Internal project name",
+            worker_visible_name="Apple Project BV",
+            starts_on=date.today(),
+            created_by=self.owner,
+        )
+        template = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Morning",
+            starts_at_time=datetime.strptime("06:00", "%H:%M").time(),
+            ends_at_time=datetime.strptime("14:00", "%H:%M").time(),
+            created_by=self.owner,
+        )
+        TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Crew encrypted internal identifier",
+            worksite=worksite,
+            schedule_template=template,
+            driver_vehicle_assignment=driver_assignment,
+            starts_on=date.today() - timedelta(days=1),
+            state=TransportRoute.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            f"/employer/support/fleet/?organization={self.organization.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Apple Project BV")
+        self.assertContains(response, "Lelystad, Zandbang 22")
+        self.assertNotContains(response, "Crew encrypted internal identifier")
+        self.assertContains(
+            response,
+            f'data-fleet-dialog-target="fleet-edit-{vehicle.public_id}"',
+        )
+        self.assertContains(
+            response,
+            f'data-fleet-dialog-target="fleet-history-{vehicle.public_id}"',
+        )
+        self.assertNotContains(response, "fleet-selected")
+
     def test_owner_can_add_vehicle_from_fleet_workspace(self):
         self.client.force_login(self.owner)
         fleet_url = (
