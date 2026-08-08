@@ -1088,6 +1088,16 @@ class SupportWorkspaceWebTests(TestCase):
         self.client.force_login(self.owner)
         projects_url = f"/employer/support/projects/?organization={self.organization.public_id}"
         project_starts = timezone.localdate()
+        projects_page = self.client.get(projects_url)
+        self.assertEqual(projects_page.status_code, 200)
+        self.assertContains(projects_page, "data-project-modal-open")
+        self.assertContains(projects_page, 'id="project-add-modal"')
+        self.assertContains(projects_page, "data-project-modal-close")
+        rendered_projects_page = projects_page.content.decode()
+        self.assertLess(
+            rendered_projects_page.index('class="projects-section"'),
+            rendered_projects_page.index('id="project-add-modal"'),
+        )
         response = self.client.post(
             projects_url,
             {

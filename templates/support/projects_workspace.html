@@ -9,6 +9,15 @@
   .projects-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
   .projects-form, .projects-section { margin-top:21px; padding-top:20px; border-top:1px solid var(--line); }
   .projects-form { padding:15px; border:1px solid rgba(24,223,103,.28); border-radius:18px; background:linear-gradient(135deg,rgba(24,223,103,.07),rgba(5,22,36,.25)); }
+  .projects-modal { width:min(94vw,900px); max-height:90vh; margin:auto; padding:0; overflow:hidden; color:var(--text); border:1px solid rgba(24,223,103,.42); border-radius:20px; background:#103753; box-shadow:0 28px 80px rgba(0,0,0,.55); }
+  .projects-modal::backdrop { background:rgba(1,13,25,.72); backdrop-filter:blur(4px); }
+  .projects-modal-card { max-height:90vh; padding:20px; overflow:auto; }
+  .projects-modal-head { position:sticky; top:-20px; z-index:2; display:flex; align-items:center; justify-content:space-between; gap:16px; margin:-20px -20px 14px; padding:18px 20px 12px; border-bottom:1px solid var(--line); background:#103753; }
+  .projects-modal-head h2 { margin:0; font-size:1.3rem; }
+  .projects-modal-close { width:38px; height:38px; padding:0; display:grid; place-items:center; font-size:24px; line-height:1; }
+  .projects-modal .projects-form { margin:0; padding:0; border:0; background:none; }
+  .projects-modal .projects-form > p { margin-bottom:14px; }
+  body:has(.projects-modal[open]) { overflow:hidden; }
   .projects-form h2, .projects-section h2 { margin:0 0 7px; font-size:21px; }
   .projects-form > p, .projects-section > p { margin:0 0 14px; color:var(--muted); line-height:1.45; }
   .projects-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
@@ -46,32 +55,11 @@
         <h1 class="jh-title">{% if selected_project %}{{ selected_project.worker_visible_name }}{% else %}{{ employer_t.support_projects_title }}{% endif %}</h1>
         <p class="jh-subtitle">{% if selected_project %}{{ employer_t.support_project_detail_subtitle }}{% else %}{{ employer_t.support_projects_subtitle }}{% endif %}</p>
       </div>
-      {% if not selected_project %}<a class="jh-btn primary" href="#project-add">{{ employer_t.support_projects_add }}</a>{% endif %}
+      {% if not selected_project %}<button class="jh-btn primary" type="button" data-project-modal-open>{{ employer_t.support_projects_add }}</button>{% endif %}
       {% if selected_project %}<a class="jh-btn" href="{{ project_list_url }}">{{ employer_t.support_projects_all }}</a>{% endif %}
     </div>
 
     {% if not selected_project %}
-      <form class="projects-form" method="post" id="project-add">
-        {% csrf_token %}<input type="hidden" name="action" value="project_create">
-        <h2>{{ employer_t.support_projects_add }}</h2><p>{{ employer_t.support_projects_add_text }}</p>
-        <div class="projects-grid">
-          <label class="jh-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" required></label>
-          <label class="jh-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="1" max="5000" value="1" required></label>
-          <label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="NL" required></label>
-          <label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" required></label>
-          <label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20"></label>
-          <label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" required></label>
-          <label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" required></label>
-          <label class="jh-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" required></label>
-          <label class="jh-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date"></label>
-          <label class="jh-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160"></label>
-          <label class="jh-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48"></label>
-          <label class="jh-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email"></label>
-          <label class="jh-field projects-wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000"></textarea></label>
-        </div>
-        <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_projects_add }}</button></div>
-      </form>
-
       <section class="projects-section">
         <h2>{{ employer_t.support_projects_title }}</h2>
         {% if projects %}
@@ -86,6 +74,32 @@
           </tbody></table></div>
         {% else %}<div class="projects-empty">{{ employer_t.support_projects_empty }}</div>{% endif %}
       </section>
+
+      <dialog class="projects-modal" id="project-add-modal" aria-labelledby="project-add-title">
+        <div class="projects-modal-card">
+          <div class="projects-modal-head"><h2 id="project-add-title">{{ employer_t.support_projects_add }}</h2><button class="jh-btn projects-modal-close" type="button" data-project-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div>
+          <form class="projects-form" method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="project_create">
+            <p>{{ employer_t.support_projects_add_text }}</p>
+            <div class="projects-grid">
+              <label class="jh-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="1" max="5000" value="1" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="NL" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20"></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" required></label>
+              <label class="jh-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" data-default-current required></label>
+              <label class="jh-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date"></label>
+              <label class="jh-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160"></label>
+              <label class="jh-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48"></label>
+              <label class="jh-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email"></label>
+              <label class="jh-field projects-wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000"></textarea></label>
+            </div>
+            <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_projects_add }}</button></div>
+          </form>
+        </div>
+      </dialog>
     {% else %}
       <div class="projects-summary">
         <div class="projects-summary-item"><span>{{ employer_t.support_project_occupancy }}</span><strong>{{ selected_project.filled_places }}/{{ selected_project.worker_capacity }}</strong>{% if selected_project.draft_places %}<span>{{ employer_t.support_project_drafts }}: {{ selected_project.draft_places }}</span>{% endif %}</div>
@@ -109,4 +123,12 @@
       <section class="projects-section"><h2>{{ employer_t.support_project_edit }}</h2><form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="project_update"><div class="projects-grid"><label class="jh-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" value="{{ selected_project.worker_visible_name }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="1" max="5000" value="{{ selected_project.worker_capacity }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="{{ selected_project.worksite.country_code }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" value="{{ selected_project.worksite.city }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20" value="{{ selected_project.worksite.postal_code }}"></label><label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" value="{{ selected_project.worksite.street }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" value="{{ selected_project.worksite.building }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" value="{{ selected_project.starts_on|date:'Y-m-d' }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date" value="{{ selected_project.ends_on|date:'Y-m-d' }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160" value="{{ selected_project.contact_name }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48" value="{{ selected_project.contact_phone }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email" value="{{ selected_project.contact_email }}"></label><label class="jh-field projects-wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000">{{ selected_project.instructions }}</textarea></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_project_save }}</button></div></form></section>
     {% endif %}
   </section>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const modal = document.getElementById('project-add-modal');
+      document.querySelector('[data-project-modal-open]')?.addEventListener('click', function () { modal?.showModal(); });
+      modal?.querySelector('[data-project-modal-close]')?.addEventListener('click', function () { modal.close(); });
+      modal?.addEventListener('click', function (event) { if (event.target === modal) modal.close(); });
+    });
+  </script>
 {% endblock %}
