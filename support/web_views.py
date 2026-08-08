@@ -29,6 +29,7 @@ from .models import (
     ScheduledWorkShift,
     SupportConnection,
     SupportConversation,
+    TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
     WorkerProjectAssignment,
@@ -71,6 +72,8 @@ from .serializers import (
 )
 from .services.operations import (
     add_passenger_to_driver_schedule,
+    remove_passenger_from_driver_schedule,
+    replace_passenger_in_driver_schedule,
     create_driver_vehicle_assignment,
     create_housing_assignment,
     create_worker_project_assignment,
@@ -716,6 +719,49 @@ def _worker_card_operation(request, *, snapshot):
                 request,
                 tr(request, "support_transport_passenger_added_and_scheduled"),
             )
+        elif action in {
+            "transport_schedule_passenger_remove",
+            "transport_schedule_passenger_replace",
+        }:
+            passenger_assignment = get_object_or_404(
+                TransportPassengerAssignment.objects.select_related(
+                    "route__driver_vehicle_assignment__driver_connection",
+                    "route__schedule_template",
+                    "connection",
+                ),
+                route__organization=organization,
+                public_id=request.POST.get("passenger_assignment_id"),
+            )
+            if action == "transport_schedule_passenger_remove":
+                remove_passenger_from_driver_schedule(
+                    actor=request.user,
+                    passenger_assignment=passenger_assignment,
+                )
+                messages.success(
+                    request,
+                    tr(request, "support_transport_passenger_removed"),
+                )
+            else:
+                replacement_connection = get_object_or_404(
+                    worker_connection_queryset_for(
+                        user=request.user,
+                        organization=organization,
+                        queryset=SupportConnection.objects.filter(
+                            organization=organization,
+                            is_archived=False,
+                        ),
+                    ),
+                    public_id=request.POST.get("replacement_connection_id"),
+                )
+                replace_passenger_in_driver_schedule(
+                    actor=request.user,
+                    passenger_assignment=passenger_assignment,
+                    replacement_connection=replacement_connection,
+                )
+                messages.success(
+                    request,
+                    tr(request, "support_transport_passenger_replaced"),
+                )
         elif action == "route_stop_edit":
             route = get_object_or_404(
                 TransportRoute.objects.filter(
@@ -1106,6 +1152,7 @@ def _worker_card_operation(request, *, snapshot):
             else (
                 _transport_operation_error_key(error)
                 if action == "route_create"
+                or action.startswith("transport_schedule_passenger_")
                 else _worker_operation_error_key(error)
             )
         )
@@ -1242,6 +1289,17 @@ def worker_card(request, connection_public_id):
     for crew in snapshot["transport_crews"]:
         crew.transport_url = (
             f"{worker_base_url}?tab=transport&transport_crew={crew.key}"
+        )
+    for passenger in snapshot["transport_passengers"]:
+        passenger.chat_url = (
+            reverse(
+                "support:conversation-detail",
+                kwargs={
+                    "conversation_public_id": passenger.chat_conversation.public_id
+                },
+            )
+            if passenger.chat_conversation is not None
+            else None
         )
     snapshot["transport_driver_chat_url"] = (
         reverse(
@@ -1474,11 +1532,60 @@ def projects_workspace(request, project_public_id=None):
                     project=selected_project,
                     project_crew_key=request.POST.get("return_project_crew"),
                 )
+            if action in {
+                "transport_schedule_passenger_remove",
+                "transport_schedule_passenger_replace",
+            }:
+                passenger_assignment = get_object_or_404(
+                    TransportPassengerAssignment.objects.select_related(
+                        "route__driver_vehicle_assignment__driver_connection",
+                        "route__schedule_template",
+                        "connection",
+                    ),
+                    route__organization=organization,
+                    route__schedule_template__project=selected_project,
+                    public_id=request.POST.get("passenger_assignment_id"),
+                )
+                if action == "transport_schedule_passenger_remove":
+                    remove_passenger_from_driver_schedule(
+                        actor=request.user,
+                        passenger_assignment=passenger_assignment,
+                    )
+                    messages.success(
+                        request,
+                        tr(request, "support_transport_passenger_removed"),
+                    )
+                else:
+                    replacement_connection = get_object_or_404(
+                        worker_connection_queryset_for(
+                            user=request.user,
+                            organization=organization,
+                            queryset=SupportConnection.objects.filter(
+                                organization=organization,
+                                is_archived=False,
+                            ),
+                        ),
+                        public_id=request.POST.get("replacement_connection_id"),
+                    )
+                    replace_passenger_in_driver_schedule(
+                        actor=request.user,
+                        passenger_assignment=passenger_assignment,
+                        replacement_connection=replacement_connection,
+                    )
+                    messages.success(
+                        request,
+                        tr(request, "support_transport_passenger_replaced"),
+                    )
+                return _projects_redirect(
+                    organization,
+                    project=selected_project,
+                    project_crew_key=request.POST.get("return_project_crew"),
+                )
             raise ValueError("project_operation_unknown")
         except (APIException, ValueError) as error:
             error_key = (
                 _transport_operation_error_key(error)
-                if action == "transport_schedule_passenger_add"
+                if action.startswith("transport_schedule_passenger_")
                 else _project_operation_error_key(error)
             )
             messages.error(request, tr(request, error_key))
@@ -1513,6 +1620,19 @@ def projects_workspace(request, project_public_id=None):
                 if crew.driver_conversation is not None
                 else None
             )
+            for passenger in crew.passengers:
+                passenger.chat_url = (
+                    reverse(
+                        "support:conversation-detail",
+                        kwargs={
+                            "conversation_public_id": (
+                                passenger.chat_conversation.public_id
+                            )
+                        },
+                    )
+                    if passenger.chat_conversation is not None
+                    else None
+                )
     return render(request, "support/projects_workspace.html", snapshot)
 
 

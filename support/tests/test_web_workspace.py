@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
+from django.urls import reverse
 from django.utils import timezone
 
 from support.models import (
@@ -1661,6 +1662,29 @@ class SupportWorkspaceWebTests(TestCase):
             candidate=passenger_user,
             stage=SupportConnection.STAGE_COORDINATOR,
         )
+        replacement_user = User.objects.create_user(
+            username="worker-card-replacement",
+            first_name="Olena",
+            last_name="Replacement",
+            email="worker-card-replacement@example.com",
+            password="password",
+        )
+        replacement_application = SupportApplication.objects.create(
+            vacancy=self.worker_connection.vacancy,
+            candidate=replacement_user,
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        replacement_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=replacement_application,
+            candidate=replacement_user,
+            stage=SupportConnection.STAGE_COORDINATOR,
+        )
         housing_site = HousingSite.objects.create(
             organization=self.organization,
             internal_name="Passenger house",
@@ -1681,6 +1705,39 @@ class SupportWorkspaceWebTests(TestCase):
             created_by=self.owner,
             published_by=self.owner,
             published_at=timezone.now(),
+        )
+        replacement_place = HousingPlace.objects.create(room=room, label="2")
+        HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=replacement_connection,
+            place=replacement_place,
+            check_in_at=timezone.now() - timedelta(days=1),
+            state=HousingAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        passenger_conversation = SupportConversation.objects.create(
+            organization=self.organization,
+            connection=passenger_connection,
+            kind=SupportConversation.KIND_COORDINATOR,
+            title="Passenger chat",
+            created_by=self.owner,
+        )
+        membership = OrganizationMembership.objects.get(
+            organization=self.organization,
+            user=self.owner,
+        )
+        SupportConversationMember.objects.create(
+            conversation=passenger_conversation,
+            user=self.owner,
+            organization_membership=membership,
+            role=SupportConversationMember.ROLE_STAFF,
+        )
+        SupportConversationMember.objects.create(
+            conversation=passenger_conversation,
+            user=passenger_user,
+            role=SupportConversationMember.ROLE_WORKER,
         )
         driver_work = WorkerProjectAssignment.objects.create(
             organization=self.organization,
@@ -1758,6 +1815,22 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(passenger_added.status_code, 200)
         self.assertContains(passenger_added, "Passenger added")
         self.assertContains(passenger_added, 'class="projects-passenger-row"')
+        self.assertContains(passenger_added, "Chat")
+        self.assertContains(
+            passenger_added,
+            reverse(
+                "support:conversation-detail",
+                kwargs={"conversation_public_id": passenger_conversation.public_id},
+            ),
+        )
+        self.assertContains(
+            passenger_added,
+            'value="transport_schedule_passenger_replace"',
+        )
+        self.assertContains(
+            passenger_added,
+            'value="transport_schedule_passenger_remove"',
+        )
         route = TransportRoute.objects.get(
             organization=self.organization,
             driver_vehicle_assignment=driver_assignment,
@@ -1784,6 +1857,86 @@ class SupportWorkspaceWebTests(TestCase):
                 connection=passenger_connection,
                 project=project,
                 state=WorkerProjectAssignment.STATE_PUBLISHED,
+            ).exists()
+        )
+        passenger_assignment = TransportPassengerAssignment.objects.get(
+            route=route,
+            connection=passenger_connection,
+        )
+        replaced = self.client.post(
+            project_url,
+            {
+                "action": "transport_schedule_passenger_replace",
+                "passenger_assignment_id": str(passenger_assignment.public_id),
+                "replacement_connection_id": str(replacement_connection.public_id),
+                "return_project_crew": (
+                    f"{driver_assignment.public_id}.{template.public_id}"
+                ),
+            },
+            follow=True,
+        )
+        self.assertEqual(replaced.status_code, 200)
+        self.assertContains(replaced, "Crew passenger replaced")
+        self.assertFalse(
+            TransportPassengerAssignment.objects.filter(
+                route=route,
+                connection=passenger_connection,
+            ).exists()
+        )
+        replacement_assignment = TransportPassengerAssignment.objects.get(
+            route=route,
+            connection=replacement_connection,
+        )
+        self.assertTrue(
+            ScheduledWorkShift.objects.filter(
+                connection=passenger_connection,
+                work_date=shift_date,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).exists()
+        )
+        self.assertTrue(
+            ScheduledWorkShift.objects.filter(
+                connection=replacement_connection,
+                work_date=shift_date,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).exists()
+        )
+
+        worker_page = self.client.get(card_url)
+        self.assertEqual(worker_page.status_code, 200)
+        self.assertContains(
+            worker_page,
+            'value="transport_schedule_passenger_replace"',
+        )
+        self.assertContains(
+            worker_page,
+            'value="transport_schedule_passenger_remove"',
+        )
+        removed = self.client.post(
+            card_url,
+            {
+                "action": "transport_schedule_passenger_remove",
+                "passenger_assignment_id": str(replacement_assignment.public_id),
+                "return_tab": "transport",
+                "return_transport_crew": (
+                    f"{driver_assignment.public_id}.{template.public_id}"
+                ),
+            },
+            follow=True,
+        )
+        self.assertEqual(removed.status_code, 200)
+        self.assertContains(removed, "Passenger removed from the crew")
+        self.assertFalse(
+            TransportPassengerAssignment.objects.filter(
+                route=route,
+                connection=replacement_connection,
+            ).exists()
+        )
+        self.assertTrue(
+            ScheduledWorkShift.objects.filter(
+                connection=replacement_connection,
+                work_date=shift_date,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
             ).exists()
         )
 

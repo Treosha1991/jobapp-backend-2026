@@ -107,9 +107,18 @@
   .worker-passenger-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; }
   .worker-passenger-count { color:var(--muted); font-size:11px; font-weight:800; }
   .worker-passenger-list { display:grid; gap:6px; margin-top:7px; }
-  .worker-passenger-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 11px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.2); }
+  .worker-passenger-row { display:grid; grid-template-columns:minmax(150px,1fr) minmax(140px,1fr) auto; align-items:center; gap:10px; padding:9px 11px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.2); }
   .worker-passenger-row strong { font-size:12px; }
-  .worker-passenger-row span { color:var(--muted); font-size:10px; text-align:right; }
+  .worker-passenger-address { color:var(--muted); font-size:10px; text-align:right; }
+  .worker-passenger-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+  .worker-passenger-actions form { margin:0; }
+  .worker-passenger-actions .jh-btn { padding:6px 9px; font-size:10px; }
+  .worker-passenger-chat-disabled { opacity:.5; cursor:not-allowed; }
+  .worker-passenger-modal { width:min(520px,calc(100vw - 28px)); padding:0; border:1px solid var(--line); border-radius:18px; color:var(--text); background:#0b304b; box-shadow:0 24px 70px rgba(0,0,0,.55); }
+  .worker-passenger-modal::backdrop { background:rgba(1,10,18,.72); backdrop-filter:blur(3px); }
+  .worker-passenger-modal-card { padding:17px; }
+  .worker-passenger-modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  .worker-passenger-modal-head h2 { margin:0; font-size:18px; }
   .worker-compact-action { margin-top:10px; }
   .worker-compact-action > summary { width:max-content; list-style:none; cursor:pointer; }
   .worker-compact-action > summary::-webkit-details-marker { display:none; }
@@ -131,7 +140,7 @@
   .worker-checkout .jh-input { min-height:34px; font-size:12px; }
   .worker-checkout .jh-btn { justify-self:start; padding:7px 10px; font-size:12px; }
   .worker-form small { display:block; margin-top:7px; color:var(--muted); line-height:1.35; }
-  @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:46px; } .worker-calendar-day-content { padding:5px; } .worker-calendar-time { font-size:9px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } }
+  @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:46px; } .worker-calendar-day-content { padding:5px; } .worker-calendar-time { font-size:9px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } }
 </style>
 <script>
   document.addEventListener('DOMContentLoaded', function () {
@@ -272,6 +281,16 @@
         if (document.querySelector('[data-worker-calendar-section]')) {
           loadCalendar(window.location.href, false);
         }
+      });
+
+      document.querySelectorAll('[data-worker-passenger-dialog-target]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          document.getElementById(button.dataset.workerPassengerDialogTarget)?.showModal();
+        });
+      });
+      document.querySelectorAll('.worker-passenger-modal').forEach(function (modal) {
+        modal.querySelector('[data-worker-passenger-modal-close]')?.addEventListener('click', function () { modal.close(); });
+        modal.addEventListener('click', function (event) { if (event.target === modal) modal.close(); });
       });
     });
 </script>
@@ -432,7 +451,18 @@
             <div class="worker-passenger-head"><h3>{{ employer_t.support_transport_passenger_list }}</h3><span class="worker-passenger-count">{{ transport_passengers|length }} / {{ transport_driver_assignment.vehicle.seat_capacity|add:'-1' }}</span></div>
             <div class="worker-passenger-list">
               {% for passenger in transport_passengers %}
-                <div class="worker-passenger-row"><strong>{{ passenger.connection.candidate.get_full_name|default:passenger.connection.candidate.username }}{% if passenger.is_selected_worker %} <span class="worker-selected">{{ employer_t.support_worker_selected_worker }}</span>{% endif %}</strong><span>{{ passenger.pickup_stop.label }}</span></div>
+                <div class="worker-passenger-row">
+                  <strong>{{ passenger.connection.candidate.get_full_name|default:passenger.connection.candidate.username }}{% if passenger.is_selected_worker %} <span class="worker-selected">{{ employer_t.support_worker_selected_worker }}</span>{% endif %}</strong>
+                  <span class="worker-passenger-address">{{ passenger.pickup_stop.label }}</span>
+                  <div class="worker-passenger-actions">
+                    {% if passenger.chat_url %}<a class="jh-btn" href="{{ passenger.chat_url }}">{{ employer_t.support_transport_passenger_chat }}</a>{% else %}<span class="jh-btn worker-passenger-chat-disabled" title="{{ employer_t.support_transport_chat_unavailable }}">{{ employer_t.support_transport_passenger_chat }}</span>{% endif %}
+                    {% if can_operate and permissions.work and transport_passenger_candidates %}<button class="jh-btn" type="button" data-worker-passenger-dialog-target="worker-passenger-edit-{{ passenger.public_id }}">{{ employer_t.support_project_edit }}</button>{% endif %}
+                    {% if can_operate and permissions.work %}<form method="post" onsubmit="return confirm('{{ employer_t.support_transport_remove_passenger_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="transport_schedule_passenger_remove"><input type="hidden" name="passenger_assignment_id" value="{{ passenger.public_id }}"><input type="hidden" name="return_tab" value="transport"><input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}"><button class="jh-btn" type="submit">{{ employer_t.support_transport_remove_passenger }}</button></form>{% endif %}
+                  </div>
+                </div>
+                {% if can_operate and permissions.work and transport_passenger_candidates %}
+                  <dialog class="worker-passenger-modal" id="worker-passenger-edit-{{ passenger.public_id }}" aria-labelledby="worker-passenger-edit-title-{{ passenger.public_id }}"><div class="worker-passenger-modal-card"><div class="worker-passenger-modal-head"><h2 id="worker-passenger-edit-title-{{ passenger.public_id }}">{{ employer_t.support_transport_replace_passenger }}</h2><button class="jh-btn" type="button" data-worker-passenger-modal-close aria-label="{{ employer_t.support_modal_close }}">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="transport_schedule_passenger_replace"><input type="hidden" name="passenger_assignment_id" value="{{ passenger.public_id }}"><input type="hidden" name="return_tab" value="transport"><input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}"><label class="jh-field"><span>{{ employer_t.support_workspace_workers }}</span><select class="jh-input" name="replacement_connection_id" required>{% for item in transport_passenger_candidates %}<option value="{{ item.public_id }}">{{ item.transport_option_label }}</option>{% endfor %}</select></label><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_replace_passenger }}</button></div></form></div></dialog>
+                {% endif %}
               {% empty %}<div class="worker-empty">{{ employer_t.support_transport_no_schedule_passengers }}</div>{% endfor %}
             </div>
 

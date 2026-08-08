@@ -1459,6 +1459,151 @@ def add_passenger_to_driver_schedule(
     return passenger
 
 
+def remove_passenger_from_driver_schedule(*, actor, passenger_assignment):
+    """Remove only the transport seat, preserving the worker's job and shifts."""
+
+    organization = passenger_assignment.route.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=TRANSPORT_MANAGE,
+    )
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    with transaction.atomic():
+        passenger = (
+            TransportPassengerAssignment.objects.select_for_update()
+            .select_related(
+                "route__driver_vehicle_assignment__driver_connection",
+                "connection__candidate",
+            )
+            .get(pk=passenger_assignment.pk)
+        )
+        route = passenger.route
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=route.driver_vehicle_assignment.driver_connection,
+        )
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=passenger.connection,
+        )
+        connection = passenger.connection
+        removed_passenger_id = passenger.public_id
+        passenger.delete()
+        for order, remaining in enumerate(
+            TransportPassengerAssignment.objects.select_for_update()
+            .filter(route=route)
+            .order_by("boarding_order", "id"),
+            start=1,
+        ):
+            if remaining.boarding_order != order:
+                remaining.boarding_order = order
+                remaining.save(update_fields=["boarding_order", "updated_at"])
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.schedule_passenger_removed",
+            target=route,
+            details={
+                "passenger_assignment": str(removed_passenger_id),
+                "connection": str(connection.public_id),
+            },
+        )
+        now = timezone.now()
+        enqueue_support_notification(
+            organization=organization,
+            recipient=connection.candidate,
+            notification_code="transport.route_published",
+            target_kind="transport_route",
+            target_public_id=route.public_id,
+            target_key=f"support:transport-route:{route.public_id}",
+            collapse_key=f"support:transport:{connection.public_id}",
+            dedupe_key=(
+                f"transport.schedule-passenger-removed:"
+                f"{removed_passenger_id}:{now.isoformat()}"
+            ),
+        )
+    return route
+
+
+def replace_passenger_in_driver_schedule(
+    *,
+    actor,
+    passenger_assignment,
+    replacement_connection,
+):
+    """Atomically replace one crew passenger and prepare the new worker's shifts."""
+
+    organization = passenger_assignment.route.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=TRANSPORT_MANAGE,
+    )
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    with transaction.atomic():
+        current = (
+            TransportPassengerAssignment.objects.select_for_update()
+            .select_related(
+                "route__driver_vehicle_assignment__driver_connection",
+                "route__schedule_template",
+                "connection__candidate",
+            )
+            .get(pk=passenger_assignment.pk)
+        )
+        route = current.route
+        if route.schedule_template is None:
+            raise ValidationError({"route": "transport_schedule_template_required"})
+        if current.connection_id == replacement_connection.id:
+            raise ValidationError({"connection": "transport_passenger_unchanged"})
+        old_connection = current.connection
+        old_assignment_id = current.public_id
+        current.delete()
+        replacement = add_passenger_to_driver_schedule(
+            actor=actor,
+            driver_connection=route.driver_vehicle_assignment.driver_connection,
+            schedule_template=route.schedule_template,
+            passenger_connection=replacement_connection,
+        )
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.schedule_passenger_replaced",
+            target=replacement,
+            details={
+                "route": str(route.public_id),
+                "previous_passenger_assignment": str(old_assignment_id),
+                "previous_connection": str(old_connection.public_id),
+                "replacement_connection": str(replacement_connection.public_id),
+            },
+        )
+        now = timezone.now()
+        enqueue_support_notification(
+            organization=organization,
+            recipient=old_connection.candidate,
+            notification_code="transport.route_published",
+            target_kind="transport_route",
+            target_public_id=route.public_id,
+            target_key=f"support:transport-route:{route.public_id}",
+            collapse_key=f"support:transport:{old_connection.public_id}",
+            dedupe_key=(
+                f"transport.schedule-passenger-replaced:"
+                f"{old_assignment_id}:{now.isoformat()}"
+            ),
+        )
+    return replacement
+
+
 def _driver_vehicle_conflict(*, assignment):
     vehicle_conflict = _period_overlaps(
         DriverVehicleAssignment.objects.select_for_update()

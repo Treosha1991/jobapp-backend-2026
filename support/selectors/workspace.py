@@ -68,6 +68,21 @@ def _display_name(user):
     return user.get_full_name().strip() or user.username
 
 
+def _active_worker_conversation(*, user, organization, connection):
+    return (
+        SupportConversation.objects.filter(
+            organization=organization,
+            connection=connection,
+            state=SupportConversation.STATE_ACTIVE,
+            members__user=user,
+            members__left_at__isnull=True,
+        )
+        .distinct()
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+
+
 def _date_period_overlaps(*, starts_field, ends_field, starts_on, ends_on):
     """Return a query for date ranges that overlap the supplied period."""
 
@@ -677,6 +692,12 @@ def projects_snapshot(
                     if crew.route is not None
                     else []
                 )
+                for passenger in crew.passengers:
+                    passenger.chat_conversation = _active_worker_conversation(
+                        user=user,
+                        organization=organization,
+                        connection=passenger.connection,
+                    )
                 crew.free_seats = max(
                     0,
                     crew.driver_assignment.vehicle.seat_capacity
@@ -701,17 +722,10 @@ def projects_snapshot(
                         f"{housing.place.room.label} · {housing.place.label}"
                     )
                     crew.passenger_candidates.append(connection)
-                crew.driver_conversation = (
-                    SupportConversation.objects.filter(
-                        organization=organization,
-                        connection=crew.driver_connection,
-                        state=SupportConversation.STATE_ACTIVE,
-                        members__user=user,
-                        members__left_at__isnull=True,
-                    )
-                    .distinct()
-                    .order_by("-updated_at", "-id")
-                    .first()
+                crew.driver_conversation = _active_worker_conversation(
+                    user=user,
+                    organization=organization,
+                    connection=crew.driver_connection,
                 )
 
             if project_crew_key:
@@ -1450,6 +1464,11 @@ def worker_card_snapshot(
                 )
                 for passenger in transport_passengers:
                     passenger.is_selected_worker = passenger.connection_id == connection.id
+                    passenger.chat_conversation = _active_worker_conversation(
+                        user=user,
+                        organization=organization,
+                        connection=passenger.connection,
+                    )
             transport_free_seats = max(
                 0,
                 transport_driver_assignment.vehicle.seat_capacity
@@ -1497,17 +1516,10 @@ def worker_card_snapshot(
                 )
                 transport_passenger_candidates.append(item)
 
-            transport_driver_conversation = (
-                SupportConversation.objects.filter(
-                    organization=organization,
-                    connection=transport_driver_connection,
-                    state=SupportConversation.STATE_ACTIVE,
-                    members__user=user,
-                    members__left_at__isnull=True,
-                )
-                .distinct()
-                .order_by("-updated_at", "-id")
-                .first()
+            transport_driver_conversation = _active_worker_conversation(
+                user=user,
+                organization=organization,
+                connection=transport_driver_connection,
             )
 
     document_packages = []

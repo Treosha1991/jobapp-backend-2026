@@ -52,10 +52,14 @@
   .projects-passenger-head h3 { margin:0; font-size:15px; }
   .projects-passenger-count { color:var(--muted); font-size:11px; font-weight:800; }
   .projects-passenger-list { display:grid; gap:6px; margin-top:7px; }
-  .projects-passenger-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.2); }
-  .projects-passenger-row a { color:#dff4ff; font-size:12px; font-weight:800; text-decoration:none; }
-  .projects-passenger-row a:hover { color:var(--green); }
-  .projects-passenger-row span { color:var(--muted); font-size:10px; text-align:right; }
+  .projects-passenger-row { display:grid; grid-template-columns:minmax(150px,1fr) minmax(140px,1fr) auto; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.2); }
+  .projects-passenger-row > a { color:#dff4ff; font-size:12px; font-weight:800; text-decoration:none; }
+  .projects-passenger-row > a:hover { color:var(--green); }
+  .projects-passenger-address { color:var(--muted); font-size:10px; text-align:right; }
+  .projects-passenger-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+  .projects-passenger-actions form { margin:0; }
+  .projects-passenger-actions .jh-btn { padding:6px 9px; font-size:10px; }
+  .projects-passenger-chat-disabled { opacity:.5; cursor:not-allowed; }
   .projects-crew-actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
   .projects-unassigned { margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
   .projects-unassigned h3 { margin:0 0 7px; font-size:14px; }
@@ -72,7 +76,7 @@
   .projects-worker-link { color:#dff4ff; text-decoration:none; font-weight:800; }
   .projects-worker-link:hover { color:var(--green); }
   @media (max-width:900px) { .projects-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-  @media (max-width:760px) { .projects-grid, .projects-item-grid, .projects-crew-summary { grid-template-columns:1fr; } .projects-wide { grid-column:auto; } .projects-summary { grid-template-columns:1fr; } .projects-calendar { gap:4px; } .projects-calendar-day { min-height:65px; padding:5px; } .projects-calendar-day small { display:none; } }
+  @media (max-width:760px) { .projects-grid, .projects-item-grid, .projects-crew-summary, .projects-passenger-row { grid-template-columns:1fr; } .projects-wide { grid-column:auto; } .projects-summary { grid-template-columns:1fr; } .projects-passenger-address { text-align:left; } .projects-passenger-actions { justify-content:flex-start; } .projects-calendar { gap:4px; } .projects-calendar-day { min-height:65px; padding:5px; } .projects-calendar-day small { display:none; } }
 </style>
 {% endblock %}
 
@@ -153,7 +157,20 @@
               <div class="projects-crew-card"><small>{{ employer_t.support_worker_occupancy }}</small><strong>{{ selected_project_crew.passengers|length|add:'1' }} / {{ selected_project_crew.driver_assignment.vehicle.seat_capacity }}</strong><span>{{ employer_t.support_transport_free_seats }}: {{ selected_project_crew.free_seats }}</span></div>
             </div>
             <div class="projects-passenger-head"><h3>{{ employer_t.support_transport_passenger_list }}</h3><span class="projects-passenger-count">{{ selected_project_crew.passengers|length }} / {{ selected_project_crew.driver_assignment.vehicle.seat_capacity|add:'-1' }}</span></div>
-            <div class="projects-passenger-list">{% for passenger in selected_project_crew.passengers %}<div class="projects-passenger-row"><a href="{% url 'support:worker-card' passenger.connection.public_id %}?tab=transport">{{ passenger.connection.candidate.get_full_name|default:passenger.connection.candidate.username }}</a><span>{{ passenger.pickup_stop.label }}</span></div>{% empty %}<div class="projects-empty">{{ employer_t.support_transport_no_schedule_passengers }}</div>{% endfor %}</div>
+            <div class="projects-passenger-list">
+              {% for passenger in selected_project_crew.passengers %}
+                <div class="projects-passenger-row">
+                  <a href="{% url 'support:worker-card' passenger.connection.public_id %}?tab=transport">{{ passenger.connection.candidate.get_full_name|default:passenger.connection.candidate.username }}</a>
+                  <span class="projects-passenger-address">{{ passenger.pickup_stop.label }}</span>
+                  <div class="projects-passenger-actions">
+                    {% if passenger.chat_url %}<a class="jh-btn" href="{{ passenger.chat_url }}">{{ employer_t.support_transport_passenger_chat }}</a>{% else %}<span class="jh-btn projects-passenger-chat-disabled" title="{{ employer_t.support_transport_chat_unavailable }}">{{ employer_t.support_transport_passenger_chat }}</span>{% endif %}
+                    {% if permissions.work and selected_project_crew.passenger_candidates %}<button class="jh-btn" type="button" data-project-dialog-target="project-passenger-edit-{{ passenger.public_id }}">{{ employer_t.support_project_edit }}</button>{% endif %}
+                    {% if permissions.work %}<form method="post" onsubmit="return confirm('{{ employer_t.support_transport_remove_passenger_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="transport_schedule_passenger_remove"><input type="hidden" name="passenger_assignment_id" value="{{ passenger.public_id }}"><input type="hidden" name="return_project_crew" value="{{ selected_project_crew.key }}"><button class="jh-btn" type="submit">{{ employer_t.support_transport_remove_passenger }}</button></form>{% endif %}
+                  </div>
+                </div>
+                {% if permissions.work and selected_project_crew.passenger_candidates %}<dialog class="projects-modal" id="project-passenger-edit-{{ passenger.public_id }}" aria-labelledby="project-passenger-edit-title-{{ passenger.public_id }}"><div class="projects-modal-card"><div class="projects-modal-head"><h2 id="project-passenger-edit-title-{{ passenger.public_id }}">{{ employer_t.support_transport_replace_passenger }}</h2><button class="jh-btn projects-modal-close" type="button" data-project-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div><form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="transport_schedule_passenger_replace"><input type="hidden" name="passenger_assignment_id" value="{{ passenger.public_id }}"><input type="hidden" name="return_project_crew" value="{{ selected_project_crew.key }}"><label class="jh-field"><span>{{ employer_t.support_workspace_workers }}</span><select class="jh-input" name="replacement_connection_id" required>{% for item in selected_project_crew.passenger_candidates %}<option value="{{ item.public_id }}">{{ item.transport_option_label }}</option>{% endfor %}</select></label><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_replace_passenger }}</button></div></form></div></dialog>{% endif %}
+              {% empty %}<div class="projects-empty">{{ employer_t.support_transport_no_schedule_passengers }}</div>{% endfor %}
+            </div>
             {% if selected_project_crew.free_seats and selected_project_crew.passenger_candidates and permissions.work %}<div class="projects-crew-actions"><button class="jh-btn primary" type="button" data-project-dialog-target="project-passenger-modal">{{ employer_t.support_transport_add_passenger }}</button></div>{% elif not selected_project_crew.free_seats %}<div class="projects-empty">{{ employer_t.support_transport_crew_full }}</div>{% endif %}
           {% endif %}
         {% else %}<div class="projects-empty">{{ employer_t.support_worker_no_driver_routes }}</div>{% endif %}
