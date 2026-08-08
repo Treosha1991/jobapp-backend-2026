@@ -37,6 +37,31 @@
   .projects-template-chip { min-width:190px; padding:9px 11px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.28); }
   .projects-template-chip strong { display:block; font-size:14px; }
   .projects-template-chip span { display:block; margin-top:3px; color:var(--muted); font-size:12px; }
+  .projects-crew-tabs { display:flex; gap:7px; margin:0 0 10px; padding:2px 1px 6px; overflow-x:auto; scrollbar-width:thin; }
+  .projects-crew-tab { flex:0 0 auto; min-width:190px; max-width:280px; padding:9px 11px; border:1px solid var(--line); border-radius:12px; color:var(--text); text-decoration:none; background:rgba(5,22,36,.24); }
+  .projects-crew-tab strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+  .projects-crew-tab span { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
+  .projects-crew-tab.active { border-color:var(--green); background:rgba(24,223,103,.10); box-shadow:inset 0 0 0 1px rgba(24,223,103,.16); }
+  .projects-crew-summary { display:grid; grid-template-columns:1.25fr 1fr auto; gap:8px; align-items:stretch; }
+  .projects-crew-card { min-width:0; padding:10px 11px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.23); }
+  .projects-crew-card small { display:block; margin-bottom:4px; color:var(--muted); font-size:9px; font-weight:900; letter-spacing:.06em; text-transform:uppercase; }
+  .projects-crew-card strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+  .projects-crew-card span { display:block; margin-top:3px; color:var(--muted); font-size:11px; }
+  .projects-crew-chat { display:inline-flex; margin-top:7px; white-space:nowrap; }
+  .projects-passenger-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; }
+  .projects-passenger-head h3 { margin:0; font-size:15px; }
+  .projects-passenger-count { color:var(--muted); font-size:11px; font-weight:800; }
+  .projects-passenger-list { display:grid; gap:6px; margin-top:7px; }
+  .projects-passenger-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.2); }
+  .projects-passenger-row a { color:#dff4ff; font-size:12px; font-weight:800; text-decoration:none; }
+  .projects-passenger-row a:hover { color:var(--green); }
+  .projects-passenger-row span { color:var(--muted); font-size:10px; text-align:right; }
+  .projects-crew-actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .projects-unassigned { margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
+  .projects-unassigned h3 { margin:0 0 7px; font-size:14px; }
+  .projects-unassigned-list { display:flex; gap:6px; flex-wrap:wrap; }
+  .projects-unassigned-list a { padding:6px 9px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:11px; text-decoration:none; }
+  .projects-unassigned-list a:hover { color:var(--green); border-color:var(--green); }
   .projects-calendar-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:14px 0 10px; }
   .projects-calendar { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:7px; }
   .projects-calendar-day { min-height:81px; padding:8px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.25); }
@@ -47,7 +72,7 @@
   .projects-worker-link { color:#dff4ff; text-decoration:none; font-weight:800; }
   .projects-worker-link:hover { color:var(--green); }
   @media (max-width:900px) { .projects-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-  @media (max-width:760px) { .projects-grid, .projects-item-grid { grid-template-columns:1fr; } .projects-wide { grid-column:auto; } .projects-summary { grid-template-columns:1fr; } .projects-calendar { gap:4px; } .projects-calendar-day { min-height:65px; padding:5px; } .projects-calendar-day small { display:none; } }
+  @media (max-width:760px) { .projects-grid, .projects-item-grid, .projects-crew-summary { grid-template-columns:1fr; } .projects-wide { grid-column:auto; } .projects-summary { grid-template-columns:1fr; } .projects-calendar { gap:4px; } .projects-calendar-day { min-height:65px; padding:5px; } .projects-calendar-day small { display:none; } }
 </style>
 {% endblock %}
 
@@ -117,9 +142,25 @@
 
       <section class="projects-section"><h2>{{ employer_t.support_project_contacts }}</h2><div class="projects-item-grid"><article class="projects-item"><h3>{{ selected_project.contact_name|default:"—" }}</h3><p>{{ selected_project.contact_phone|default:"—" }} · {{ selected_project.contact_email|default:"—" }}</p></article><article class="projects-item"><h3>{{ employer_t.support_project_address }}</h3><p>{{ selected_project.worksite.country_code }} · {{ selected_project.worksite.city }}{% if selected_project.worksite.postal_code %} · {{ selected_project.worksite.postal_code }}{% endif %} · {{ selected_project.worksite.street }} {{ selected_project.worksite.building }}</p></article></div></section>
 
-      <section class="projects-section"><h2>{{ employer_t.support_project_workers }}</h2>{% if workers %}<div class="projects-item-grid">{% for item in workers %}<article class="projects-item"><h3><a class="projects-worker-link" href="{% url 'support:worker-card' item.connection.public_id %}?tab=company">{{ item.worker_display_name }}</a></h3><p>{{ item.worker_role|default:"—" }} · {{ item.starts_at|date:"d.m.Y" }}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_project_workers_empty }}</div>{% endif %}</section>
+      <section class="projects-section">
+        <h2>{{ employer_t.support_worker_transport_roles }}</h2>
+        {% if project_crews %}
+          {% if project_crews|length > 1 %}<nav class="projects-crew-tabs" aria-label="{{ employer_t.support_transport_schedule_switcher }}">{% for crew in project_crews %}<a class="projects-crew-tab {% if selected_project_crew.key == crew.key %}active{% endif %}" href="{{ crew.project_url }}"><strong>{{ crew.schedule_template.name }} · {{ crew.schedule_template.starts_at_time|time:'H:i' }}—{{ crew.schedule_template.ends_at_time|time:'H:i' }}</strong><span>{{ crew.driver_assignment.vehicle.registration_identifier }} · {{ crew.driver_connection.candidate.get_full_name|default:crew.driver_connection.candidate.username }}</span></a>{% endfor %}</nav>{% endif %}
+          {% if selected_project_crew %}
+            <div class="projects-crew-summary">
+              <div class="projects-crew-card"><small>{{ employer_t.support_transport_driver_card }}</small><strong><a class="projects-worker-link" href="{% url 'support:worker-card' selected_project_crew.driver_connection.public_id %}?tab=transport">{{ selected_project_crew.driver_connection.candidate.get_full_name|default:selected_project_crew.driver_connection.candidate.username }}</a></strong><span>{{ selected_project_crew.driver_assignment.vehicle.registration_identifier }} · {{ selected_project_crew.driver_assignment.vehicle.internal_name }}</span>{% if selected_project_crew.driver_chat_url %}<a class="jh-btn projects-crew-chat" href="{{ selected_project_crew.driver_chat_url }}">{{ employer_t.support_transport_write_driver }}</a>{% endif %}</div>
+              <div class="projects-crew-card"><small>{{ employer_t.support_transport_selected_schedule }}</small><strong>{{ selected_project_crew.schedule_template.name }}</strong><span>{{ selected_project_crew.schedule_template.starts_at_time|time:'H:i' }}—{{ selected_project_crew.schedule_template.ends_at_time|time:'H:i' }} · {{ employer_t.support_worker_break }}: {{ selected_project_crew.schedule_template.break_minutes }}</span></div>
+              <div class="projects-crew-card"><small>{{ employer_t.support_worker_occupancy }}</small><strong>{{ selected_project_crew.passengers|length|add:'1' }} / {{ selected_project_crew.driver_assignment.vehicle.seat_capacity }}</strong><span>{{ employer_t.support_transport_free_seats }}: {{ selected_project_crew.free_seats }}</span></div>
+            </div>
+            <div class="projects-passenger-head"><h3>{{ employer_t.support_transport_passenger_list }}</h3><span class="projects-passenger-count">{{ selected_project_crew.passengers|length }} / {{ selected_project_crew.driver_assignment.vehicle.seat_capacity|add:'-1' }}</span></div>
+            <div class="projects-passenger-list">{% for passenger in selected_project_crew.passengers %}<div class="projects-passenger-row"><a href="{% url 'support:worker-card' passenger.connection.public_id %}?tab=transport">{{ passenger.connection.candidate.get_full_name|default:passenger.connection.candidate.username }}</a><span>{{ passenger.pickup_stop.label }}</span></div>{% empty %}<div class="projects-empty">{{ employer_t.support_transport_no_schedule_passengers }}</div>{% endfor %}</div>
+            {% if selected_project_crew.free_seats and selected_project_crew.passenger_candidates and permissions.work %}<div class="projects-crew-actions"><button class="jh-btn primary" type="button" data-project-dialog-target="project-passenger-modal">{{ employer_t.support_transport_add_passenger }}</button></div>{% elif not selected_project_crew.free_seats %}<div class="projects-empty">{{ employer_t.support_transport_crew_full }}</div>{% endif %}
+          {% endif %}
+        {% else %}<div class="projects-empty">{{ employer_t.support_worker_no_driver_routes }}</div>{% endif %}
+        {% if unassigned_project_workers %}<div class="projects-unassigned"><h3>{{ employer_t.support_project_workers }}</h3><div class="projects-unassigned-list">{% for item in unassigned_project_workers %}<a href="{% url 'support:worker-card' item.connection.public_id %}?tab=transport">{{ item.worker_display_name }}</a>{% endfor %}</div></div>{% endif %}
+      </section>
 
-      <section class="projects-section"><h2>{{ employer_t.support_project_vehicles }}</h2>{% if routes %}<div class="projects-item-grid">{% for route in routes %}<article class="projects-item"><h3>{{ route.driver_vehicle_assignment.vehicle.internal_name }} · {{ route.driver_vehicle_assignment.vehicle.registration_identifier }}</h3><p>{{ route.driver_display_name }}{% if route.departure_time %} · {{ employer_t.support_transport_departure }} {{ route.departure_time|time:"H:i" }}{% endif %}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_project_vehicles_empty }}</div>{% endif %}</section>
+      {% if selected_project_crew and selected_project_crew.free_seats and selected_project_crew.passenger_candidates %}<dialog class="projects-modal" id="project-passenger-modal" aria-labelledby="project-passenger-title"><div class="projects-modal-card"><div class="projects-modal-head"><h2 id="project-passenger-title">{{ employer_t.support_transport_add_passenger }}</h2><button class="jh-btn projects-modal-close" type="button" data-project-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div><form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="transport_schedule_passenger_add"><input type="hidden" name="driver_connection_id" value="{{ selected_project_crew.driver_connection.public_id }}"><input type="hidden" name="schedule_template_id" value="{{ selected_project_crew.schedule_template.public_id }}"><input type="hidden" name="return_project_crew" value="{{ selected_project_crew.key }}"><label class="jh-field"><span>{{ employer_t.support_workspace_workers }}</span><select class="jh-input" name="passenger_connection_id" required>{% for item in selected_project_crew.passenger_candidates %}<option value="{{ item.public_id }}">{{ item.transport_option_label }}</option>{% endfor %}</select></label><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_add_passenger }}</button></div></form></div></dialog>{% endif %}
 
       <section class="projects-section">
         <h2>{{ employer_t.support_project_schedule }}</h2>

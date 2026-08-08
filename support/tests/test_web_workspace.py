@@ -1603,7 +1603,7 @@ class SupportWorkspaceWebTests(TestCase):
             "The route was published. The driver and passengers will receive a notification.",
         )
 
-    def test_owner_builds_a_route_and_adds_a_passenger_from_driver_card(self):
+    def test_owner_builds_schedule_crew_from_worker_and_project_views(self):
         today = timezone.localdate()
         worksite = Worksite.objects.create(
             organization=self.organization,
@@ -1730,20 +1730,34 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(card, "Morning crew")
         self.assertContains(card, "Ihor Passenger")
         self.assertNotContains(card, "Create route draft")
+        project_url = (
+            f"/employer/support/projects/{project.public_id}/"
+            f"?organization={self.organization.public_id}"
+        )
+        project_page = self.client.get(project_url)
+        self.assertEqual(project_page.status_code, 200)
+        self.assertContains(project_page, 'class="projects-crew-summary"')
+        self.assertContains(project_page, "Morning crew")
+        self.assertContains(project_page, "NL-DR-01")
+        self.assertContains(project_page, "Ihor Passenger")
+        self.assertContains(project_page, 'id="project-passenger-modal"')
+        self.assertNotContains(project_page, "Create route draft")
         passenger_added = self.client.post(
-            card_url,
+            project_url,
             {
                 "action": "transport_schedule_passenger_add",
                 "driver_connection_id": str(self.worker_connection.public_id),
                 "passenger_connection_id": str(passenger_connection.public_id),
                 "schedule_template_id": str(template.public_id),
-                "return_tab": "transport",
-                "return_transport_template": str(template.public_id),
+                "return_project_crew": (
+                    f"{driver_assignment.public_id}.{template.public_id}"
+                ),
             },
             follow=True,
         )
         self.assertEqual(passenger_added.status_code, 200)
         self.assertContains(passenger_added, "Passenger added")
+        self.assertContains(passenger_added, 'class="projects-passenger-row"')
         route = TransportRoute.objects.get(
             organization=self.organization,
             driver_vehicle_assignment=driver_assignment,

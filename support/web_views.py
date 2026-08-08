@@ -1344,10 +1344,18 @@ def registries(request):
     return render(request, "support/registries.html", snapshot)
 
 
-def _projects_redirect(organization, *, project=None, calendar_month=None):
+def _projects_redirect(
+    organization,
+    *,
+    project=None,
+    calendar_month=None,
+    project_crew_key=None,
+):
     query = {"organization": organization.public_id}
     if calendar_month:
         query["month"] = calendar_month
+    if project_crew_key:
+        query["crew"] = project_crew_key
     if project is not None:
         return redirect(
             f"{reverse('support:project-detail', kwargs={'project_public_id': project.public_id})}"
@@ -1367,6 +1375,7 @@ def projects_workspace(request, project_public_id=None):
         organization_public_id=request.GET.get("organization"),
         project_public_id=project_public_id,
         calendar_month=request.GET.get("month"),
+        project_crew_key=request.GET.get("crew"),
     )
     organization = snapshot["organization"]
     selected_project = snapshot["selected_project"]
@@ -1421,13 +1430,63 @@ def projects_workspace(request, project_public_id=None):
                     project=selected_project,
                     calendar_month=request.POST.get("return_month"),
                 )
+            if action == "transport_schedule_passenger_add":
+                driver_connection = get_object_or_404(
+                    worker_connection_queryset_for(
+                        user=request.user,
+                        organization=organization,
+                        queryset=SupportConnection.objects.filter(
+                            organization=organization,
+                            is_archived=False,
+                        ),
+                    ),
+                    public_id=request.POST.get("driver_connection_id"),
+                )
+                passenger_connection = get_object_or_404(
+                    worker_connection_queryset_for(
+                        user=request.user,
+                        organization=organization,
+                        queryset=SupportConnection.objects.filter(
+                            organization=organization,
+                            is_archived=False,
+                        ),
+                    ),
+                    public_id=request.POST.get("passenger_connection_id"),
+                )
+                schedule_template = get_object_or_404(
+                    ProjectScheduleTemplate.objects.select_related("project__worksite"),
+                    project=selected_project,
+                    is_active=True,
+                    public_id=request.POST.get("schedule_template_id"),
+                )
+                add_passenger_to_driver_schedule(
+                    actor=request.user,
+                    driver_connection=driver_connection,
+                    schedule_template=schedule_template,
+                    passenger_connection=passenger_connection,
+                )
+                messages.success(
+                    request,
+                    tr(request, "support_transport_passenger_added_and_scheduled"),
+                )
+                return _projects_redirect(
+                    organization,
+                    project=selected_project,
+                    project_crew_key=request.POST.get("return_project_crew"),
+                )
             raise ValueError("project_operation_unknown")
         except (APIException, ValueError) as error:
-            messages.error(request, tr(request, _project_operation_error_key(error)))
+            error_key = (
+                _transport_operation_error_key(error)
+                if action == "transport_schedule_passenger_add"
+                else _project_operation_error_key(error)
+            )
+            messages.error(request, tr(request, error_key))
             return _projects_redirect(
                 organization,
                 project=selected_project,
                 calendar_month=request.POST.get("return_month"),
+                project_crew_key=request.POST.get("return_project_crew"),
             )
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={organization.public_id}"
@@ -1435,6 +1494,25 @@ def projects_workspace(request, project_public_id=None):
     snapshot["project_list_url"] = (
         f"{reverse('support:projects')}?organization={organization.public_id}"
     )
+    if selected_project is not None:
+        project_base_url = reverse(
+            "support:project-detail",
+            kwargs={"project_public_id": selected_project.public_id},
+        )
+        for crew in snapshot["project_crews"]:
+            crew.project_url = (
+                f"{project_base_url}?{urlencode({'organization': organization.public_id, 'crew': crew.key})}"
+            )
+            crew.driver_chat_url = (
+                reverse(
+                    "support:conversation-detail",
+                    kwargs={
+                        "conversation_public_id": crew.driver_conversation.public_id
+                    },
+                )
+                if crew.driver_conversation is not None
+                else None
+            )
     return render(request, "support/projects_workspace.html", snapshot)
 
 

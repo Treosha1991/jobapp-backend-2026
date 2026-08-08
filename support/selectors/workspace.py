@@ -442,7 +442,14 @@ def conversation_workspace_snapshot(*, user, organization_public_id=None):
     }
 
 
-def projects_snapshot(*, user, organization_public_id=None, project_public_id=None, calendar_month=None):
+def projects_snapshot(
+    *,
+    user,
+    organization_public_id=None,
+    project_public_id=None,
+    calendar_month=None,
+    project_crew_key=None,
+):
     """Return the employer-facing project directory without exposing other firms."""
 
     memberships, membership = _select_membership(
@@ -492,6 +499,9 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
     templates = []
     workers = []
     routes = []
+    project_crews = []
+    selected_project_crew = None
+    unassigned_project_workers = []
     if selected_project is not None:
         templates = list(
             ProjectScheduleTemplate.objects.filter(
@@ -499,15 +509,20 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
                 is_active=True,
             ).order_by("name", "id")
         )
-        allowed_connections = worker_connection_queryset_for(
-            user=user,
-            organization=organization,
-            queryset=SupportConnection.objects.filter(is_archived=False),
+        allowed_connections = list(
+            worker_connection_queryset_for(
+                user=user,
+                organization=organization,
+                queryset=SupportConnection.objects.filter(is_archived=False).select_related(
+                    "candidate"
+                ),
+            )
         )
+        allowed_connection_ids = {item.id for item in allowed_connections}
         workers = list(
             WorkerProjectAssignment.objects.filter(
                 project=selected_project,
-                connection__in=allowed_connections,
+                connection_id__in=allowed_connection_ids,
                 state=WorkerProjectAssignment.STATE_PUBLISHED,
             )
             .filter(Q(ends_at__isnull=True) | Q(ends_at__gt=now))
@@ -520,13 +535,23 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
         routes = list(
             TransportRoute.objects.filter(
                 organization=organization,
-                worksite=selected_project.worksite,
+                schedule_template__project=selected_project,
+                driver_vehicle_assignment__driver_connection_id__in=allowed_connection_ids,
                 state=TransportRoute.STATE_PUBLISHED,
             )
             .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=timezone.localdate()))
             .select_related(
                 "driver_vehicle_assignment__vehicle",
                 "driver_vehicle_assignment__driver_connection__candidate",
+                "schedule_template__project",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "passenger_assignments",
+                    queryset=TransportPassengerAssignment.objects.filter(
+                        connection_id__in=allowed_connection_ids
+                    ).select_related("connection__candidate", "pickup_stop"),
+                ),
             )
             .order_by("starts_on", "departure_time", "id")
         )
@@ -534,6 +559,187 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
             route.driver_display_name = _display_name(
                 route.driver_vehicle_assignment.driver_connection.candidate
             )
+
+        if permissions["transport"]:
+            today = timezone.localdate()
+            active_driver_assignments = list(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    driver_connection_id__in=allowed_connection_ids,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                    starts_on__lte=today,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .select_related("driver_connection__candidate", "vehicle")
+                .order_by("driver_connection_id", "-starts_on", "-id")
+            )
+            assignment_by_driver_id = {}
+            for assignment in active_driver_assignments:
+                assignment_by_driver_id.setdefault(
+                    assignment.driver_connection_id,
+                    assignment,
+                )
+
+            template_by_id = {item.id: item for item in templates}
+            crew_by_key = {}
+
+            def add_project_crew(*, assignment, schedule_template, route=None):
+                key = f"{assignment.public_id}.{schedule_template.public_id}"
+                crew = crew_by_key.get(key)
+                if crew is None:
+                    crew = SimpleNamespace(
+                        key=key,
+                        driver_assignment=assignment,
+                        driver_connection=assignment.driver_connection,
+                        schedule_template=schedule_template,
+                        route=route,
+                    )
+                    crew_by_key[key] = crew
+                elif route is not None:
+                    crew.route = route
+                return crew
+
+            for route in routes:
+                add_project_crew(
+                    assignment=route.driver_vehicle_assignment,
+                    schedule_template=route.schedule_template,
+                    route=route,
+                )
+
+            driver_template_pairs = ScheduledWorkShift.objects.filter(
+                organization=organization,
+                connection_id__in=assignment_by_driver_id,
+                schedule_template__project=selected_project,
+                schedule_template__is_active=True,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+                work_date__gte=today,
+            ).values_list("connection_id", "schedule_template_id").distinct()
+            route_by_pair = {
+                (
+                    route.driver_vehicle_assignment.driver_connection_id,
+                    route.schedule_template_id,
+                ): route
+                for route in routes
+            }
+            for driver_connection_id, schedule_template_id in driver_template_pairs:
+                assignment = assignment_by_driver_id.get(driver_connection_id)
+                schedule_template = template_by_id.get(schedule_template_id)
+                if assignment is None or schedule_template is None:
+                    continue
+                add_project_crew(
+                    assignment=assignment,
+                    schedule_template=schedule_template,
+                    route=route_by_pair.get(
+                        (driver_connection_id, schedule_template_id)
+                    ),
+                )
+
+            active_transport_workers = [
+                item
+                for item in allowed_connections
+                if item.stage
+                in {
+                    SupportConnection.STAGE_COORDINATOR,
+                    SupportConnection.STAGE_ACTIVE_WORKER,
+                }
+            ]
+            now = timezone.now()
+            current_housing_by_connection_id = {}
+            for housing in (
+                HousingAssignment.objects.filter(
+                    organization=organization,
+                    connection_id__in=[item.id for item in active_transport_workers],
+                    state=HousingAssignment.STATE_PUBLISHED,
+                    check_in_at__lte=now,
+                )
+                .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
+                .select_related("place__room__site")
+                .order_by("-check_in_at", "-id")
+            ):
+                current_housing_by_connection_id.setdefault(
+                    housing.connection_id,
+                    housing,
+                )
+
+            driver_ids = set(assignment_by_driver_id)
+            project_crews = sorted(
+                crew_by_key.values(),
+                key=lambda item: (
+                    item.schedule_template.starts_at_time,
+                    item.schedule_template.name.casefold(),
+                    _display_name(item.driver_connection.candidate).casefold(),
+                    item.key,
+                ),
+            )
+            for crew in project_crews:
+                crew.passengers = (
+                    list(crew.route.passenger_assignments.all())
+                    if crew.route is not None
+                    else []
+                )
+                crew.free_seats = max(
+                    0,
+                    crew.driver_assignment.vehicle.seat_capacity
+                    - 1
+                    - len(crew.passengers),
+                )
+                assigned_ids = {item.connection_id for item in crew.passengers}
+                crew.passenger_candidates = []
+                for connection in active_transport_workers:
+                    if (
+                        connection.id == crew.driver_connection.id
+                        or connection.id in assigned_ids
+                        or connection.id in driver_ids
+                    ):
+                        continue
+                    housing = current_housing_by_connection_id.get(connection.id)
+                    if housing is None:
+                        continue
+                    connection.transport_option_label = (
+                        f"{_display_name(connection.candidate)} · "
+                        f"{housing.place.room.site.internal_name} · "
+                        f"{housing.place.room.label} · {housing.place.label}"
+                    )
+                    crew.passenger_candidates.append(connection)
+                crew.driver_conversation = (
+                    SupportConversation.objects.filter(
+                        organization=organization,
+                        connection=crew.driver_connection,
+                        state=SupportConversation.STATE_ACTIVE,
+                        members__user=user,
+                        members__left_at__isnull=True,
+                    )
+                    .distinct()
+                    .order_by("-updated_at", "-id")
+                    .first()
+                )
+
+            if project_crew_key:
+                selected_project_crew = next(
+                    (
+                        item
+                        for item in project_crews
+                        if item.key == project_crew_key
+                    ),
+                    None,
+                )
+                if selected_project_crew is None:
+                    raise Http404("support_project_crew_not_found")
+            elif project_crews:
+                selected_project_crew = project_crews[0]
+
+            crew_worker_ids = {
+                crew.driver_connection.id for crew in project_crews
+            }
+            for crew in project_crews:
+                crew_worker_ids.update(
+                    passenger.connection_id for passenger in crew.passengers
+                )
+            unassigned_project_workers = [
+                item for item in workers if item.connection_id not in crew_worker_ids
+            ]
+        else:
+            unassigned_project_workers = workers
 
     return {
         "organization": organization,
@@ -545,6 +751,9 @@ def projects_snapshot(*, user, organization_public_id=None, project_public_id=No
         "schedule_templates": templates,
         "workers": workers,
         "routes": routes,
+        "project_crews": project_crews,
+        "selected_project_crew": selected_project_crew,
+        "unassigned_project_workers": unassigned_project_workers,
     }
 
 
