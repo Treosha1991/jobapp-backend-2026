@@ -1090,7 +1090,7 @@ class SupportWorkspaceWebTests(TestCase):
         project_starts = timezone.localdate()
         projects_page = self.client.get(projects_url)
         self.assertEqual(projects_page.status_code, 200)
-        self.assertContains(projects_page, "data-project-modal-open")
+        self.assertContains(projects_page, 'data-project-dialog-target="project-add-modal"')
         self.assertContains(projects_page, 'id="project-add-modal"')
         self.assertContains(projects_page, "data-project-modal-close")
         rendered_projects_page = projects_page.content.decode()
@@ -1137,6 +1137,11 @@ class SupportWorkspaceWebTests(TestCase):
         project_page = self.client.get(detail_url)
         self.assertContains(project_page, 'name="name" maxlength="30"')
         self.assertNotContains(project_page, 'name="worker_label"')
+        self.assertContains(project_page, 'data-project-dialog-target="project-schedule-modal"')
+        self.assertContains(project_page, 'data-project-dialog-target="project-edit-modal"')
+        self.assertContains(project_page, 'id="project-schedule-modal"')
+        self.assertContains(project_page, 'id="project-edit-modal"')
+        self.assertContains(project_page, 'class="projects-template-chip"')
         self.client.post(
             detail_url,
             {

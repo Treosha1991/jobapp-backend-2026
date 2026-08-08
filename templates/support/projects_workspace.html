@@ -7,7 +7,7 @@
   .projects-back { margin-bottom:16px; }
   .projects-head { display:flex; align-items:flex-start; justify-content:space-between; gap:15px; flex-wrap:wrap; }
   .projects-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
-  .projects-form, .projects-section { margin-top:21px; padding-top:20px; border-top:1px solid var(--line); }
+  .projects-form, .projects-section { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
   .projects-form { padding:15px; border:1px solid rgba(24,223,103,.28); border-radius:18px; background:linear-gradient(135deg,rgba(24,223,103,.07),rgba(5,22,36,.25)); }
   .projects-modal { width:min(94vw,900px); max-height:90vh; margin:auto; padding:0; overflow:hidden; color:var(--text); border:1px solid rgba(24,223,103,.42); border-radius:20px; background:#103753; box-shadow:0 28px 80px rgba(0,0,0,.55); }
   .projects-modal::backdrop { background:rgba(1,13,25,.72); backdrop-filter:blur(4px); }
@@ -18,20 +18,25 @@
   .projects-modal .projects-form { margin:0; padding:0; border:0; background:none; }
   .projects-modal .projects-form > p { margin-bottom:14px; }
   body:has(.projects-modal[open]) { overflow:hidden; }
-  .projects-form h2, .projects-section h2 { margin:0 0 7px; font-size:21px; }
-  .projects-form > p, .projects-section > p { margin:0 0 14px; color:var(--muted); line-height:1.45; }
+  .projects-form h2, .projects-section h2 { margin:0 0 7px; font-size:18px; }
+  .projects-form > p, .projects-section > p { margin:0 0 10px; color:var(--muted); line-height:1.4; }
   .projects-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
   .projects-wide { grid-column:1/-1; }
   .projects-table a { color:#dff4ff; font-weight:850; text-decoration:none; }
   .projects-table a:hover { color:var(--green); }
-  .projects-empty { padding:24px; text-align:center; border:1px dashed var(--line); border-radius:16px; color:var(--muted); }
-  .projects-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:11px; margin-top:16px; }
-  .projects-summary-item, .projects-item { padding:13px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.28); }
+  .projects-empty { padding:12px; text-align:center; border:1px dashed var(--line); border-radius:13px; color:var(--muted); }
+  .projects-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:12px; }
+  .projects-summary-item, .projects-item { padding:10px; border:1px solid var(--line); border-radius:13px; background:rgba(5,22,36,.28); }
   .projects-summary-item span, .projects-item p { display:block; color:var(--muted); font-size:12px; line-height:1.4; }
-  .projects-summary-item strong { display:block; margin-top:4px; font-size:16px; }
-  .projects-item h3 { margin:0; font-size:16px; }
-  .projects-item p { margin:7px 0 0; }
-  .projects-item-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+  .projects-summary-item strong { display:block; margin-top:3px; font-size:15px; }
+  .projects-item h3 { margin:0; font-size:15px; }
+  .projects-item p { margin:4px 0 0; }
+  .projects-item-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .projects-head-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+  .projects-template-list { display:flex; gap:8px; flex-wrap:wrap; }
+  .projects-template-chip { min-width:190px; padding:9px 11px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.28); }
+  .projects-template-chip strong { display:block; font-size:14px; }
+  .projects-template-chip span { display:block; margin-top:3px; color:var(--muted); font-size:12px; }
   .projects-calendar-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:14px 0 10px; }
   .projects-calendar { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:7px; }
   .projects-calendar-day { min-height:81px; padding:8px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.25); }
@@ -55,8 +60,10 @@
         <h1 class="jh-title">{% if selected_project %}{{ selected_project.worker_visible_name }}{% else %}{{ employer_t.support_projects_title }}{% endif %}</h1>
         <p class="jh-subtitle">{% if selected_project %}{{ employer_t.support_project_detail_subtitle }}{% else %}{{ employer_t.support_projects_subtitle }}{% endif %}</p>
       </div>
-      {% if not selected_project %}<button class="jh-btn primary" type="button" data-project-modal-open>{{ employer_t.support_projects_add }}</button>{% endif %}
-      {% if selected_project %}<a class="jh-btn" href="{{ project_list_url }}">{{ employer_t.support_projects_all }}</a>{% endif %}
+      <div class="projects-head-actions">
+        {% if not selected_project %}<button class="jh-btn primary" type="button" data-project-dialog-target="project-add-modal">{{ employer_t.support_projects_add }}</button>{% endif %}
+        {% if selected_project %}<a class="jh-btn" href="{{ project_list_url }}">{{ employer_t.support_projects_all }}</a><button class="jh-btn primary" type="button" data-project-dialog-target="project-schedule-modal">{{ employer_t.support_project_schedule_add }}</button><button class="jh-btn" type="button" data-project-dialog-target="project-edit-modal">{{ employer_t.support_project_edit }}</button>{% endif %}
+      </div>
     </div>
 
     {% if not selected_project %}
@@ -108,27 +115,43 @@
         <div class="projects-summary-item"><span>{{ employer_t.support_project_ends_on }}</span><strong>{% if selected_project.ends_on %}{{ selected_project.ends_on|date:"d.m.Y" }}{% else %}—{% endif %}</strong></div>
       </div>
 
-      <section class="projects-section"><h2>{{ employer_t.support_project_contacts }}</h2><div class="projects-item-grid"><article class="projects-item"><h3>{{ selected_project.contact_name|default:"—" }}</h3><p>{{ selected_project.contact_phone|default:"—" }}<br>{{ selected_project.contact_email|default:"—" }}</p></article><article class="projects-item"><h3>{{ employer_t.support_project_address }}</h3><p>{{ selected_project.worksite.country_code }} · {{ selected_project.worksite.city }}{% if selected_project.worksite.postal_code %} · {{ selected_project.worksite.postal_code }}{% endif %}<br>{{ selected_project.worksite.street }} {{ selected_project.worksite.building }}</p></article></div></section>
+      <section class="projects-section"><h2>{{ employer_t.support_project_contacts }}</h2><div class="projects-item-grid"><article class="projects-item"><h3>{{ selected_project.contact_name|default:"—" }}</h3><p>{{ selected_project.contact_phone|default:"—" }} · {{ selected_project.contact_email|default:"—" }}</p></article><article class="projects-item"><h3>{{ employer_t.support_project_address }}</h3><p>{{ selected_project.worksite.country_code }} · {{ selected_project.worksite.city }}{% if selected_project.worksite.postal_code %} · {{ selected_project.worksite.postal_code }}{% endif %} · {{ selected_project.worksite.street }} {{ selected_project.worksite.building }}</p></article></div></section>
 
-      <section class="projects-section"><h2>{{ employer_t.support_project_workers }}</h2>{% if workers %}<div class="projects-item-grid">{% for item in workers %}<article class="projects-item"><h3><a class="projects-worker-link" href="{% url 'support:worker-card' item.connection.public_id %}?tab=company">{{ item.worker_display_name }}</a></h3><p>{{ employer_t.support_worker_role }}: {{ item.worker_role|default:"—" }}<br>{{ employer_t.support_worker_starts }}: {{ item.starts_at|date:"d.m.Y H:i" }}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_project_workers_empty }}</div>{% endif %}</section>
+      <section class="projects-section"><h2>{{ employer_t.support_project_workers }}</h2>{% if workers %}<div class="projects-item-grid">{% for item in workers %}<article class="projects-item"><h3><a class="projects-worker-link" href="{% url 'support:worker-card' item.connection.public_id %}?tab=company">{{ item.worker_display_name }}</a></h3><p>{{ item.worker_role|default:"—" }} · {{ item.starts_at|date:"d.m.Y" }}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_project_workers_empty }}</div>{% endif %}</section>
 
-      <section class="projects-section"><h2>{{ employer_t.support_project_vehicles }}</h2>{% if routes %}<div class="projects-item-grid">{% for route in routes %}<article class="projects-item"><h3>{{ route.driver_vehicle_assignment.vehicle.internal_name }} · {{ route.driver_vehicle_assignment.vehicle.registration_identifier }}</h3><p>{{ employer_t.support_worker_driver }}: {{ route.driver_display_name }}{% if route.departure_time %}<br>{{ employer_t.support_transport_departure }}: {{ route.departure_time|time:"H:i" }}{% endif %}<br>{{ employer_t.support_worker_starts }}: {{ route.starts_on|date:"d.m.Y" }}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_project_vehicles_empty }}</div>{% endif %}</section>
+      <section class="projects-section"><h2>{{ employer_t.support_project_vehicles }}</h2>{% if routes %}<div class="projects-item-grid">{% for route in routes %}<article class="projects-item"><h3>{{ route.driver_vehicle_assignment.vehicle.internal_name }} · {{ route.driver_vehicle_assignment.vehicle.registration_identifier }}</h3><p>{{ route.driver_display_name }}{% if route.departure_time %} · {{ employer_t.support_transport_departure }} {{ route.departure_time|time:"H:i" }}{% endif %}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_project_vehicles_empty }}</div>{% endif %}</section>
 
       <section class="projects-section">
-        <h2>{{ employer_t.support_project_schedule }}</h2><p>{{ employer_t.support_project_schedule_text }}</p>
-        {% if schedule_templates %}<div class="projects-item-grid" style="margin-top:14px">{% for template in schedule_templates %}<article class="projects-item"><h3>{{ template.name }}</h3><p>{{ template.starts_at_time|time:"H:i" }} — {{ template.ends_at_time|time:"H:i" }} · {{ employer_t.support_worker_break }}: {{ template.break_minutes }}</p></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_worker_project_templates_empty }}</div>{% endif %}
-        <form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="project_schedule_template_create"><h2>{{ employer_t.support_project_schedule_add }}</h2><div class="projects-grid"><label class="jh-field"><span>{{ employer_t.support_project_schedule_name }}</span><input class="jh-input" name="name" maxlength="30" required></label><label class="jh-field"><span>{{ employer_t.support_worker_shift_time }}</span><input class="jh-input" name="starts_at_time" type="time" value="06:00" required></label><label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_at_time" type="time" value="14:45" required></label><label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" name="break_minutes" type="number" min="0" max="720" value="0" required></label></div><p style="margin:14px 0 8px;color:var(--muted)">{{ employer_t.support_project_schedule_pick_dates }}</p><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_project_schedule_add }}</button></div></form>
+        <h2>{{ employer_t.support_project_schedule }}</h2>
+        {% if schedule_templates %}<div class="projects-template-list">{% for template in schedule_templates %}<article class="projects-template-chip"><strong>{{ template.name }}</strong><span>{{ template.starts_at_time|time:"H:i" }}—{{ template.ends_at_time|time:"H:i" }} · {{ employer_t.support_worker_break }} {{ template.break_minutes }}</span></article>{% endfor %}</div>{% else %}<div class="projects-empty">{{ employer_t.support_worker_project_templates_empty }}</div>{% endif %}
       </section>
 
-      <section class="projects-section"><h2>{{ employer_t.support_project_edit }}</h2><form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="project_update"><div class="projects-grid"><label class="jh-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" value="{{ selected_project.worker_visible_name }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="1" max="5000" value="{{ selected_project.worker_capacity }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="{{ selected_project.worksite.country_code }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" value="{{ selected_project.worksite.city }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20" value="{{ selected_project.worksite.postal_code }}"></label><label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" value="{{ selected_project.worksite.street }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" value="{{ selected_project.worksite.building }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" value="{{ selected_project.starts_on|date:'Y-m-d' }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date" value="{{ selected_project.ends_on|date:'Y-m-d' }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160" value="{{ selected_project.contact_name }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48" value="{{ selected_project.contact_phone }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email" value="{{ selected_project.contact_email }}"></label><label class="jh-field projects-wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000">{{ selected_project.instructions }}</textarea></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_project_save }}</button></div></form></section>
+      <dialog class="projects-modal" id="project-schedule-modal" aria-labelledby="project-schedule-title">
+        <div class="projects-modal-card">
+          <div class="projects-modal-head"><h2 id="project-schedule-title">{{ employer_t.support_project_schedule_add }}</h2><button class="jh-btn projects-modal-close" type="button" data-project-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div>
+          <form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="project_schedule_template_create"><div class="projects-grid"><label class="jh-field"><span>{{ employer_t.support_project_schedule_name }}</span><input class="jh-input" name="name" maxlength="30" required></label><label class="jh-field"><span>{{ employer_t.support_worker_shift_time }}</span><input class="jh-input" name="starts_at_time" type="time" value="06:00" required></label><label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" name="ends_at_time" type="time" value="14:45" required></label><label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" name="break_minutes" type="number" min="0" max="720" value="0" required></label></div><p>{{ employer_t.support_project_schedule_pick_dates }}</p><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_project_schedule_add }}</button></div></form>
+        </div>
+      </dialog>
+
+      <dialog class="projects-modal" id="project-edit-modal" aria-labelledby="project-edit-title">
+        <div class="projects-modal-card">
+          <div class="projects-modal-head"><h2 id="project-edit-title">{{ employer_t.support_project_edit }}</h2><button class="jh-btn projects-modal-close" type="button" data-project-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div>
+          <form class="projects-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="project_update"><div class="projects-grid"><label class="jh-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" value="{{ selected_project.worker_visible_name }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="1" max="5000" value="{{ selected_project.worker_capacity }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="{{ selected_project.worksite.country_code }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" value="{{ selected_project.worksite.city }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20" value="{{ selected_project.worksite.postal_code }}"></label><label class="jh-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" value="{{ selected_project.worksite.street }}" required></label><label class="jh-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" value="{{ selected_project.worksite.building }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" value="{{ selected_project.starts_on|date:'Y-m-d' }}" required></label><label class="jh-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date" value="{{ selected_project.ends_on|date:'Y-m-d' }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160" value="{{ selected_project.contact_name }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48" value="{{ selected_project.contact_phone }}"></label><label class="jh-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email" value="{{ selected_project.contact_email }}"></label><label class="jh-field projects-wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000">{{ selected_project.instructions }}</textarea></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_project_save }}</button></div></form>
+        </div>
+      </dialog>
     {% endif %}
   </section>
   <script>
     document.addEventListener('DOMContentLoaded', function () {
-      const modal = document.getElementById('project-add-modal');
-      document.querySelector('[data-project-modal-open]')?.addEventListener('click', function () { modal?.showModal(); });
-      modal?.querySelector('[data-project-modal-close]')?.addEventListener('click', function () { modal.close(); });
-      modal?.addEventListener('click', function (event) { if (event.target === modal) modal.close(); });
+      document.querySelectorAll('[data-project-dialog-target]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          document.getElementById(button.dataset.projectDialogTarget)?.showModal();
+        });
+      });
+      document.querySelectorAll('.projects-modal').forEach(function (modal) {
+        modal.querySelector('[data-project-modal-close]')?.addEventListener('click', function () { modal.close(); });
+        modal.addEventListener('click', function (event) { if (event.target === modal) modal.close(); });
+      });
     });
   </script>
 {% endblock %}
