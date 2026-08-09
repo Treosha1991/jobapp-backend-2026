@@ -2764,6 +2764,8 @@ TRANSLATIONS["uk"].update({
 # language in the employer web cabinet.
 TRANSLATIONS["ru"].update({
     "support_worker_company": "Фирма",
+    "support_worker_work_transport": "Работа и транспорт",
+    "support_worker_other_crews": "Другие экипажи этого графика",
     "support_worker_company_text": "Фирма, должность и график выбранного работника.",
     "support_worker_current_company": "Текущее назначение",
     "support_worker_schedule_calendar": "График смен",
@@ -2838,6 +2840,8 @@ TRANSLATIONS["ru"].update({
 })
 TRANSLATIONS["en"].update({
     "support_worker_company": "Company",
+    "support_worker_work_transport": "Work and transport",
+    "support_worker_other_crews": "Other crews on this schedule",
     "support_worker_company_text": "The selected worker's company, position and schedule.",
     "support_worker_current_company": "Current assignment",
     "support_worker_schedule_calendar": "Shift schedule",
@@ -2912,6 +2916,8 @@ TRANSLATIONS["en"].update({
 })
 TRANSLATIONS["pl"].update({
     "support_worker_company": "Firma",
+    "support_worker_work_transport": "Praca i transport",
+    "support_worker_other_crews": "Inne załogi w tym grafiku",
     "support_worker_company_text": "Firma, stanowisko i grafik wybranego pracownika.",
     "support_worker_current_company": "Aktualny przydział",
     "support_worker_schedule_calendar": "Grafik zmian",
@@ -2986,6 +2992,8 @@ TRANSLATIONS["pl"].update({
 })
 TRANSLATIONS["uk"].update({
     "support_worker_company": "Компанія",
+    "support_worker_work_transport": "Робота і транспорт",
+    "support_worker_other_crews": "Інші екіпажі цього графіка",
     "support_worker_company_text": "Компанія, посада та графік вибраного працівника.",
     "support_worker_current_company": "Поточне призначення",
     "support_worker_schedule_calendar": "Графік змін",

@@ -310,16 +310,18 @@ def _worker_card_redirect(
 ):
     """Return to the same focused worker tab after a safe POST operation."""
 
+    if tab in {"company", "transport", "work_transport"}:
+        tab = "work_transport"
     query = {}
-    if tab in {"company", "transport", "housing"}:
+    if tab in {"work_transport", "housing"}:
         query["tab"] = tab
     if month:
         query["month"] = month
     if site:
         query["site"] = site
-    if tab == "transport" and transport_template:
+    if tab == "work_transport" and transport_template:
         query["transport_template"] = transport_template
-    if tab == "transport" and transport_crew:
+    if tab == "work_transport" and transport_crew:
         query["transport_crew"] = transport_crew
     base_url = reverse(
         "support:worker-card",
@@ -1236,16 +1238,20 @@ def worker_card(request, connection_public_id):
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
-    requested_tab = (request.GET.get("tab") or "company").strip()
+    requested_tab = (request.GET.get("tab") or "work_transport").strip()
+    if requested_tab in {"company", "transport"}:
+        requested_tab = "work_transport"
     visible_tabs = {
-        "company": snapshot["permissions"]["work"],
-        "transport": snapshot["permissions"]["transport"],
+        "work_transport": (
+            snapshot["permissions"]["work"]
+            or snapshot["permissions"]["transport"]
+        ),
         "housing": snapshot["permissions"]["housing"],
     }
     if not visible_tabs.get(requested_tab):
         requested_tab = next(
             (key for key, allowed in visible_tabs.items() if allowed),
-            "company",
+            "work_transport",
         )
     worker_base_url = reverse(
         "support:worker-card",
@@ -1256,8 +1262,11 @@ def worker_card(request, connection_public_id):
         {
             "active_tab": requested_tab,
             "worker_base_url": worker_base_url,
-            "company_url": f"{worker_base_url}?tab=company",
-            "transport_tab_url": f"{worker_base_url}?tab=transport",
+            "work_transport_url": f"{worker_base_url}?tab=work_transport",
+            # Compatibility aliases keep old templates, bookmarks and POST
+            # return targets working while the visible UI uses one tab.
+            "company_url": f"{worker_base_url}?tab=work_transport",
+            "transport_tab_url": f"{worker_base_url}?tab=work_transport",
             "housing_tab_url": f"{worker_base_url}?tab=housing",
             "calendar_month": (
                 selected_calendar_date.strftime("%Y-%m")
@@ -1265,19 +1274,19 @@ def worker_card(request, connection_public_id):
                 else ""
             ),
             "calendar_previous_url": (
-                f"{worker_base_url}?tab=company&month="
+                f"{worker_base_url}?tab=work_transport&month="
                 f"{snapshot['calendar_previous_month'].strftime('%Y-%m')}"
                 if snapshot["calendar_previous_month"]
                 else None
             ),
             "calendar_next_url": (
-                f"{worker_base_url}?tab=company&month="
+                f"{worker_base_url}?tab=work_transport&month="
                 f"{snapshot['calendar_next_month'].strftime('%Y-%m')}"
                 if snapshot["calendar_next_month"]
                 else None
             ),
             "calendar_today_url": (
-                f"{worker_base_url}?tab=company&month="
+                f"{worker_base_url}?tab=work_transport&month="
                 f"{timezone.localdate().strftime('%Y-%m')}"
             ),
             "calendar_weekday_labels": [
@@ -1288,7 +1297,13 @@ def worker_card(request, connection_public_id):
     )
     for crew in snapshot["transport_crews"]:
         crew.transport_url = (
-            f"{worker_base_url}?tab=transport&transport_crew={crew.key}"
+            f"{worker_base_url}?tab=work_transport&month={snapshot['calendar_month']}"
+            f"&transport_crew={crew.key}"
+        )
+    for crew in snapshot["related_transport_crews"]:
+        crew.transport_url = (
+            f"{worker_base_url}?tab=work_transport&month={snapshot['calendar_month']}"
+            f"&transport_crew={crew.key}"
         )
     for passenger in snapshot["transport_passengers"]:
         passenger.chat_url = (

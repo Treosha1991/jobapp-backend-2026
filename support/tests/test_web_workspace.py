@@ -1970,6 +1970,7 @@ class SupportWorkspaceWebTests(TestCase):
 
         passenger = connection_for("multi-crew-worker", "Multi", "Crew Worker")
         second_driver = connection_for("second-crew-driver", "Second", "Driver")
+        third_driver = connection_for("third-crew-driver", "Third", "Driver")
 
         def crew_for(*, suffix, driver, project_name, start_time, end_time):
             worksite = Worksite.objects.create(
@@ -2063,13 +2064,78 @@ class SupportWorkspaceWebTests(TestCase):
             start_time="15:00",
             end_time="23:00",
         )
+
+        # A second crew can use the same template without containing the
+        # selected worker. It must remain visible as compact context.
+        third_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Crew vehicle C",
+            registration_identifier="CREW-C",
+            seat_capacity=9,
+            created_by=self.owner,
+        )
+        third_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=third_driver,
+            vehicle=third_vehicle,
+            starts_on=today,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Crew route C",
+            worksite=first_template.project.worksite,
+            schedule_template=first_template,
+            driver_vehicle_assignment=third_assignment,
+            starts_on=today,
+            ends_on=today + timedelta(days=14),
+            state=TransportRoute.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        for work_date, schedule_template in (
+            (date(2026, 8, 10), first_template),
+            (date(2026, 8, 11), second_template),
+        ):
+            starts_at = timezone.make_aware(
+                datetime.combine(work_date, schedule_template.starts_at_time)
+            )
+            ends_at = timezone.make_aware(
+                datetime.combine(work_date, schedule_template.ends_at_time)
+            )
+            ScheduledWorkShift.objects.create(
+                organization=self.organization,
+                connection=passenger,
+                schedule_template=schedule_template,
+                work_date=work_date,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                break_minutes=schedule_template.break_minutes,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+                created_by=self.owner,
+                published_by=self.owner,
+                published_at=timezone.now(),
+            )
         self.client.force_login(self.owner)
-        base_url = f"/employer/support/workers/{passenger.public_id}/?tab=transport"
+        base_url = (
+            f"/employer/support/workers/{passenger.public_id}/"
+            "?tab=transport&month=2026-08"
+        )
 
         page = self.client.get(base_url)
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "Alpha project")
         self.assertContains(page, "Beta project")
+        self.assertContains(page, "Work and transport")
+        self.assertContains(page, "Other crews on this schedule")
+        self.assertContains(page, "Third Driver")
+        self.assertContains(page, "CREW-C")
+        self.assertContains(page, "is-selected-template")
+        self.assertContains(page, "has-other-template")
         first_key = f"{first_assignment.public_id}.{first_template.public_id}"
         second_key = f"{second_assignment.public_id}.{second_template.public_id}"
         self.assertContains(page, f"transport_crew={first_key}")

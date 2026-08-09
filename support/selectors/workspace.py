@@ -993,7 +993,11 @@ def worker_card_snapshot(
                     ScheduledWorkShift.STATE_PUBLISHED,
                 ),
                 work_date__range=(month_start, month_end),
-            ).select_related("work_assignment__project").order_by("work_date", "starts_at", "id")
+            ).select_related(
+                "work_assignment__project",
+                "schedule_template__project",
+                "crew",
+            ).order_by("work_date", "starts_at", "id")
         )
         for shift in scheduled_shifts:
             shift.is_preview = False
@@ -1080,6 +1084,7 @@ def worker_card_snapshot(
     transport_free_seats = 0
     transport_driver_shifts = []
     transport_driver_conversation = None
+    related_transport_crews = []
     if permissions["transport"]:
         driver_assignments = list(
             DriverVehicleAssignment.objects.filter(
@@ -1522,6 +1527,121 @@ def worker_card_snapshot(
                 connection=transport_driver_connection,
             )
 
+            # Show every crew that uses the selected schedule template.  The
+            # worker's own crew stays expanded in the card; the remaining
+            # crews are compact operational context and do not grant access to
+            # workers outside the manager's existing scope.
+            related_routes = list(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    schedule_template=selected_transport_template,
+                    state__in=(
+                        TransportRoute.STATE_DRAFT,
+                        TransportRoute.STATE_PUBLISHED,
+                    ),
+                    driver_vehicle_assignment__driver_connection_id__in=(
+                        transport_worker_ids
+                    ),
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .select_related(
+                    "driver_vehicle_assignment__driver_connection__candidate",
+                    "driver_vehicle_assignment__vehicle",
+                    "schedule_template__project",
+                )
+                .prefetch_related("passenger_assignments")
+                .order_by(
+                    "driver_vehicle_assignment__driver_connection__candidate__first_name",
+                    "driver_vehicle_assignment__driver_connection__candidate__last_name",
+                    "id",
+                )
+            )
+            selected_crew_key = selected_transport_crew.key
+            related_keys = set()
+            for route in related_routes:
+                assignment = route.driver_vehicle_assignment
+                crew_key = (
+                    f"{assignment.public_id}."
+                    f"{selected_transport_template.public_id}"
+                )
+                passenger_count = route.passenger_assignments.count()
+                related_transport_crews.append(
+                    SimpleNamespace(
+                        key=crew_key,
+                        route=route,
+                        driver_assignment=assignment,
+                        driver_connection=assignment.driver_connection,
+                        schedule_template=selected_transport_template,
+                        passenger_count=passenger_count,
+                        occupied_seat_count=min(
+                            assignment.vehicle.seat_capacity,
+                            passenger_count + 1,
+                        ),
+                        free_seat_count=max(
+                            0,
+                            assignment.vehicle.seat_capacity - passenger_count - 1,
+                        ),
+                        is_primary=crew_key == selected_crew_key,
+                    )
+                )
+                related_keys.add(crew_key)
+
+            # A driver can have a selected template before its route is
+            # created. Keep that primary crew visible instead of making the
+            # unified page look empty.
+            if selected_crew_key not in related_keys:
+                related_transport_crews.insert(
+                    0,
+                    SimpleNamespace(
+                        key=selected_crew_key,
+                        route=selected_transport_route,
+                        driver_assignment=transport_driver_assignment,
+                        driver_connection=transport_driver_connection,
+                        schedule_template=selected_transport_template,
+                        passenger_count=len(transport_passengers),
+                        occupied_seat_count=min(
+                            transport_driver_assignment.vehicle.seat_capacity,
+                            len(transport_passengers) + 1,
+                        ),
+                        free_seat_count=transport_free_seats,
+                        is_primary=True,
+                    ),
+                )
+
+    # The calendar deliberately keeps all shifts visible.  The selected crew
+    # template is emphasized, while other templates remain muted context.
+    selected_template_id = (
+        selected_transport_template.id
+        if selected_transport_template is not None
+        else None
+    )
+    for day in calendar_days:
+        if day is None:
+            continue
+        selected_template_shifts = [
+            shift
+            for shift in day["shifts"]
+            if selected_template_id is not None
+            and shift.schedule_template_id == selected_template_id
+        ]
+        other_template_shifts = [
+            shift
+            for shift in day["shifts"]
+            if selected_template_id is not None
+            and shift.schedule_template_id != selected_template_id
+        ]
+        day["is_selected_template"] = bool(selected_template_shifts)
+        day["has_other_template"] = bool(other_template_shifts)
+        if selected_template_shifts:
+            day["display_shift"] = max(
+                selected_template_shifts,
+                key=lambda item: (
+                    item.state == ScheduledWorkShift.STATE_PUBLISHED,
+                    item.created_at,
+                    item.id,
+                ),
+            )
+
     document_packages = []
     if permissions["document_request"]:
         document_packages = list(
@@ -1571,6 +1691,7 @@ def worker_card_snapshot(
         "transport_free_seats": transport_free_seats,
         "transport_driver_shifts": transport_driver_shifts,
         "transport_driver_conversation": transport_driver_conversation,
+        "related_transport_crews": related_transport_crews,
         "document_packages": document_packages,
     }
 

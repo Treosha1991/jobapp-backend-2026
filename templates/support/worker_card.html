@@ -52,6 +52,8 @@
   .worker-calendar-day.has-published { border-color:rgba(24,223,103,.75); background:rgba(24,223,103,.08); }
   .worker-calendar-day.has-draft { border-color:rgba(255,176,71,.85); background:rgba(255,176,71,.08); }
   .worker-calendar-day.has-conflict { border-color:rgba(255,107,107,.95); background:rgba(255,107,107,.10); }
+  .worker-calendar-day.has-other-template:not(.is-selected-template) { opacity:.48; filter:saturate(.55); }
+  .worker-calendar-day.is-selected-template { border-color:#62f59b; background:rgba(24,223,103,.17); box-shadow:inset 0 0 0 2px rgba(24,223,103,.72),0 0 18px rgba(24,223,103,.12); }
   .worker-calendar-day.is-selected { border-color:#6ec7ff; background:rgba(110,199,255,.17); box-shadow:inset 0 0 0 2px rgba(110,199,255,.95); transform:translateY(-1px); }
   .worker-calendar-conflict-mark { display:inline-grid; width:15px; height:15px; place-items:center; border-radius:999px; background:#ff6b6b; color:#fff; font-size:10px; line-height:1; }
   .worker-calendar-time { color:#d7fce3; font-size:10px; font-weight:800; line-height:1.2; white-space:nowrap; }
@@ -123,6 +125,20 @@
   .worker-compact-action > summary { width:max-content; list-style:none; cursor:pointer; }
   .worker-compact-action > summary::-webkit-details-marker { display:none; }
   .worker-compact-action .worker-form { margin-top:8px; padding:11px; }
+  .worker-work-transport-grid { display:grid; grid-template-columns:minmax(340px,.9fr) minmax(520px,1.35fr); gap:16px; align-items:start; margin-top:18px; }
+  .worker-work-transport-grid > .worker-section { min-width:0; margin-top:0; padding:14px; border:1px solid var(--line); border-radius:18px; background:rgba(5,22,36,.18); }
+  .worker-work-transport-grid > .worker-company-panel { order:2; }
+  .worker-work-transport-grid > .worker-transport-dashboard { order:1; }
+  .worker-work-transport-grid .worker-crew-summary { grid-template-columns:1fr; }
+  .worker-work-transport-grid .worker-passenger-row { grid-template-columns:1fr; }
+  .worker-work-transport-grid .worker-passenger-address { text-align:left; }
+  .worker-work-transport-grid .worker-passenger-actions { justify-content:flex-start; }
+  .worker-related-crews { margin-top:12px; border:1px solid var(--line); border-radius:13px; background:rgba(5,22,36,.18); }
+  .worker-related-crews > summary { padding:10px 12px; cursor:pointer; color:#ccecff; font-size:12px; font-weight:900; }
+  .worker-related-crews-list { display:grid; gap:7px; padding:0 10px 10px; }
+  .worker-related-crew { padding:9px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.22); }
+  .worker-related-crew strong { display:block; font-size:12px; }
+  .worker-related-crew span { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
   .worker-housing-map { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:14px; }
   .worker-room { padding:13px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.2); }
   .worker-room h3 { margin:0 0 10px; }
@@ -140,6 +156,7 @@
   .worker-checkout .jh-input { min-height:34px; font-size:12px; }
   .worker-checkout .jh-btn { justify-self:start; padding:7px 10px; font-size:12px; }
   .worker-form small { display:block; margin-top:7px; color:var(--muted); line-height:1.35; }
+  @media (max-width:1120px) { .worker-work-transport-grid { grid-template-columns:1fr; } }
   @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:46px; } .worker-calendar-day-content { padding:5px; } .worker-calendar-time { font-size:9px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } }
 </style>
 <script>
@@ -312,15 +329,14 @@
     </div>
 
     <nav class="worker-tabs" aria-label="{{ candidate_name }}">
-      {% if permissions.work %}<a class="jh-btn {% if active_tab == 'company' %}primary{% endif %}" href="{{ company_url }}">{{ employer_t.support_worker_company }}</a>{% endif %}
-      {% if permissions.transport %}<a class="jh-btn {% if active_tab == 'transport' %}primary{% endif %}" href="{{ transport_tab_url }}">{{ employer_t.support_worker_transport }}</a>{% endif %}
+      {% if permissions.work or permissions.transport %}<a class="jh-btn {% if active_tab == 'work_transport' %}primary{% endif %}" href="{{ work_transport_url }}">{{ employer_t.support_worker_work_transport }}</a>{% endif %}
       {% if permissions.housing %}<a class="jh-btn {% if active_tab == 'housing' %}primary{% endif %}" href="{{ housing_tab_url }}">{{ employer_t.support_worker_housing }}</a>{% endif %}
       {% if permissions.transport %}<form class="worker-license-toggle" method="post">{% csrf_token %}<input type="hidden" name="action" value="driving_license_set"><input type="hidden" name="return_tab" value="{{ active_tab }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="return_site" value="{% if selected_housing_site %}{{ selected_housing_site.public_id }}{% endif %}"><label><input type="checkbox" name="has_driving_license" value="1"{% if connection.has_driving_license %} checked{% endif %} onchange="this.form.submit()"> {{ employer_t.support_worker_driving_license }}</label></form>{% endif %}
     </nav>
 
     {% if not can_operate %}<div class="worker-warning">{{ employer_t.support_worker_not_ready }}</div>{% endif %}
 
-    {% if permissions.document_request and active_tab != 'transport' %}
+    {% if permissions.document_request %}
       <details class="worker-documents">
         <summary>{{ employer_t.support_documents_title }}</summary>
         <div class="worker-documents-content">
@@ -342,8 +358,10 @@
       </details>
     {% endif %}
 
-    {% if active_tab == 'company' and permissions.work %}
-      <section class="worker-section" data-worker-calendar-section>
+    {% if active_tab == 'work_transport' %}
+    <div class="worker-work-transport-grid">
+    {% if permissions.work %}
+      <section class="worker-section worker-company-panel" data-worker-calendar-section>
         <h2>{{ employer_t.support_worker_schedule_calendar }}</h2>
         <p>{{ employer_t.support_worker_schedule_hint }}</p>
         {% if can_operate %}
@@ -364,7 +382,7 @@
             <div class="worker-calendar">
               {% for day in calendar_days %}
                 {% if day %}
-                  {% if can_operate %}<label data-calendar-day class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}"><span class="worker-calendar-day-content">{% endif %}
+                  {% if can_operate %}<label data-calendar-day class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
                     <span class="worker-calendar-number">{{ day.date|date:"j" }}{% if day.has_conflict %}<span class="worker-calendar-conflict-mark">!</span>{% endif %}</span>
                     {% if day.display_shift %}<span class="worker-calendar-time{% if day.display_shift.state == 'draft' %} is-preview{% endif %}">{{ day.display_shift.starts_at|time:"H:i" }}–{{ day.display_shift.ends_at|time:"H:i" }}</span>{% endif %}
                   </span>{% if can_operate %}</label>{% else %}</div>{% endif %}
@@ -415,7 +433,7 @@
       </section>
     {% endif %}
 
-    {% if active_tab == 'transport' and permissions.transport %}
+    {% if permissions.transport %}
       <section class="worker-section worker-transport-dashboard">
         <h2>{{ employer_t.support_worker_transport_roles }}</h2>
         {% if transport_crews %}
@@ -474,9 +492,25 @@
               </form></details>
             {% elif not transport_free_seats %}<div class="worker-warning">{{ employer_t.support_transport_crew_full }}</div>
             {% endif %}
+
+            {% if related_transport_crews|length > 1 %}
+              <details class="worker-related-crews">
+                <summary>{{ employer_t.support_worker_other_crews }} · {{ related_transport_crews|length|add:'-1' }}</summary>
+                <div class="worker-related-crews-list">
+                  {% for crew in related_transport_crews %}{% if not crew.is_primary %}
+                    <article class="worker-related-crew">
+                      <strong>{{ crew.driver_connection.candidate.get_full_name|default:crew.driver_connection.candidate.username }} · {{ crew.driver_assignment.vehicle.registration_identifier }}</strong>
+                      <span>{{ crew.driver_assignment.vehicle.internal_name }} · {{ employer_t.support_worker_occupancy }}: {{ crew.occupied_seat_count }}/{{ crew.driver_assignment.vehicle.seat_capacity }} · {{ employer_t.support_transport_free_seats }}: {{ crew.free_seat_count }}</span>
+                    </article>
+                  {% endif %}{% endfor %}
+                </div>
+              </details>
+            {% endif %}
           {% endif %}
         {% else %}<div class="worker-empty">{{ employer_t.support_worker_no_driver_routes }}</div>{% endif %}
       </section>
+    {% endif %}
+    </div>
     {% endif %}
 
     {% if False %}
