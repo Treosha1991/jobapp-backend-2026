@@ -1003,6 +1003,37 @@ TRANSLATIONS["uk"].update({
     "phone_verify_send_failed": "Не вдалося надіслати код. Перевірте номер або спробуйте пізніше.",
 })
 
+# Empty crews can be created before passengers are assigned. Keep the action
+# translated in every employer language to avoid the historical "???" issue.
+TRANSLATIONS["ru"].update({
+    "support_transport_add_crew": "Добавить экипаж",
+    "support_transport_add_crew_text": "Выберите водителя с опубликованным автомобилем и графиком этого шаблона. Экипаж создаётся сразу; пассажиров можно добавить позже.",
+    "support_transport_crew_created": "Новый экипаж создан. Водитель может ехать один; пассажиров можно добавить позже.",
+    "support_transport_crew_already_exists": "Для этого водителя, автомобиля и шаблона экипаж уже существует.",
+    "support_transport_crew_add_no_license": "Нельзя создать экипаж: у работника не подтверждено водительское удостоверение.",
+})
+TRANSLATIONS["en"].update({
+    "support_transport_add_crew": "Add crew",
+    "support_transport_add_crew_text": "Choose a driver with a published vehicle and this template schedule. The crew is created immediately; passengers can be added later.",
+    "support_transport_crew_created": "The new crew was created. The driver may travel alone; passengers can be added later.",
+    "support_transport_crew_already_exists": "A crew already exists for this driver, vehicle and schedule template.",
+    "support_transport_crew_add_no_license": "The crew cannot be created: the worker's driving licence is not confirmed.",
+})
+TRANSLATIONS["pl"].update({
+    "support_transport_add_crew": "Dodaj załogę",
+    "support_transport_add_crew_text": "Wybierz kierowcę z opublikowanym pojazdem i grafikiem tego szablonu. Załoga powstanie od razu; pasażerów można dodać później.",
+    "support_transport_crew_created": "Nowa załoga została utworzona. Kierowca może jechać sam; pasażerów można dodać później.",
+    "support_transport_crew_already_exists": "Dla tego kierowcy, pojazdu i szablonu grafiku istnieje już załoga.",
+    "support_transport_crew_add_no_license": "Nie można utworzyć załogi: prawo jazdy pracownika nie zostało potwierdzone.",
+})
+TRANSLATIONS["uk"].update({
+    "support_transport_add_crew": "Додати екіпаж",
+    "support_transport_add_crew_text": "Виберіть водія з опублікованим автомобілем і графіком цього шаблону. Екіпаж створюється одразу; пасажирів можна додати пізніше.",
+    "support_transport_crew_created": "Новий екіпаж створено. Водій може їхати сам; пасажирів можна додати пізніше.",
+    "support_transport_crew_already_exists": "Для цього водія, автомобіля та шаблону графіка екіпаж уже існує.",
+    "support_transport_crew_add_no_license": "Не можна створити екіпаж: водійське посвідчення працівника не підтверджено.",
+})
+
 # Crew-level schedule corrections. Keep these labels together in every
 # language so no newly added employer text can fall back to "???".
 TRANSLATIONS["ru"].update({

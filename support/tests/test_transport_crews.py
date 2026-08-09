@@ -1,4 +1,4 @@
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 from importlib import import_module
 
 from django.apps import apps
@@ -6,6 +6,7 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
 from support.models import (
     DriverVehicleAssignment,
@@ -28,6 +29,7 @@ from support.models import (
 )
 from support.services.operations import (
     apply_transport_crew_schedule_override,
+    create_transport_crew_for_schedule,
     resolve_transport_crew_schedule_conflict,
 )
 from support.services.organizations import activate_organization, create_organization
@@ -177,6 +179,66 @@ class StableTransportCrewModelTests(TestCase):
             first.vehicle_assignments.get().vehicle_id,
             second.vehicle_assignments.get().vehicle_id,
         )
+
+    def test_empty_crew_can_be_created_and_published_for_driver_schedule(self):
+        self.driver.has_driving_license = True
+        self.driver.save(update_fields=["has_driving_license", "updated_at"])
+        assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.driver,
+            vehicle=self.vehicle,
+            starts_on=date.today(),
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            published_by=self.owner,
+            published_at=timezone.now(),
+            created_by=self.owner,
+        )
+        work_date = date.today() + timedelta(days=1)
+        starts_at = timezone.make_aware(
+            datetime.combine(work_date, self.template.starts_at_time)
+        )
+        ends_at = timezone.make_aware(
+            datetime.combine(work_date, self.template.ends_at_time)
+        )
+        ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=self.driver,
+            schedule_template=self.template,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=self.template.break_minutes,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            published_by=self.owner,
+            published_at=timezone.now(),
+            created_by=self.owner,
+        )
+
+        route = create_transport_crew_for_schedule(
+            actor=self.owner,
+            organization=self.organization,
+            driver_vehicle_assignment=assignment,
+            schedule_template=self.template,
+        )
+
+        self.assertEqual(route.state, TransportRoute.STATE_PUBLISHED)
+        self.assertEqual(route.passenger_assignments.count(), 0)
+        self.assertIsNotNone(route.crew_id)
+        self.assertEqual(
+            route.crew.driver_assignments.get().driver_connection,
+            self.driver,
+        )
+        self.assertEqual(
+            route.crew.vehicle_assignments.get().vehicle,
+            self.vehicle,
+        )
+        with self.assertRaises(ValidationError):
+            create_transport_crew_for_schedule(
+                actor=self.owner,
+                organization=self.organization,
+                driver_vehicle_assignment=assignment,
+                schedule_template=self.template,
+            )
 
     def test_replacing_driver_keeps_crew_and_passengers(self):
         crew = self._crew()

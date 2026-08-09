@@ -75,6 +75,7 @@ from .serializers import (
 from .services.operations import (
     add_passenger_to_driver_schedule,
     apply_transport_crew_schedule_override,
+    create_transport_crew_for_schedule,
     ensure_transport_crew_for_route,
     remove_passenger_from_driver_schedule,
     resolve_transport_crew_schedule_conflict,
@@ -388,6 +389,14 @@ def _transport_operation_error_key(error):
         return "support_transport_route_outside_driver_period"
     if "driver_vehicle_assignment_already_has_active_route" in detail:
         return "support_transport_route_already_exists"
+    if "transport_schedule_crew_already_exists" in detail:
+        return "support_transport_crew_already_exists"
+    if "driver_template_schedule_required" in detail:
+        return "support_transport_crew_add_no_schedule"
+    if "driver_vehicle_assignment_required" in detail:
+        return "support_transport_crew_add_no_vehicle"
+    if "driver_license_required" in detail:
+        return "support_transport_crew_add_no_license"
     return "support_transport_operation_error"
 
 
@@ -707,6 +716,44 @@ def _worker_card_operation(request, *, snapshot):
                 **data,
             )
             messages.success(request, tr(request, "support_transport_passenger_added"))
+        elif action == "transport_schedule_crew_create":
+            driver_assignment = get_object_or_404(
+                DriverVehicleAssignment.objects.select_related(
+                    "driver_connection",
+                    "vehicle",
+                ).filter(
+                    organization=organization,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                    driver_connection__in=worker_connection_queryset_for(
+                        user=request.user,
+                        organization=organization,
+                        queryset=SupportConnection.objects.filter(
+                            organization=organization,
+                            is_archived=False,
+                        ),
+                    ),
+                ),
+                public_id=request.POST.get("driver_vehicle_assignment_id"),
+            )
+            schedule_template = get_object_or_404(
+                ProjectScheduleTemplate.objects.select_related("project__worksite"),
+                project__organization=organization,
+                is_active=True,
+                public_id=request.POST.get("schedule_template_id"),
+            )
+            route = create_transport_crew_for_schedule(
+                actor=request.user,
+                organization=organization,
+                driver_vehicle_assignment=driver_assignment,
+                schedule_template=schedule_template,
+            )
+            messages.success(request, tr(request, "support_transport_crew_created"))
+            if route.driver_vehicle_assignment.driver_connection_id == connection.id:
+                request.POST = request.POST.copy()
+                request.POST["return_transport_crew"] = (
+                    f"{route.driver_vehicle_assignment.public_id}."
+                    f"{route.schedule_template.public_id}"
+                )
         elif action == "transport_schedule_passenger_add":
             driver_connection = get_object_or_404(
                 worker_connection_queryset_for(
@@ -1239,6 +1286,7 @@ def _worker_card_operation(request, *, snapshot):
             else (
                 _transport_operation_error_key(error)
                 if action == "route_create"
+                or action == "transport_schedule_crew_create"
                 or action.startswith("transport_schedule_passenger_")
                 else _worker_operation_error_key(error)
             )

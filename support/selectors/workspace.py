@@ -1099,6 +1099,7 @@ def worker_card_snapshot(
     transport_driver_shifts = []
     transport_driver_conversation = None
     related_transport_crews = []
+    transport_new_crew_candidates = []
     if permissions["transport"]:
         driver_assignments = list(
             DriverVehicleAssignment.objects.filter(
@@ -1471,6 +1472,49 @@ def worker_card_snapshot(
             transport_driver_connection = selected_transport_crew.driver_connection
             selected_transport_template = selected_transport_crew.schedule_template
             selected_transport_route = selected_transport_crew.route
+            existing_crew_assignment_ids = set(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    schedule_template=selected_transport_template,
+                    state__in=(
+                        TransportRoute.STATE_DRAFT,
+                        TransportRoute.STATE_PUBLISHED,
+                    ),
+                ).values_list("driver_vehicle_assignment_id", flat=True)
+            )
+            transport_new_crew_candidates = list(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                    starts_on__lte=today,
+                    driver_connection_id__in=transport_worker_ids,
+                    driver_connection__has_driving_license=True,
+                    driver_connection__scheduled_work_shifts__schedule_template=(
+                        selected_transport_template
+                    ),
+                    driver_connection__scheduled_work_shifts__state=(
+                        ScheduledWorkShift.STATE_PUBLISHED
+                    ),
+                    driver_connection__scheduled_work_shifts__work_date__gte=today,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .exclude(id__in=existing_crew_assignment_ids)
+                .select_related("driver_connection__candidate", "vehicle")
+                .distinct()
+                .order_by(
+                    "driver_connection__candidate__first_name",
+                    "driver_connection__candidate__last_name",
+                    "vehicle__registration_identifier",
+                    "id",
+                )
+            )
+            for candidate in transport_new_crew_candidates:
+                candidate.crew_option_label = (
+                    f"{_display_name(candidate.driver_connection.candidate)} · "
+                    f"{candidate.vehicle.registration_identifier} · "
+                    f"{candidate.vehicle.internal_name} · "
+                    f"{candidate.vehicle.seat_capacity}"
+                )
             transport_driver_shifts = list(
                 ScheduledWorkShift.objects.filter(
                     organization=organization,
@@ -1742,6 +1786,7 @@ def worker_card_snapshot(
         "transport_driver_shifts": transport_driver_shifts,
         "transport_driver_conversation": transport_driver_conversation,
         "related_transport_crews": related_transport_crews,
+        "transport_new_crew_candidates": transport_new_crew_candidates,
         "document_packages": document_packages,
     }
 

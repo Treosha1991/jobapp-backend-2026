@@ -143,6 +143,8 @@
   .worker-related-crew { padding:9px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.22); }
   .worker-related-crew strong { display:block; font-size:12px; }
   .worker-related-crew span { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
+  .worker-section-title { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+  .worker-section-title h2 { margin:0; }
   .worker-housing-map { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:14px; }
   .worker-room { padding:13px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.2); }
   .worker-room h3 { margin:0 0 10px; }
@@ -468,7 +470,10 @@
 
     {% if permissions.transport %}
       <section class="worker-section worker-transport-dashboard">
-        <h2>{{ employer_t.support_worker_transport_roles }}</h2>
+        <div class="worker-section-title">
+          <h2>{{ employer_t.support_worker_transport_roles }}</h2>
+          {% if selected_transport_template and transport_new_crew_candidates and can_operate and permissions.work %}<button class="jh-btn primary" type="button" data-worker-passenger-dialog-target="worker-crew-create">{{ employer_t.support_transport_add_crew }}</button>{% endif %}
+        </div>
         {% if transport_crews %}
           <nav class="worker-crew-tabs" aria-label="{{ employer_t.support_transport_schedule_switcher }}">
             {% for crew in transport_crews %}
@@ -541,6 +546,9 @@
             {% endif %}
           {% endif %}
         {% else %}<div class="worker-empty">{{ employer_t.support_worker_no_driver_routes }}</div>{% endif %}
+        {% if selected_transport_template and transport_new_crew_candidates and can_operate and permissions.work %}
+          <dialog class="worker-passenger-modal" id="worker-crew-create" aria-labelledby="worker-crew-create-title"><div class="worker-passenger-modal-card"><div class="worker-passenger-modal-head"><h2 id="worker-crew-create-title">{{ employer_t.support_transport_add_crew }}</h2><button class="jh-btn" type="button" data-worker-passenger-modal-close aria-label="{{ employer_t.support_modal_close }}">×</button></div><p class="jh-subtitle">{{ employer_t.support_transport_add_crew_text }}</p><form method="post">{% csrf_token %}<input type="hidden" name="action" value="transport_schedule_crew_create"><input type="hidden" name="schedule_template_id" value="{{ selected_transport_template.public_id }}"><input type="hidden" name="return_tab" value="work_transport"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}"><label class="jh-field"><span>{{ employer_t.support_transport_driver_vehicle }}</span><select class="jh-input" name="driver_vehicle_assignment_id" required>{% for item in transport_new_crew_candidates %}<option value="{{ item.public_id }}">{{ item.crew_option_label }}</option>{% endfor %}</select></label><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_add_crew }}</button></div></form></div></dialog>
+        {% endif %}
       </section>
     {% endif %}
     </div>
