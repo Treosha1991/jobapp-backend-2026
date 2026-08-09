@@ -346,8 +346,19 @@ class ScheduledWorkShift(models.Model):
             ),
             models.UniqueConstraint(
                 fields=("connection", "work_date"),
-                condition=Q(state__in=("draft", "published")),
-                name="support_one_current_scheduled_shift_per_day",
+                condition=Q(
+                    crew__isnull=True,
+                    state__in=("draft", "published"),
+                ),
+                name="support_one_legacy_shift_day",
+            ),
+            models.UniqueConstraint(
+                fields=("connection", "work_date", "crew"),
+                condition=Q(
+                    crew__isnull=False,
+                    state__in=("draft", "published"),
+                ),
+                name="support_one_crew_shift_day",
             ),
         ]
         indexes = [

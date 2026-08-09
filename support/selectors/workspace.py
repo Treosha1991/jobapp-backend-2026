@@ -29,6 +29,7 @@ from support.models import (
     SupportApplication,
     SupportConnection,
     SupportConversation,
+    TransportCrewScheduleOverride,
     TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
@@ -1002,6 +1003,19 @@ def worker_card_snapshot(
         for shift in scheduled_shifts:
             shift.is_preview = False
             shift.has_conflict = False
+            if shift.crew_id is not None:
+                shift.schedule_source_label = (
+                    shift.crew.internal_name
+                    or shift.schedule_template.project.worker_visible_name
+                    if shift.schedule_template_id is not None
+                    else str(shift.crew.public_id)
+                )
+            elif shift.schedule_template_id is not None:
+                shift.schedule_source_label = (
+                    shift.schedule_template.project.worker_visible_name
+                )
+            else:
+                shift.schedule_source_label = ""
 
         calendar_shifts = list(scheduled_shifts)
         for index, shift in enumerate(calendar_shifts):
@@ -1345,6 +1359,7 @@ def worker_card_snapshot(
                 "driver_vehicle_assignment__driver_connection__candidate",
                 "driver_vehicle_assignment__vehicle",
                 "schedule_template__project__worksite",
+                "crew",
             )
             .prefetch_related(
                 "passenger_assignments__connection__candidate",
@@ -1364,6 +1379,7 @@ def worker_card_snapshot(
             if key in crews_by_key:
                 if route is not None:
                     crews_by_key[key].route = route
+                    crews_by_key[key].stable_crew = route.crew
                 return crews_by_key[key]
             crew = SimpleNamespace(
                 key=key,
@@ -1371,6 +1387,7 @@ def worker_card_snapshot(
                 driver_connection=assignment.driver_connection,
                 schedule_template=schedule_template,
                 route=route,
+                stable_crew=(route.crew if route is not None else None),
                 is_selected_worker_driver=assignment.driver_connection_id == connection.id,
                 is_selected_worker_passenger=False,
             )
@@ -1615,23 +1632,56 @@ def worker_card_snapshot(
         if selected_transport_template is not None
         else None
     )
+    selected_stable_crew_id = (
+        selected_transport_route.crew_id
+        if selected_transport_route is not None
+        else None
+    )
+    overrides_by_date = {}
+    if selected_stable_crew_id is not None and selected_calendar_date is not None:
+        selected_month_end = date(
+            selected_calendar_date.year,
+            selected_calendar_date.month,
+            monthrange(selected_calendar_date.year, selected_calendar_date.month)[1],
+        )
+        overrides_by_date = {
+            item.work_date: item
+            for item in TransportCrewScheduleOverride.objects.filter(
+                crew_id=selected_stable_crew_id,
+                work_date__range=(selected_calendar_date, selected_month_end),
+            )
+        }
     for day in calendar_days:
         if day is None:
             continue
         selected_template_shifts = [
             shift
             for shift in day["shifts"]
-            if selected_template_id is not None
-            and shift.schedule_template_id == selected_template_id
+            if (
+                shift.crew_id == selected_stable_crew_id
+                if selected_stable_crew_id is not None
+                else (
+                    selected_template_id is not None
+                    and shift.schedule_template_id == selected_template_id
+                )
+            )
         ]
         other_template_shifts = [
             shift
             for shift in day["shifts"]
-            if selected_template_id is not None
-            and shift.schedule_template_id != selected_template_id
+            if (
+                shift.crew_id != selected_stable_crew_id
+                if selected_stable_crew_id is not None
+                else (
+                    selected_template_id is not None
+                    and shift.schedule_template_id != selected_template_id
+                )
+            )
         ]
         day["is_selected_template"] = bool(selected_template_shifts)
         day["has_other_template"] = bool(other_template_shifts)
+        day["crew_override"] = overrides_by_date.get(day["date"])
+        day["has_crew_override"] = day["crew_override"] is not None
         if selected_template_shifts:
             day["display_shift"] = max(
                 selected_template_shifts,

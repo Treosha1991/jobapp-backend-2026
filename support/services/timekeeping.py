@@ -662,6 +662,7 @@ def create_scheduled_shift(
     worker_label="",
     work_assignment=None,
     schedule_template=None,
+    crew=None,
 ):
     """Create a staff-only draft.  The worker sees it only after publication."""
 
@@ -690,6 +691,14 @@ def create_scheduled_shift(
                 raise ValidationError({"schedule_template": "project_schedule_template_not_available"})
             if work_assignment is not None and schedule_template.project_id != work_assignment.project_id:
                 raise ValidationError({"schedule_template": "project_schedule_template_not_available"})
+        if crew is not None:
+            if crew.organization_id != organization.id:
+                raise ValidationError({"crew": "transport_crew_not_available"})
+            if (
+                schedule_template is not None
+                and crew.schedule_template_id != schedule_template.id
+            ):
+                raise ValidationError({"crew": "transport_crew_template_mismatch"})
         _worked_minutes(
             started_at=starts_at,
             ended_at=ends_at,
@@ -703,6 +712,11 @@ def create_scheduled_shift(
                 ScheduledWorkShift.STATE_PUBLISHED,
             ),
         )
+        current = (
+            current.filter(crew=crew)
+            if crew is not None
+            else current.filter(crew__isnull=True)
+        )
         if current.exists():
             raise ValidationError({"work_date": "current_scheduled_shift_already_exists"})
         shift = ScheduledWorkShift.objects.create(
@@ -710,6 +724,7 @@ def create_scheduled_shift(
             connection=connection,
             work_assignment=work_assignment,
             schedule_template=schedule_template,
+            crew=crew,
             work_date=work_date,
             starts_at=starts_at,
             ends_at=ends_at,
@@ -868,6 +883,7 @@ def replace_scheduled_shift(
     work_assignment=None,
     replacement_state=None,
     schedule_template=None,
+    crew=None,
 ):
     """Replace one planned shift while preserving the old audit record.
 
@@ -905,7 +921,13 @@ def replace_scheduled_shift(
             ended_at=ends_at,
             break_minutes=break_minutes,
         )
-        conflict_exists = (
+        if crew is None:
+            crew = shift.crew
+        if crew is not None:
+            if crew.organization_id != organization.id:
+                raise ValidationError({"crew": "transport_crew_not_available"})
+
+        conflict_query = (
             ScheduledWorkShift.objects.select_for_update()
             .filter(
                 connection=shift.connection,
@@ -916,8 +938,13 @@ def replace_scheduled_shift(
                 ),
             )
             .exclude(pk=shift.pk)
-            .exists()
         )
+        conflict_query = (
+            conflict_query.filter(crew=crew)
+            if crew is not None
+            else conflict_query.filter(crew__isnull=True)
+        )
+        conflict_exists = conflict_query.exists()
         if conflict_exists:
             raise ValidationError({"work_date": "current_scheduled_shift_already_exists"})
 
@@ -937,6 +964,12 @@ def replace_scheduled_shift(
             and schedule_template.project_id != work_assignment.project_id
         ):
             raise ValidationError({"schedule_template": "project_schedule_template_not_available"})
+        if (
+            crew is not None
+            and schedule_template is not None
+            and crew.schedule_template_id != schedule_template.id
+        ):
+            raise ValidationError({"crew": "transport_crew_template_mismatch"})
 
         next_state = replacement_state or shift.state
         if next_state not in {
@@ -954,6 +987,7 @@ def replace_scheduled_shift(
             connection=shift.connection,
             work_assignment=work_assignment,
             schedule_template=schedule_template,
+            crew=crew,
             work_date=work_date,
             starts_at=starts_at,
             ends_at=ends_at,

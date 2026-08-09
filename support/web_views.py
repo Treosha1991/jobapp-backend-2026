@@ -4,12 +4,13 @@ from datetime import datetime, timedelta
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
+from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from urllib.parse import urlencode
 from django.utils import timezone
-from django.utils.dateparse import parse_date, parse_datetime
+from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from rest_framework.exceptions import APIException, ValidationError
 
 from jobs.web_i18n import get_lang, tr
@@ -29,6 +30,7 @@ from .models import (
     ScheduledWorkShift,
     SupportConnection,
     SupportConversation,
+    TransportCrew,
     TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
@@ -72,7 +74,10 @@ from .serializers import (
 )
 from .services.operations import (
     add_passenger_to_driver_schedule,
+    apply_transport_crew_schedule_override,
+    ensure_transport_crew_for_route,
     remove_passenger_from_driver_schedule,
+    resolve_transport_crew_schedule_conflict,
     replace_passenger_in_driver_schedule,
     create_driver_vehicle_assignment,
     create_housing_assignment,
@@ -299,6 +304,18 @@ def _operation_date_start(value, *, required=True):
     )
 
 
+def _operation_time(value, *, required=True):
+    raw_value = (value or "").strip()
+    if not raw_value:
+        if required:
+            raise ValueError("time_required")
+        return None
+    parsed = parse_time(raw_value)
+    if parsed is None:
+        raise ValueError("time_invalid")
+    return parsed
+
+
 def _worker_card_redirect(
     connection,
     *,
@@ -402,6 +419,14 @@ def _worker_operation_error_key(error):
         return "support_transport_crew_full"
     if "published_assignment_for_selected_project_required" in detail:
         return "support_worker_quick_shift_active_assignment_required"
+    if "transport_crew_override_time_required" in detail:
+        return "support_crew_override_time_required"
+    if "transport_crew_override_kind_invalid" in detail:
+        return "support_crew_override_kind_invalid"
+    if "transport_crew_has_no_participants" in detail:
+        return "support_crew_override_no_participants"
+    if "scheduled_shift_conflict_not_found" in detail:
+        return "support_crew_conflict_not_found"
     return "support_worker_operation_error"
 
 
@@ -1046,6 +1071,66 @@ def _worker_card_operation(request, *, snapshot):
                 else:
                     cancel_scheduled_shift(actor=request.user, shift=shift)
             messages.success(request, tr(request, "support_worker_quick_shifts_cleared"))
+        elif action == "crew_schedule_override":
+            work_dates = sorted(
+                {_operation_date(value) for value in request.POST.getlist("work_dates")}
+            )
+            if not work_dates:
+                raise ValidationError({"work_dates": "schedule_dates_required"})
+            route = get_object_or_404(
+                TransportRoute.objects.filter(
+                    organization=organization,
+                    public_id=request.POST.get("route_id"),
+                ).filter(
+                    Q(driver_vehicle_assignment__driver_connection=connection)
+                    | Q(passenger_assignments__connection=connection)
+                ).distinct()
+            )
+            crew = ensure_transport_crew_for_route(actor=request.user, route=route)
+            override_kind = (request.POST.get("override_kind") or "").strip()
+            is_shift = override_kind == "shift"
+            conflicts = apply_transport_crew_schedule_override(
+                actor=request.user,
+                crew=crew,
+                work_dates=work_dates,
+                kind=override_kind,
+                starts_at_time=(
+                    _operation_time(request.POST.get("override_starts_at_time"))
+                    if is_shift
+                    else None
+                ),
+                ends_at_time=(
+                    _operation_time(request.POST.get("override_ends_at_time"))
+                    if is_shift
+                    else None
+                ),
+                break_minutes=int(request.POST.get("override_break_minutes") or 0),
+                note=(request.POST.get("override_note") or "").strip(),
+            )
+            messages.success(
+                request,
+                tr(
+                    request,
+                    (
+                        "support_crew_override_applied_with_conflicts"
+                        if conflicts
+                        else "support_crew_override_applied"
+                    ),
+                ),
+            )
+        elif action == "crew_schedule_conflict_keep":
+            shift = get_object_or_404(
+                ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                ),
+                public_id=request.POST.get("shift_id"),
+            )
+            resolve_transport_crew_schedule_conflict(
+                actor=request.user,
+                keep_shift=shift,
+            )
+            messages.success(request, tr(request, "support_crew_conflict_resolved"))
         elif action == "scheduled_shift_publish":
             shift = get_object_or_404(
                 ScheduledWorkShift.objects.filter(

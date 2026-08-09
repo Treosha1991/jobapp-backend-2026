@@ -1,7 +1,7 @@
 """Transactional creation and publication of Support operational assignments."""
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.db import transaction
 from django.db.models import Q
@@ -16,6 +16,11 @@ from support.models import (
     RouteStop,
     ScheduledWorkShift,
     SupportConnection,
+    TransportCrew,
+    TransportCrewDriver,
+    TransportCrewMember,
+    TransportCrewScheduleOverride,
+    TransportCrewVehicle,
     TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
@@ -52,6 +57,25 @@ def _require_connection_for_operations(*, connection, organization):
         raise ValidationError({"connection": "connection_not_in_organization"})
     if connection.is_archived or connection.stage not in OPERATIONAL_CONNECTION_STAGES:
         raise ValidationError({"connection": "connection_not_ready_for_operations"})
+
+
+def _close_open_crew_membership(*, crew, connection, effective_on):
+    """Close an effective-dated membership without creating an invalid period."""
+
+    previous_date = effective_on - timedelta(days=1)
+    rows = list(
+        TransportCrewMember.objects.select_for_update().filter(
+            crew=crew,
+            connection=connection,
+            ends_on__isnull=True,
+        )
+    )
+    for row in rows:
+        if row.starts_on >= effective_on:
+            row.delete()
+        else:
+            row.ends_on = previous_date
+            row.save(update_fields=["ends_on", "updated_at"])
 
 
 def _require_same_organization(*, organization, **objects):
@@ -1113,6 +1137,477 @@ def add_route_passenger(*, actor, route, connection, pickup_stop, dropoff_stop, 
     return passenger
 
 
+def ensure_transport_crew_for_route(*, actor, route):
+    """Mirror a legacy route into the stable crew records exactly once."""
+
+    organization = route.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=TRANSPORT_MANAGE,
+    )
+    with transaction.atomic():
+        route = (
+            TransportRoute.objects.select_for_update()
+            .select_related(
+                "schedule_template__project",
+                "driver_vehicle_assignment__driver_connection",
+                "driver_vehicle_assignment__vehicle",
+                "crew",
+            )
+            .prefetch_related("passenger_assignments")
+            .get(pk=route.pk)
+        )
+        if route.schedule_template is None:
+            raise ValidationError({"route": "transport_schedule_template_required"})
+        if route.crew_id is not None:
+            return route.crew
+
+        assignment = route.driver_vehicle_assignment
+        crew = TransportCrew.objects.create(
+            organization=organization,
+            project=route.schedule_template.project,
+            schedule_template=route.schedule_template,
+            internal_name=route.internal_name,
+            starts_on=route.starts_on,
+            ends_on=route.ends_on,
+            state=(
+                TransportCrew.STATE_ARCHIVED
+                if route.state == TransportRoute.STATE_CANCELLED
+                else TransportCrew.STATE_ACTIVE
+            ),
+            created_by=actor,
+        )
+        TransportCrewDriver.objects.create(
+            crew=crew,
+            driver_connection=assignment.driver_connection,
+            starts_on=route.starts_on,
+            ends_on=route.ends_on,
+            created_by=actor,
+        )
+        TransportCrewVehicle.objects.create(
+            crew=crew,
+            vehicle=assignment.vehicle,
+            starts_on=route.starts_on,
+            ends_on=route.ends_on,
+            created_by=actor,
+        )
+        members = [
+            TransportCrewMember(
+                crew=crew,
+                connection=passenger.connection,
+                starts_on=route.starts_on,
+                ends_on=route.ends_on,
+                boarding_order=passenger.boarding_order,
+                created_by=actor,
+            )
+            for passenger in route.passenger_assignments.all()
+        ]
+        TransportCrewMember.objects.bulk_create(members)
+        route.crew = crew
+        route.save(update_fields=["crew", "updated_at"])
+
+        participant_ids = [assignment.driver_connection_id] + [
+            member.connection_id for member in members
+        ]
+        ScheduledWorkShift.objects.filter(
+            organization=organization,
+            connection_id__in=participant_ids,
+            schedule_template=route.schedule_template,
+            crew__isnull=True,
+            work_date__gte=route.starts_on,
+            state__in=(
+                ScheduledWorkShift.STATE_DRAFT,
+                ScheduledWorkShift.STATE_PUBLISHED,
+            ),
+        ).filter(
+            Q(work_date__lte=route.ends_on)
+            if route.ends_on is not None
+            else Q()
+        ).update(crew=crew)
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.crew_materialized",
+            target=crew,
+            details={"route": str(route.public_id)},
+        )
+    return crew
+
+
+def _published_assignment_for_crew_member(
+    *,
+    actor,
+    crew,
+    connection,
+    starts_at,
+):
+    assignment = (
+        WorkerProjectAssignment.objects.select_for_update()
+        .filter(
+            organization=crew.organization,
+            connection=connection,
+            project=crew.project,
+            state=WorkerProjectAssignment.STATE_PUBLISHED,
+        )
+        .order_by("-starts_at", "-id")
+        .first()
+    )
+    if assignment is not None:
+        return assignment
+    draft = (
+        WorkerProjectAssignment.objects.select_for_update()
+        .filter(
+            organization=crew.organization,
+            connection=connection,
+            project=crew.project,
+            state=WorkerProjectAssignment.STATE_DRAFT,
+        )
+        .order_by("-starts_at", "-id")
+        .first()
+    )
+    if draft is None:
+        draft = create_worker_project_assignment(
+            actor=actor,
+            organization=crew.organization,
+            connection=connection,
+            project=crew.project,
+            worker_role="",
+            starts_at=starts_at,
+        )
+    return publish_worker_project_assignment(
+        actor=actor,
+        assignment=draft,
+        replace_conflicting_assignments=True,
+    )
+
+
+def apply_transport_crew_schedule_override(
+    *,
+    actor,
+    crew,
+    work_dates,
+    kind,
+    starts_at_time=None,
+    ends_at_time=None,
+    break_minutes=0,
+    note="",
+):
+    """Publish one schedule exception to the driver and current passengers.
+
+    Another crew's shift is intentionally not removed. Both records remain
+    visible as a conflict until a manager chooses which crew membership to
+    keep for that worker.
+    """
+
+    organization = crew.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=TRANSPORT_MANAGE,
+    )
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    allowed_kinds = {
+        TransportCrewScheduleOverride.KIND_SHIFT,
+        TransportCrewScheduleOverride.KIND_DAY_OFF,
+        TransportCrewScheduleOverride.KIND_CANCELLED,
+    }
+    if kind not in allowed_kinds:
+        raise ValidationError({"kind": "transport_crew_override_kind_invalid"})
+    if kind == TransportCrewScheduleOverride.KIND_SHIFT:
+        if starts_at_time is None or ends_at_time is None:
+            raise ValidationError({"time": "transport_crew_override_time_required"})
+    elif starts_at_time is not None or ends_at_time is not None:
+        raise ValidationError({"time": "transport_crew_override_time_not_allowed"})
+    work_dates = sorted(set(work_dates))
+    if not work_dates:
+        raise ValidationError({"work_dates": "schedule_dates_required"})
+
+    from .timekeeping import (
+        cancel_scheduled_shift,
+        create_scheduled_shift,
+        delete_scheduled_shift_draft,
+        publish_scheduled_shift,
+        replace_scheduled_shift,
+    )
+
+    conflict_rows = []
+    with transaction.atomic():
+        crew = (
+            TransportCrew.objects.select_for_update()
+            .select_related("organization", "project", "schedule_template")
+            .get(pk=crew.pk)
+        )
+        if crew.state != TransportCrew.STATE_ACTIVE:
+            raise ValidationError({"crew": "transport_crew_not_active"})
+        current_timezone = timezone.get_current_timezone()
+        for work_date in work_dates:
+            driver_rows = list(
+                TransportCrewDriver.objects.select_for_update().filter(
+                    crew=crew,
+                    starts_on__lte=work_date,
+                ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=work_date))
+            )
+            member_rows = list(
+                TransportCrewMember.objects.select_for_update().filter(
+                    crew=crew,
+                    starts_on__lte=work_date,
+                ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=work_date))
+            )
+            participants_by_id = {
+                row.driver_connection_id: row.driver_connection for row in driver_rows
+            }
+            participants_by_id.update(
+                {row.connection_id: row.connection for row in member_rows}
+            )
+            participants = list(participants_by_id.values())
+            if not participants:
+                raise ValidationError({"crew": "transport_crew_has_no_participants"})
+
+            override_defaults = {
+                "kind": kind,
+                "starts_at_time": (
+                    starts_at_time
+                    if kind == TransportCrewScheduleOverride.KIND_SHIFT
+                    else None
+                ),
+                "ends_at_time": (
+                    ends_at_time
+                    if kind == TransportCrewScheduleOverride.KIND_SHIFT
+                    else None
+                ),
+                "break_minutes": (
+                    break_minutes
+                    if kind == TransportCrewScheduleOverride.KIND_SHIFT
+                    else 0
+                ),
+                "note": (note or "").strip(),
+                "updated_by": actor,
+            }
+            override, created = TransportCrewScheduleOverride.objects.update_or_create(
+                crew=crew,
+                work_date=work_date,
+                defaults=override_defaults,
+            )
+            if created and override.created_by_id is None:
+                override.created_by = actor
+                override.save(update_fields=["created_by", "updated_at"])
+
+            for connection in participants:
+                require_worker_connection_access(
+                    user=actor,
+                    organization=organization,
+                    connection=connection,
+                )
+                current_shift = (
+                    ScheduledWorkShift.objects.select_for_update()
+                    .filter(
+                        organization=organization,
+                        connection=connection,
+                        crew=crew,
+                        work_date=work_date,
+                        state__in=(
+                            ScheduledWorkShift.STATE_DRAFT,
+                            ScheduledWorkShift.STATE_PUBLISHED,
+                        ),
+                    )
+                    .order_by("-published_at", "-created_at", "-id")
+                    .first()
+                )
+                if kind != TransportCrewScheduleOverride.KIND_SHIFT:
+                    if current_shift is not None:
+                        if current_shift.state == ScheduledWorkShift.STATE_DRAFT:
+                            delete_scheduled_shift_draft(actor=actor, shift=current_shift)
+                        else:
+                            cancel_scheduled_shift(actor=actor, shift=current_shift)
+                    continue
+
+                starts_at = timezone.make_aware(
+                    datetime.combine(work_date, starts_at_time),
+                    current_timezone,
+                )
+                ends_at = timezone.make_aware(
+                    datetime.combine(work_date, ends_at_time),
+                    current_timezone,
+                )
+                if ends_at <= starts_at:
+                    ends_at += timedelta(days=1)
+                work_assignment = _published_assignment_for_crew_member(
+                    actor=actor,
+                    crew=crew,
+                    connection=connection,
+                    starts_at=starts_at,
+                )
+                if current_shift is not None:
+                    replace_scheduled_shift(
+                        actor=actor,
+                        shift=current_shift,
+                        work_date=work_date,
+                        starts_at=starts_at,
+                        ends_at=ends_at,
+                        break_minutes=break_minutes,
+                        worker_label=(note or "").strip(),
+                        work_assignment=work_assignment,
+                        replacement_state=ScheduledWorkShift.STATE_PUBLISHED,
+                        schedule_template=crew.schedule_template,
+                        crew=crew,
+                    )
+                else:
+                    shift = create_scheduled_shift(
+                        actor=actor,
+                        organization=organization,
+                        connection=connection,
+                        work_date=work_date,
+                        starts_at=starts_at,
+                        ends_at=ends_at,
+                        break_minutes=break_minutes,
+                        worker_label=(note or "").strip(),
+                        work_assignment=work_assignment,
+                        schedule_template=crew.schedule_template,
+                        crew=crew,
+                    )
+                    publish_scheduled_shift(actor=actor, shift=shift)
+
+                overlapping = ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                    work_date=work_date,
+                    state__in=(
+                        ScheduledWorkShift.STATE_DRAFT,
+                        ScheduledWorkShift.STATE_PUBLISHED,
+                    ),
+                ).exclude(crew=crew).filter(
+                    starts_at__lt=ends_at,
+                    ends_at__gt=starts_at,
+                )
+                if overlapping.exists():
+                    conflict_rows.append(
+                        {
+                            "connection": connection,
+                            "work_date": work_date,
+                            "other_shift_count": overlapping.count(),
+                        }
+                    )
+
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.crew_schedule_overridden",
+            target=crew,
+            details={
+                "kind": kind,
+                "work_dates": [item.isoformat() for item in work_dates],
+                "participant_count": len(participants),
+                "conflict_count": len(conflict_rows),
+            },
+        )
+    return conflict_rows
+
+
+def resolve_transport_crew_schedule_conflict(*, actor, keep_shift):
+    """Keep one shift and detach the worker from every conflicting crew."""
+
+    organization = keep_shift.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=TRANSPORT_MANAGE,
+    )
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    from .timekeeping import cancel_scheduled_shift, delete_scheduled_shift_draft
+
+    with transaction.atomic():
+        keep_shift = (
+            ScheduledWorkShift.objects.select_for_update()
+            .select_related("connection", "crew")
+            .get(pk=keep_shift.pk)
+        )
+        if keep_shift.state not in {
+            ScheduledWorkShift.STATE_DRAFT,
+            ScheduledWorkShift.STATE_PUBLISHED,
+        }:
+            raise ValidationError({"shift": "scheduled_shift_not_current"})
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=keep_shift.connection,
+        )
+        conflicts = list(
+            ScheduledWorkShift.objects.select_for_update()
+            .select_related("crew")
+            .filter(
+                organization=organization,
+                connection=keep_shift.connection,
+                work_date=keep_shift.work_date,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
+                starts_at__lt=keep_shift.ends_at,
+                ends_at__gt=keep_shift.starts_at,
+            )
+            .exclude(pk=keep_shift.pk)
+        )
+        if not conflicts:
+            raise ValidationError({"shift": "scheduled_shift_conflict_not_found"})
+
+        detached_crews = []
+        for conflict in conflicts:
+            if conflict.crew_id is not None:
+                driver_rows = TransportCrewDriver.objects.select_for_update().filter(
+                    crew=conflict.crew,
+                    driver_connection=keep_shift.connection,
+                    starts_on__lte=keep_shift.work_date,
+                ).filter(
+                    Q(ends_on__isnull=True) | Q(ends_on__gte=keep_shift.work_date)
+                )
+                member_rows = TransportCrewMember.objects.select_for_update().filter(
+                    crew=conflict.crew,
+                    connection=keep_shift.connection,
+                    starts_on__lte=keep_shift.work_date,
+                ).filter(
+                    Q(ends_on__isnull=True) | Q(ends_on__gte=keep_shift.work_date)
+                )
+                previous_date = keep_shift.work_date - timedelta(days=1)
+                for row in driver_rows:
+                    if row.starts_on >= keep_shift.work_date:
+                        row.delete()
+                    else:
+                        row.ends_on = previous_date
+                        row.save(update_fields=["ends_on", "updated_at"])
+                for row in member_rows:
+                    if row.starts_on >= keep_shift.work_date:
+                        row.delete()
+                    else:
+                        row.ends_on = previous_date
+                        row.save(update_fields=["ends_on", "updated_at"])
+                detached_crews.append(str(conflict.crew.public_id))
+            if conflict.state == ScheduledWorkShift.STATE_DRAFT:
+                delete_scheduled_shift_draft(actor=actor, shift=conflict)
+            else:
+                cancel_scheduled_shift(actor=actor, shift=conflict)
+
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.crew_schedule_conflict_resolved",
+            target=keep_shift,
+            details={
+                "cancelled_shift_count": len(conflicts),
+                "detached_crews": detached_crews,
+            },
+        )
+    return keep_shift
+
+
 def add_passenger_to_driver_schedule(
     *,
     actor,
@@ -1299,6 +1794,9 @@ def add_passenger_to_driver_schedule(
             if update_fields:
                 route.save(update_fields=[*update_fields, "updated_at"])
 
+        crew = ensure_transport_crew_for_route(actor=actor, route=route)
+        route.crew = crew
+
         passenger_count = TransportPassengerAssignment.objects.select_for_update().filter(
             route=route
         ).count()
@@ -1352,6 +1850,19 @@ def add_passenger_to_driver_schedule(
             dropoff_stop=dropoff_stop,
             boarding_order=passenger_count + 1,
         )
+        current_member = TransportCrewMember.objects.filter(
+            crew=crew,
+            connection=passenger_connection,
+            ends_on__isnull=True,
+        ).first()
+        if current_member is None:
+            TransportCrewMember.objects.create(
+                crew=crew,
+                connection=passenger_connection,
+                starts_on=first_date,
+                boarding_order=passenger_count + 1,
+                created_by=actor,
+            )
 
         work_assignment = (
             WorkerProjectAssignment.objects.select_for_update()
@@ -1384,6 +1895,7 @@ def add_passenger_to_driver_schedule(
                 ScheduledWorkShift.objects.select_for_update().filter(
                     organization=organization,
                     connection=passenger_connection,
+                    crew=crew,
                     work_date=driver_shift.work_date,
                     state__in=(
                         ScheduledWorkShift.STATE_DRAFT,
@@ -1416,6 +1928,7 @@ def add_passenger_to_driver_schedule(
                     work_assignment=work_assignment,
                     replacement_state=ScheduledWorkShift.STATE_PUBLISHED,
                     schedule_template=schedule_template,
+                    crew=crew,
                 )
             else:
                 shift = create_scheduled_shift(
@@ -1429,6 +1942,7 @@ def add_passenger_to_driver_schedule(
                     worker_label="",
                     work_assignment=work_assignment,
                     schedule_template=schedule_template,
+                    crew=crew,
                 )
                 publish_scheduled_shift(actor=actor, shift=shift)
 
@@ -1478,6 +1992,7 @@ def remove_passenger_from_driver_schedule(*, actor, passenger_assignment):
             TransportPassengerAssignment.objects.select_for_update()
             .select_related(
                 "route__driver_vehicle_assignment__driver_connection",
+                "route__crew",
                 "connection__candidate",
             )
             .get(pk=passenger_assignment.pk)
@@ -1496,6 +2011,12 @@ def remove_passenger_from_driver_schedule(*, actor, passenger_assignment):
         connection = passenger.connection
         removed_passenger_id = passenger.public_id
         passenger.delete()
+        if route.crew_id is not None:
+            _close_open_crew_membership(
+                crew=route.crew,
+                connection=connection,
+                effective_on=timezone.localdate(),
+            )
         for order, remaining in enumerate(
             TransportPassengerAssignment.objects.select_for_update()
             .filter(route=route)
@@ -1557,6 +2078,7 @@ def replace_passenger_in_driver_schedule(
             .select_related(
                 "route__driver_vehicle_assignment__driver_connection",
                 "route__schedule_template",
+                "route__crew",
                 "connection__candidate",
             )
             .get(pk=passenger_assignment.pk)
@@ -1569,6 +2091,12 @@ def replace_passenger_in_driver_schedule(
         old_connection = current.connection
         old_assignment_id = current.public_id
         current.delete()
+        if route.crew_id is not None:
+            _close_open_crew_membership(
+                crew=route.crew,
+                connection=old_connection,
+                effective_on=timezone.localdate(),
+            )
         replacement = add_passenger_to_driver_schedule(
             actor=actor,
             driver_connection=route.driver_vehicle_assignment.driver_connection,

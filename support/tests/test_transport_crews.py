@@ -11,6 +11,7 @@ from support.models import (
     DriverVehicleAssignment,
     ProjectScheduleTemplate,
     RouteStop,
+    ScheduledWorkShift,
     SupportApplication,
     SupportConnection,
     SupportVacancy,
@@ -25,7 +26,11 @@ from support.models import (
     WorkProject,
     Worksite,
 )
-from support.services.organizations import create_organization
+from support.services.operations import (
+    apply_transport_crew_schedule_override,
+    resolve_transport_crew_schedule_conflict,
+)
+from support.services.organizations import activate_organization, create_organization
 
 
 @override_settings(SUPPORT_FEATURE_ENABLED=True)
@@ -47,6 +52,10 @@ class StableTransportCrewModelTests(TestCase):
             legal_name="Stable Crew Agency sp. z o.o.",
             display_name="Stable Crew Agency",
             owner_email=self.owner.email,
+        )
+        activate_organization(
+            jobhub_operator=self.operator,
+            organization=self.organization,
         )
         self.worksite = Worksite.objects.create(
             organization=self.organization,
@@ -333,4 +342,137 @@ class StableTransportCrewModelTests(TestCase):
         self.assertEqual(
             route.crew.members.get().connection_id,
             self.passenger.id,
+        )
+
+    def _operational_crew(self, *, suffix="A", driver=None, passenger=None):
+        crew = self._crew(suffix)
+        TransportCrewDriver.objects.create(
+            crew=crew,
+            driver_connection=driver or self.driver,
+            starts_on=date.today(),
+            created_by=self.owner,
+        )
+        TransportCrewVehicle.objects.create(
+            crew=crew,
+            vehicle=self.vehicle if suffix == "A" else self.other_vehicle,
+            starts_on=date.today(),
+            created_by=self.owner,
+        )
+        if passenger is not None:
+            TransportCrewMember.objects.create(
+                crew=crew,
+                connection=passenger,
+                starts_on=date.today(),
+                created_by=self.owner,
+            )
+        return crew
+
+    def test_crew_override_publishes_same_shift_for_driver_and_passenger(self):
+        crew = self._operational_crew(passenger=self.passenger)
+        work_dates = [date.today() + timedelta(days=1), date.today() + timedelta(days=2)]
+
+        conflicts = apply_transport_crew_schedule_override(
+            actor=self.owner,
+            crew=crew,
+            work_dates=work_dates,
+            kind=TransportCrewScheduleOverride.KIND_SHIFT,
+            starts_at_time=time(7, 0),
+            ends_at_time=time(15, 30),
+            break_minutes=30,
+            note="Temporary project time",
+        )
+
+        self.assertEqual(conflicts, [])
+        shifts = ScheduledWorkShift.objects.filter(
+            crew=crew,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(shifts.count(), 4)
+        self.assertSetEqual(
+            set(shifts.values_list("connection_id", flat=True)),
+            {self.driver.id, self.passenger.id},
+        )
+        self.assertEqual(crew.schedule_overrides.count(), 2)
+
+    def test_conflicting_crew_shift_is_kept_until_manager_resolves_it(self):
+        first = self._operational_crew(suffix="A", passenger=self.passenger)
+        second = self._operational_crew(
+            suffix="B",
+            driver=self.other_driver,
+            passenger=self.passenger,
+        )
+        work_date = date.today() + timedelta(days=1)
+        for crew in (first, second):
+            apply_transport_crew_schedule_override(
+                actor=self.owner,
+                crew=crew,
+                work_dates=[work_date],
+                kind=TransportCrewScheduleOverride.KIND_SHIFT,
+                starts_at_time=time(7, 0),
+                ends_at_time=time(15, 0),
+                break_minutes=30,
+            )
+
+        passenger_shifts = ScheduledWorkShift.objects.filter(
+            connection=self.passenger,
+            work_date=work_date,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(passenger_shifts.count(), 2)
+        keep_shift = passenger_shifts.get(crew=first)
+
+        resolve_transport_crew_schedule_conflict(
+            actor=self.owner,
+            keep_shift=keep_shift,
+        )
+
+        self.assertEqual(
+            ScheduledWorkShift.objects.filter(
+                connection=self.passenger,
+                work_date=work_date,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).count(),
+            1,
+        )
+        self.assertFalse(
+            TransportCrewMember.objects.filter(
+                crew=second,
+                connection=self.passenger,
+                ends_on__isnull=True,
+            ).exists()
+        )
+
+    def test_day_off_cancels_only_selected_crew_shift(self):
+        crew = self._operational_crew(passenger=self.passenger)
+        work_date = date.today() + timedelta(days=1)
+        apply_transport_crew_schedule_override(
+            actor=self.owner,
+            crew=crew,
+            work_dates=[work_date],
+            kind=TransportCrewScheduleOverride.KIND_SHIFT,
+            starts_at_time=time(7, 0),
+            ends_at_time=time(15, 0),
+            break_minutes=30,
+        )
+
+        apply_transport_crew_schedule_override(
+            actor=self.owner,
+            crew=crew,
+            work_dates=[work_date],
+            kind=TransportCrewScheduleOverride.KIND_DAY_OFF,
+        )
+
+        self.assertFalse(
+            ScheduledWorkShift.objects.filter(
+                crew=crew,
+                work_date=work_date,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
+            ).exists()
+        )
+        self.assertEqual(
+            crew.schedule_overrides.get(work_date=work_date).kind,
+            TransportCrewScheduleOverride.KIND_DAY_OFF,
         )
