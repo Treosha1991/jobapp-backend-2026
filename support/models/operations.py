@@ -275,6 +275,276 @@ class DriverVehicleAssignment(models.Model):
         ]
 
 
+class TransportCrew(models.Model):
+    """Stable project/template crew independent from a route or its driver.
+
+    Existing transport screens historically treated a route as a crew.  This
+    model gives the crew its own identity, so replacing a driver or vehicle no
+    longer loses passengers, schedule corrections, or history.
+    """
+
+    STATE_ACTIVE = "active"
+    STATE_ARCHIVED = "archived"
+    STATE_CHOICES = [
+        (STATE_ACTIVE, "Active"),
+        (STATE_ARCHIVED, "Archived"),
+    ]
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    organization = models.ForeignKey(
+        SupportOrganization,
+        on_delete=models.CASCADE,
+        related_name="transport_crews",
+    )
+    project = models.ForeignKey(
+        WorkProject,
+        on_delete=models.PROTECT,
+        related_name="transport_crews",
+    )
+    schedule_template = models.ForeignKey(
+        ProjectScheduleTemplate,
+        on_delete=models.PROTECT,
+        related_name="transport_crews",
+    )
+    internal_name = models.CharField(max_length=160, blank=True, default="")
+    starts_on = models.DateField(default=timezone.localdate)
+    ends_on = models.DateField(null=True, blank=True)
+    state = models.CharField(
+        max_length=16,
+        choices=STATE_CHOICES,
+        default=STATE_ACTIVE,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_support_transport_crews",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("project__internal_name", "schedule_template__name", "id")
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(ends_on__isnull=True) | Q(starts_on__lte=F("ends_on")),
+                name="support_transport_crew_valid_period",
+            )
+        ]
+        indexes = [
+            models.Index(fields=("organization", "state", "starts_on")),
+            models.Index(fields=("project", "schedule_template", "state")),
+        ]
+
+
+class TransportCrewDriver(models.Model):
+    """Effective-dated driver history for a stable crew."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    crew = models.ForeignKey(
+        TransportCrew,
+        on_delete=models.CASCADE,
+        related_name="driver_assignments",
+    )
+    driver_connection = models.ForeignKey(
+        SupportConnection,
+        on_delete=models.PROTECT,
+        related_name="transport_crew_driver_assignments",
+    )
+    starts_on = models.DateField(default=timezone.localdate)
+    ends_on = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_support_transport_crew_drivers",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-starts_on", "-id")
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(ends_on__isnull=True) | Q(starts_on__lte=F("ends_on")),
+                name="support_crew_driver_valid_period",
+            ),
+            models.UniqueConstraint(
+                fields=("crew",),
+                condition=Q(ends_on__isnull=True),
+                name="support_one_open_crew_driver",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("crew", "starts_on")),
+            models.Index(fields=("driver_connection", "starts_on")),
+        ]
+
+
+class TransportCrewVehicle(models.Model):
+    """Effective-dated vehicle history kept separately from the driver."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    crew = models.ForeignKey(
+        TransportCrew,
+        on_delete=models.CASCADE,
+        related_name="vehicle_assignments",
+    )
+    vehicle = models.ForeignKey(
+        Vehicle,
+        on_delete=models.PROTECT,
+        related_name="transport_crew_assignments",
+    )
+    starts_on = models.DateField(default=timezone.localdate)
+    ends_on = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_support_transport_crew_vehicles",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-starts_on", "-id")
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(ends_on__isnull=True) | Q(starts_on__lte=F("ends_on")),
+                name="support_crew_vehicle_valid_period",
+            ),
+            models.UniqueConstraint(
+                fields=("crew",),
+                condition=Q(ends_on__isnull=True),
+                name="support_one_open_crew_vehicle",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("crew", "starts_on")),
+            models.Index(fields=("vehicle", "starts_on")),
+        ]
+
+
+class TransportCrewMember(models.Model):
+    """Effective-dated passenger membership for one crew."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    crew = models.ForeignKey(
+        TransportCrew,
+        on_delete=models.CASCADE,
+        related_name="members",
+    )
+    connection = models.ForeignKey(
+        SupportConnection,
+        on_delete=models.PROTECT,
+        related_name="transport_crew_memberships",
+    )
+    starts_on = models.DateField(default=timezone.localdate)
+    ends_on = models.DateField(null=True, blank=True)
+    boarding_order = models.PositiveSmallIntegerField(default=1)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_support_transport_crew_members",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("crew_id", "boarding_order", "id")
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(ends_on__isnull=True) | Q(starts_on__lte=F("ends_on")),
+                name="support_crew_member_valid_period",
+            ),
+            models.CheckConstraint(
+                condition=Q(boarding_order__gte=1),
+                name="support_crew_member_order_positive",
+            ),
+            models.UniqueConstraint(
+                fields=("crew", "connection"),
+                condition=Q(ends_on__isnull=True),
+                name="support_one_open_crew_member",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("crew", "starts_on", "boarding_order")),
+            models.Index(fields=("connection", "starts_on")),
+        ]
+
+
+class TransportCrewScheduleOverride(models.Model):
+    """One published manual exception to a crew's reusable shift template."""
+
+    KIND_SHIFT = "shift"
+    KIND_DAY_OFF = "day_off"
+    KIND_CANCELLED = "cancelled"
+    KIND_CHOICES = [
+        (KIND_SHIFT, "Changed shift"),
+        (KIND_DAY_OFF, "Day off"),
+        (KIND_CANCELLED, "Cancelled shift"),
+    ]
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    crew = models.ForeignKey(
+        TransportCrew,
+        on_delete=models.CASCADE,
+        related_name="schedule_overrides",
+    )
+    work_date = models.DateField()
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES)
+    starts_at_time = models.TimeField(null=True, blank=True)
+    ends_at_time = models.TimeField(null=True, blank=True)
+    break_minutes = models.PositiveSmallIntegerField(default=0)
+    note = models.CharField(max_length=240, blank=True, default="")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_support_transport_crew_overrides",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_support_transport_crew_overrides",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("work_date", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("crew", "work_date"),
+                name="support_unique_crew_override_day",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        kind="shift",
+                        starts_at_time__isnull=False,
+                        ends_at_time__isnull=False,
+                    )
+                    | Q(
+                        kind__in=("day_off", "cancelled"),
+                        starts_at_time__isnull=True,
+                        ends_at_time__isnull=True,
+                    )
+                ),
+                name="support_crew_override_payload_valid",
+            ),
+        ]
+        indexes = [models.Index(fields=("crew", "work_date", "kind"))]
+
+
 class TransportRoute(models.Model):
     STATE_DRAFT = HousingAssignment.STATE_DRAFT
     STATE_PUBLISHED = HousingAssignment.STATE_PUBLISHED
@@ -287,6 +557,13 @@ class TransportRoute(models.Model):
     worksite = models.ForeignKey(Worksite, on_delete=models.PROTECT, null=True, blank=True, related_name="transport_routes")
     schedule_template = models.ForeignKey(
         ProjectScheduleTemplate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transport_routes",
+    )
+    crew = models.ForeignKey(
+        TransportCrew,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

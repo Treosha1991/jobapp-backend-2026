@@ -305,6 +305,13 @@ class ScheduledWorkShift(models.Model):
         blank=True,
         related_name="scheduled_shifts",
     )
+    crew = models.ForeignKey(
+        "support.TransportCrew",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scheduled_shifts",
+    )
     work_date = models.DateField()
     starts_at = models.DateTimeField()
     ends_at = models.DateTimeField()
