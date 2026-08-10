@@ -1509,6 +1509,13 @@ def worker_card(request, connection_public_id):
             f"{worker_base_url}?tab=work_transport&month={snapshot['calendar_month']}"
             f"&transport_crew={crew.key}"
         )
+    crew_url_by_key = {
+        crew.key: crew.transport_url for crew in snapshot["transport_crews"]
+    }
+    for day in snapshot["calendar_days"]:
+        if day is None:
+            continue
+        day["transport_url"] = crew_url_by_key.get(day.get("transport_crew_key"))
     for crew in snapshot["related_transport_crews"]:
         crew.transport_url = (
             f"{worker_base_url}?tab=work_transport&month={snapshot['calendar_month']}"

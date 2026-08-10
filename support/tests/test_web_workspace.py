@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timedelta
 
 from django.contrib.auth.models import User
@@ -18,6 +19,7 @@ from support.models import (
     RouteStop,
     ScheduledWorkShift,
     SupportApplication,
+    TransportCrew,
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
@@ -1172,8 +1174,10 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(worker_page, 'data-calendar-navigation>', count=3)
         self.assertContains(worker_page, "window.scrollTo(scrollX, scrollY)")
         self.assertContains(worker_page, 'class="worker-calendar-checkbox"')
-        self.assertContains(worker_page, 'data-calendar-day-template=')
-        self.assertContains(worker_page, 'data-worker-day-crew-target')
+        self.assertContains(worker_page, 'data-worker-transport-dashboard')
+        self.assertContains(worker_page, 'data-calendar-crew-url=')
+        self.assertContains(worker_page, 'loadCrewWorkspace')
+        self.assertContains(worker_page, 'currentCrew.replaceWith(nextCrew)')
         self.assertContains(worker_page, "day.addEventListener('dblclick'")
         self.assertContains(worker_page, "input.checked = !input.checked")
         self.assertContains(worker_page, "user-select:none")
@@ -2296,11 +2300,20 @@ class SupportWorkspaceWebTests(TestCase):
                 published_by=self.owner,
                 published_at=timezone.now(),
             )
+            crew = TransportCrew.objects.create(
+                organization=self.organization,
+                project=project,
+                schedule_template=schedule_template,
+                internal_name=f"Crew {suffix}",
+                starts_on=today,
+                created_by=self.owner,
+            )
             route = TransportRoute.objects.create(
                 organization=self.organization,
                 internal_name=f"Crew route {suffix}",
                 worksite=worksite,
                 schedule_template=schedule_template,
+                crew=crew,
                 driver_vehicle_assignment=driver_assignment,
                 starts_on=today,
                 ends_on=today + timedelta(days=14),
@@ -2328,16 +2341,16 @@ class SupportWorkspaceWebTests(TestCase):
                 dropoff_stop=dropoff,
                 boarding_order=1,
             )
-            return driver_assignment, schedule_template
+            return driver_assignment, schedule_template, route
 
-        first_assignment, first_template = crew_for(
+        first_assignment, first_template, first_route = crew_for(
             suffix="A",
             driver=self.worker_connection,
             project_name="Alpha project",
             start_time="06:00",
             end_time="14:00",
         )
-        second_assignment, second_template = crew_for(
+        second_assignment, second_template, second_route = crew_for(
             suffix="B",
             driver=second_driver,
             project_name="Beta project",
@@ -2377,9 +2390,9 @@ class SupportWorkspaceWebTests(TestCase):
             published_by=self.owner,
             published_at=timezone.now(),
         )
-        for work_date, schedule_template in (
-            (date(2026, 8, 10), first_template),
-            (date(2026, 8, 11), second_template),
+        for work_date, schedule_template, route in (
+            (date(2026, 8, 10), first_template, first_route),
+            (date(2026, 8, 11), second_template, second_route),
         ):
             starts_at = timezone.make_aware(
                 datetime.combine(work_date, schedule_template.starts_at_time)
@@ -2391,6 +2404,7 @@ class SupportWorkspaceWebTests(TestCase):
                 organization=self.organization,
                 connection=passenger,
                 schedule_template=schedule_template,
+                crew=route.crew,
                 work_date=work_date,
                 starts_at=starts_at,
                 ends_at=ends_at,
@@ -2420,6 +2434,13 @@ class SupportWorkspaceWebTests(TestCase):
         second_key = f"{second_assignment.public_id}.{second_template.public_id}"
         self.assertContains(page, f"transport_crew={first_key}")
         self.assertContains(page, f"transport_crew={second_key}")
+        calendar_crew_urls = re.findall(
+            r'data-calendar-crew-url="([^"]*)"', page.content.decode()
+        )
+        self.assertTrue(
+            any(f"transport_crew={first_key}" in item for item in calendar_crew_urls),
+            calendar_crew_urls,
+        )
 
         second_page = self.client.get(f"{base_url}&transport_crew={second_key}")
         self.assertEqual(second_page.status_code, 200)
