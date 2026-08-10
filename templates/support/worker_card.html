@@ -55,6 +55,7 @@
   .worker-calendar-day.has-other-template:not(.is-selected-template) { opacity:.48; filter:saturate(.55); }
   .worker-calendar-day.is-selected-template { border-color:#62f59b; background:rgba(24,223,103,.17); box-shadow:inset 0 0 0 2px rgba(24,223,103,.72),0 0 18px rgba(24,223,103,.12); }
   .worker-calendar-day.is-selected { border-color:#6ec7ff; background:rgba(110,199,255,.17); box-shadow:inset 0 0 0 2px rgba(110,199,255,.95); transform:translateY(-1px); }
+  .worker-calendar-day.is-viewed { outline:2px solid rgba(110,199,255,.9); outline-offset:1px; }
   .worker-calendar-conflict-mark { display:inline-grid; width:15px; height:15px; place-items:center; border-radius:999px; background:#ff6b6b; color:#fff; font-size:10px; line-height:1; }
   .worker-calendar-time { color:#d7fce3; font-size:9px; font-weight:800; line-height:1.1; white-space:nowrap; }
   .worker-calendar-time.is-preview { color:#ffe4ad; }
@@ -152,6 +153,18 @@
   .worker-related-crew span { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
   .worker-section-title { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
   .worker-section-title h2 { margin:0; }
+  .worker-day-crew-view { display:grid; gap:8px; }
+  .worker-day-crew-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 9px; border:1px solid rgba(110,199,255,.35); border-radius:10px; background:rgba(110,199,255,.07); }
+  .worker-day-crew-head strong { font-size:12px; }
+  .worker-day-crew-head .jh-btn { padding:5px 8px; font-size:9px; }
+  .worker-day-crew-card { padding:9px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.22); }
+  .worker-day-crew-schedule { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .worker-day-crew-schedule strong { overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+  .worker-day-crew-schedule span { flex:none; color:#d7fce3; font-size:10px; font-weight:800; }
+  .worker-day-crew-meta { display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:5px; color:var(--muted); font-size:10px; }
+  .worker-day-crew-people { display:grid; gap:4px; margin-top:8px; }
+  .worker-day-crew-person { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-top:4px; border-top:1px solid rgba(110,199,255,.13); font-size:10px; }
+  .worker-day-crew-person span { color:var(--muted); }
   .worker-housing-map { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:14px; }
   .worker-room { padding:13px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.2); }
   .worker-room h3 { margin:0 0 10px; }
@@ -245,8 +258,33 @@
           if (count) count.textContent = selected.length;
           if (actions) actions.hidden = selected.length === 0;
         };
+        var crewDefault = document.querySelector('[data-worker-crew-default-view]');
+        var crewTarget = document.querySelector('[data-worker-day-crew-target]');
+        var showCalendarDay = function (input) {
+          var template = form.querySelector('[data-calendar-day-template="' + input.value + '"]');
+          if (!template || !crewTarget || !crewDefault) return;
+          crewTarget.replaceChildren(template.content.cloneNode(true));
+          crewTarget.hidden = false;
+          crewDefault.hidden = true;
+          inputs.forEach(function (candidate) {
+            var day = candidate.closest('[data-calendar-day]');
+            if (day) day.classList.toggle('is-viewed', candidate === input);
+          });
+        };
         inputs.forEach(function (input) {
           input.addEventListener('change', syncSelection);
+          var day = input.closest('[data-calendar-day]');
+          if (!day) return;
+          day.addEventListener('click', function (event) {
+            event.preventDefault();
+            showCalendarDay(input);
+          });
+          day.addEventListener('dblclick', function (event) {
+            event.preventDefault();
+            showCalendarDay(input);
+            input.checked = !input.checked;
+            input.dispatchEvent(new Event('change', {bubbles: true}));
+          });
         });
         if (clearSelection) {
           clearSelection.addEventListener('click', function () {
@@ -289,6 +327,21 @@
       };
       initializeQuickShiftForms(document);
 
+      document.addEventListener('click', function (event) {
+        var reset = event.target.closest('[data-worker-day-crew-reset]');
+        if (!reset) return;
+        var crewDefault = document.querySelector('[data-worker-crew-default-view]');
+        var crewTarget = document.querySelector('[data-worker-day-crew-target]');
+        if (crewDefault) crewDefault.hidden = false;
+        if (crewTarget) {
+          crewTarget.hidden = true;
+          crewTarget.replaceChildren();
+        }
+        document.querySelectorAll('[data-calendar-day].is-viewed').forEach(function (day) {
+          day.classList.remove('is-viewed');
+        });
+      });
+
       var calendarRequest = null;
       var loadCalendar = function (url, updateHistory) {
         var currentSection = document.querySelector('[data-worker-calendar-section]');
@@ -312,6 +365,13 @@
           if (!nextSection) throw new Error('calendar_section_missing');
           currentSection.replaceWith(nextSection);
           initializeQuickShiftForms(nextSection);
+          var crewDefault = document.querySelector('[data-worker-crew-default-view]');
+          var crewTarget = document.querySelector('[data-worker-day-crew-target]');
+          if (crewDefault) crewDefault.hidden = false;
+          if (crewTarget) {
+            crewTarget.hidden = true;
+            crewTarget.replaceChildren();
+          }
           if (updateHistory) history.pushState({jobhubCalendar: true}, '', url);
           window.requestAnimationFrame(function () {
             window.scrollTo(scrollX, scrollY);
@@ -413,13 +473,33 @@
             <div class="worker-calendar">
               {% for day in calendar_days %}
                 {% if day %}
-                  {% if can_operate %}<label data-calendar-day class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
+                  {% if can_operate %}<label data-calendar-day data-calendar-date="{{ day.date|date:'Y-m-d' }}" class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
                     <span class="worker-calendar-number">{{ day.date|date:"j" }}{% if day.has_conflict %}<span class="worker-calendar-conflict-mark">!</span>{% endif %}</span>
                     {% if day.display_shift %}<span class="worker-calendar-time{% if day.display_shift.state == 'draft' %} is-preview{% endif %}">{{ day.display_shift.starts_at|time:"H:i" }}–{{ day.display_shift.ends_at|time:"H:i" }}</span>{% endif %}
                   </span>{% if can_operate %}</label>{% else %}</div>{% endif %}
                 {% else %}<div class="worker-calendar-empty"></div>{% endif %}
               {% endfor %}
             </div>
+            {% for day in calendar_day_crew_views %}
+              <template data-calendar-day-template="{{ day.date|date:'Y-m-d' }}">
+                <div class="worker-day-crew-view">
+                  <div class="worker-day-crew-head"><strong>{{ employer_t.support_worker_day_view }} · {{ day.date|date:'d.m.Y' }}</strong><button class="jh-btn" type="button" data-worker-day-crew-reset>{{ employer_t.support_worker_day_view_reset }}</button></div>
+                  {% for crew_view in day.crew_views %}
+                    <article class="worker-day-crew-card">
+                      <div class="worker-day-crew-schedule"><strong>{{ crew_view.project_label }}{% if crew_view.template_label %} · {{ crew_view.template_label }}{% endif %}</strong><span>{{ crew_view.starts_at|time:'H:i' }}—{{ crew_view.ends_at|time:'H:i' }}</span></div>
+                      <div class="worker-day-crew-meta">
+                        <span>{{ employer_t.support_transport_driver_card }}: {% if crew_view.driver_label %}{{ crew_view.driver_label }}{% else %}{{ employer_t.support_transport_driver_missing }}{% endif %}</span>
+                        {% if crew_view.vehicle_label %}<span>{{ crew_view.vehicle_label }}</span>{% endif %}
+                        <span>{{ employer_t.support_worker_occupancy }}: {{ crew_view.occupied_seat_count }}{% if crew_view.seat_capacity %}/{{ crew_view.seat_capacity }}{% endif %}</span>
+                      </div>
+                      <div class="worker-day-crew-people">
+                        {% for passenger in crew_view.passengers %}<div class="worker-day-crew-person"><strong>{{ passenger.label }}{% if passenger.is_selected_worker %} · {{ employer_t.support_worker_selected_worker }}{% endif %}</strong><span>{{ employer_t.support_transport_role_passenger }}</span></div>{% empty %}<div class="worker-day-crew-person"><span>{{ employer_t.support_transport_no_schedule_passengers }}</span></div>{% endfor %}
+                      </div>
+                    </article>
+                  {% empty %}<div class="worker-empty">{{ employer_t.support_worker_day_no_crew }}</div>{% endfor %}
+                </div>
+              </template>
+            {% endfor %}
             {% if can_operate %}
               <div class="worker-calendar-actions" data-calendar-actions hidden>
                 <div class="worker-calendar-selection"><span>{{ employer_t.support_worker_schedule_selected_count }}: <strong data-selected-count>0</strong></span><button class="jh-btn" type="button" data-clear-selection>{{ employer_t.support_worker_schedule_clear_selection }}</button></div>
@@ -499,6 +579,7 @@
             {% endfor %}
           </nav>
 
+          <div data-worker-crew-default-view>
           {% if selected_transport_crew %}
             <div class="worker-crew-summary">
               <div class="worker-crew-summary-main">
@@ -568,6 +649,8 @@
               </details>
             {% endif %}
           {% endif %}
+          </div>
+          <div data-worker-day-crew-target hidden></div>
         {% else %}<div class="worker-empty">{{ employer_t.support_worker_no_driver_routes }}</div>{% endif %}
         {% if selected_transport_template and transport_new_crew_candidates and can_operate and permissions.work %}
           <dialog class="worker-passenger-modal" id="worker-crew-create" aria-labelledby="worker-crew-create-title"><div class="worker-passenger-modal-card"><div class="worker-passenger-modal-head"><h2 id="worker-crew-create-title">{{ employer_t.support_transport_add_crew }}</h2><button class="jh-btn" type="button" data-worker-passenger-modal-close aria-label="{{ employer_t.support_modal_close }}">×</button></div><p class="jh-subtitle">{{ employer_t.support_transport_add_crew_text }}</p><form method="post">{% csrf_token %}<input type="hidden" name="action" value="transport_schedule_crew_create"><input type="hidden" name="schedule_template_id" value="{{ selected_transport_template.public_id }}"><input type="hidden" name="return_tab" value="work_transport"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}"><label class="jh-field"><span>{{ employer_t.support_transport_driver_vehicle }}</span><select class="jh-input" name="driver_vehicle_assignment_id" required>{% for item in transport_new_crew_candidates %}<option value="{{ item.public_id }}">{{ item.crew_option_label }}</option>{% endfor %}</select></label><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_add_crew }}</button></div></form></div></dialog>

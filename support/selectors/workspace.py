@@ -30,6 +30,9 @@ from support.models import (
     SupportConnection,
     SupportConversation,
     TransportCrewScheduleOverride,
+    TransportCrew,
+    TransportCrewDriver,
+    TransportCrewVehicle,
     TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
@@ -1099,6 +1102,7 @@ def worker_card_snapshot(
     transport_driver_candidates = []
     related_transport_crews = []
     transport_new_crew_candidates = []
+    calendar_day_crew_views = []
     if permissions["transport"]:
         driver_assignments = list(
             DriverVehicleAssignment.objects.filter(
@@ -1745,6 +1749,181 @@ def worker_card_snapshot(
                 ),
             )
 
+    # A calendar click is a read-only look at the operational truth for that
+    # date.  ScheduledWorkShift.crew is deliberately used instead of the
+    # route's current passenger list: a worker may change crew on only some
+    # dates while remaining in the previous crew on the other dates.
+    if (
+        permissions["transport"]
+        and selected_calendar_date is not None
+        and calendar_days
+    ):
+        selected_month_end = date(
+            selected_calendar_date.year,
+            selected_calendar_date.month,
+            monthrange(selected_calendar_date.year, selected_calendar_date.month)[1],
+        )
+        month_crew_ids = {
+            shift.crew_id
+            for day in calendar_days
+            if day is not None
+            for shift in day["shifts"]
+            if shift.crew_id is not None
+        }
+        crews_for_calendar = {
+            crew.id: crew
+            for crew in TransportCrew.objects.filter(id__in=month_crew_ids)
+            .select_related("project", "schedule_template")
+            .prefetch_related(
+                Prefetch(
+                    "driver_assignments",
+                    queryset=TransportCrewDriver.objects.select_related(
+                        "driver_connection__candidate"
+                    ).order_by("-starts_on", "-id"),
+                    to_attr="calendar_driver_assignments",
+                ),
+                Prefetch(
+                    "vehicle_assignments",
+                    queryset=TransportCrewVehicle.objects.select_related("vehicle").order_by(
+                        "-starts_on", "-id"
+                    ),
+                    to_attr="calendar_vehicle_assignments",
+                ),
+            )
+        }
+        crew_shifts_by_day = {}
+        if month_crew_ids:
+            for shift in (
+                ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    crew_id__in=month_crew_ids,
+                    connection_id__in=transport_worker_ids,
+                    state__in=(
+                        ScheduledWorkShift.STATE_DRAFT,
+                        ScheduledWorkShift.STATE_PUBLISHED,
+                    ),
+                    work_date__range=(selected_calendar_date, selected_month_end),
+                )
+                .select_related("connection__candidate", "crew")
+                .order_by("work_date", "crew_id", "connection_id", "-created_at", "-id")
+            ):
+                key = (shift.work_date, shift.crew_id)
+                connections = crew_shifts_by_day.setdefault(key, {})
+                existing = connections.get(shift.connection_id)
+                if existing is None or (
+                    shift.state == ScheduledWorkShift.STATE_PUBLISHED
+                    and existing.state != ScheduledWorkShift.STATE_PUBLISHED
+                ):
+                    connections[shift.connection_id] = shift
+
+        def effective_calendar_assignment(items, work_date):
+            return next(
+                (
+                    item
+                    for item in items
+                    if item.starts_on <= work_date
+                    and (item.ends_on is None or item.ends_on >= work_date)
+                ),
+                None,
+            )
+
+        for day in calendar_days:
+            if day is None:
+                continue
+            views = []
+            handled_crew_ids = set()
+            for selected_shift in day["shifts"]:
+                if selected_shift.crew_id in handled_crew_ids:
+                    continue
+                handled_crew_ids.add(selected_shift.crew_id)
+                crew = crews_for_calendar.get(selected_shift.crew_id)
+                if crew is None:
+                    project = (
+                        selected_shift.schedule_template.project
+                        if selected_shift.schedule_template_id is not None
+                        else (
+                            selected_shift.work_assignment.project
+                            if selected_shift.work_assignment_id is not None
+                            else None
+                        )
+                    )
+                    views.append(
+                        SimpleNamespace(
+                            project_label=(project.worker_visible_name if project else ""),
+                            template_label=(
+                                selected_shift.schedule_template.name
+                                if selected_shift.schedule_template_id is not None
+                                else ""
+                            ),
+                            starts_at=selected_shift.starts_at,
+                            ends_at=selected_shift.ends_at,
+                            driver_label="",
+                            vehicle_label="",
+                            passengers=[],
+                            occupied_seat_count=1,
+                            seat_capacity=None,
+                            selected_worker_role="",
+                        )
+                    )
+                    continue
+
+                participant_shifts = crew_shifts_by_day.get(
+                    (day["date"], crew.id), {}
+                )
+                driver_assignment = effective_calendar_assignment(
+                    crew.calendar_driver_assignments, day["date"]
+                )
+                vehicle_assignment = effective_calendar_assignment(
+                    crew.calendar_vehicle_assignments, day["date"]
+                )
+                driver_connection_id = (
+                    driver_assignment.driver_connection_id
+                    if driver_assignment is not None
+                    and driver_assignment.driver_connection_id in participant_shifts
+                    else None
+                )
+                driver_label = (
+                    _display_name(driver_assignment.driver_connection.candidate)
+                    if driver_connection_id is not None
+                    else ""
+                )
+                passengers = [
+                    SimpleNamespace(
+                        connection_id=participant.connection_id,
+                        label=_display_name(participant.connection.candidate),
+                        is_selected_worker=participant.connection_id == connection.id,
+                    )
+                    for participant in participant_shifts.values()
+                    if participant.connection_id != driver_connection_id
+                ]
+                passengers.sort(key=lambda item: item.label.casefold())
+                vehicle = vehicle_assignment.vehicle if vehicle_assignment else None
+                participant_count = len(participant_shifts)
+                views.append(
+                    SimpleNamespace(
+                        project_label=crew.project.worker_visible_name,
+                        template_label=crew.schedule_template.name,
+                        starts_at=selected_shift.starts_at,
+                        ends_at=selected_shift.ends_at,
+                        driver_label=driver_label,
+                        vehicle_label=(
+                            f"{vehicle.registration_identifier} · {vehicle.internal_name}"
+                            if vehicle is not None
+                            else ""
+                        ),
+                        passengers=passengers,
+                        occupied_seat_count=participant_count,
+                        seat_capacity=(vehicle.seat_capacity if vehicle is not None else None),
+                        selected_worker_role=(
+                            "driver"
+                            if driver_connection_id == connection.id
+                            else "passenger"
+                        ),
+                    )
+                )
+            day["crew_views"] = views
+            calendar_day_crew_views.append(day)
+
     document_packages = []
     if permissions["document_request"]:
         document_packages = list(
@@ -1774,6 +1953,7 @@ def worker_card_snapshot(
         "has_schedule_templates": has_schedule_templates,
         "scheduled_shifts": scheduled_shifts,
         "calendar_days": calendar_days,
+        "calendar_day_crew_views": calendar_day_crew_views,
         "selected_calendar_date": selected_calendar_date,
         "calendar_previous_month": calendar_previous_month,
         "calendar_next_month": calendar_next_month,
