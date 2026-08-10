@@ -1685,6 +1685,10 @@ class SupportWorkspaceWebTests(TestCase):
             candidate=replacement_user,
             stage=SupportConnection.STAGE_COORDINATOR,
         )
+        replacement_connection.has_driving_license = True
+        replacement_connection.save(
+            update_fields=["has_driving_license", "updated_at"]
+        )
         housing_site = HousingSite.objects.create(
             organization=self.organization,
             internal_name="Passenger house",
@@ -1770,6 +1774,23 @@ class SupportWorkspaceWebTests(TestCase):
             organization=self.organization,
             driver_connection=self.worker_connection,
             vehicle=vehicle,
+            starts_on=today,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        replacement_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Replacement driver's car",
+            registration_identifier="NL-DR-02",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        replacement_driver_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=replacement_connection,
+            vehicle=replacement_vehicle,
             starts_on=today,
             state=DriverVehicleAssignment.STATE_PUBLISHED,
             created_by=self.owner,
@@ -1890,6 +1911,29 @@ class SupportWorkspaceWebTests(TestCase):
             published_by=self.owner,
             published_at=timezone.now(),
         )
+        replacement_remaining_shift = ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=replacement_connection,
+            work_assignment=replacement_work,
+            work_date=shift_date + timedelta(days=1),
+            starts_at=timezone.make_aware(
+                datetime.combine(
+                    shift_date + timedelta(days=1),
+                    datetime.strptime("16:00", "%H:%M").time(),
+                )
+            ),
+            ends_at=timezone.make_aware(
+                datetime.combine(
+                    shift_date + timedelta(days=1),
+                    datetime.strptime("20:00", "%H:%M").time(),
+                )
+            ),
+            break_minutes=0,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
         previous_template = ProjectScheduleTemplate.objects.create(
             project=project,
             name="Previous crew",
@@ -1941,7 +1985,10 @@ class SupportWorkspaceWebTests(TestCase):
             follow=True,
         )
         self.assertEqual(replaced.status_code, 200)
-        self.assertContains(replaced, "Crew passenger replaced")
+        self.assertContains(
+            replaced,
+            "Passenger replaced for the selected schedule dates",
+        )
         self.assertFalse(
             TransportPassengerAssignment.objects.filter(
                 route=route,
@@ -1952,7 +1999,7 @@ class SupportWorkspaceWebTests(TestCase):
             route=route,
             connection=replacement_connection,
         )
-        self.assertTrue(
+        self.assertFalse(
             ScheduledWorkShift.objects.filter(
                 connection=passenger_connection,
                 work_date=shift_date,
@@ -1972,7 +2019,17 @@ class SupportWorkspaceWebTests(TestCase):
             replacement_old_shift.state,
             ScheduledWorkShift.STATE_CANCELLED,
         )
-        self.assertFalse(
+        replacement_remaining_shift.refresh_from_db()
+        self.assertEqual(
+            replacement_remaining_shift.state,
+            ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        replacement_driver_assignment.refresh_from_db()
+        self.assertEqual(
+            replacement_driver_assignment.state,
+            DriverVehicleAssignment.STATE_PUBLISHED,
+        )
+        self.assertTrue(
             TransportPassengerAssignment.objects.filter(
                 route=previous_route,
                 connection=replacement_connection,

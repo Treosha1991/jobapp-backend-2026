@@ -677,7 +677,6 @@ def projects_snapshot(
                     housing,
                 )
 
-            driver_ids = set(assignment_by_driver_id)
             project_crews = sorted(
                 crew_by_key.values(),
                 key=lambda item: (
@@ -711,7 +710,6 @@ def projects_snapshot(
                     if (
                         connection.id == crew.driver_connection.id
                         or connection.id in assigned_ids
-                        or connection.id in driver_ids
                     ):
                         continue
                     housing = current_housing_by_connection_id.get(connection.id)
@@ -1579,7 +1577,6 @@ def worker_card_snapshot(
                 if (
                     item.id == transport_driver_connection.id
                     or item.id in assigned_ids
-                    or item.id in active_driver_ids
                 ):
                     continue
                 housing = published_housing.get(item.id)

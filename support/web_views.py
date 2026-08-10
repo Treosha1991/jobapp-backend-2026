@@ -410,6 +410,19 @@ def _transport_operation_error_key(error):
         return "support_transport_passenger_is_driver"
     if "transport_passenger_unchanged" in detail:
         return "support_transport_passenger_unchanged"
+    if "connection_not_ready_for_operations" in detail:
+        return "support_transport_passenger_not_ready"
+    if "connection_already_in_route" in detail:
+        return "support_transport_passenger_already_in_crew"
+    if "driver_cannot_be_route_passenger" in detail:
+        return "support_transport_passenger_same_as_driver"
+    if (
+        "project_schedule_template_not_available" in detail
+        or "transport_crew_template_mismatch" in detail
+    ):
+        return "support_transport_template_unavailable"
+    if "published_assignment_for_worker_required" in detail:
+        return "support_transport_passenger_assignment_unavailable"
     if "work_project_capacity_reached" in detail:
         return "support_worker_work_project_capacity_reached"
     return "support_transport_operation_error"
@@ -1338,6 +1351,10 @@ def _worker_card_operation(request, *, snapshot):
         else:
             raise ValueError("operation_unknown")
     except (APIException, ValueError) as error:
+        print(
+            "[SUPPORT-WORKER-VALIDATION] "
+            f"action={action} detail={getattr(error, 'detail', error)}"
+        )
         message_key = (
             "support_worker_housing_check_out_error"
             if action == "housing_check_out"
@@ -1790,6 +1807,10 @@ def projects_workspace(request, project_public_id=None):
                 )
             raise ValueError("project_operation_unknown")
         except (APIException, ValueError) as error:
+            print(
+                "[SUPPORT-PROJECT-VALIDATION] "
+                f"action={action} detail={getattr(error, 'detail', error)}"
+            )
             error_key = (
                 _transport_operation_error_key(error)
                 if action.startswith("transport_schedule_passenger_")

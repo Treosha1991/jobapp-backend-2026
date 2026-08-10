@@ -400,7 +400,13 @@ def create_worker_project_assignment(
     return assignment
 
 
-def publish_worker_project_assignment(*, actor, assignment, replace_conflicting_assignments=False):
+def publish_worker_project_assignment(
+    *,
+    actor,
+    assignment,
+    replace_conflicting_assignments=False,
+    allow_parallel_assignments=False,
+):
     organization = assignment.organization
     require_permission(user=actor, organization=organization, permission_code=SCHEDULE_MANAGE)
     with transaction.atomic():
@@ -429,7 +435,11 @@ def publish_worker_project_assignment(*, actor, assignment, replace_conflicting_
             starts_at=assignment.starts_at,
             ends_at=assignment.ends_at,
         )
-        if conflicting_assignments.exists() and not replace_conflicting_assignments:
+        if (
+            conflicting_assignments.exists()
+            and not replace_conflicting_assignments
+            and not allow_parallel_assignments
+        ):
             raise ValidationError({"assignment": "work_assignment_conflicts_with_published_assignment"})
         occupied_places = _period_overlaps(
             WorkerProjectAssignment.objects.select_for_update()
@@ -1498,7 +1508,7 @@ def _published_assignment_for_crew_member(
     return publish_worker_project_assignment(
         actor=actor,
         assignment=draft,
-        replace_conflicting_assignments=True,
+        allow_parallel_assignments=True,
     )
 
 
@@ -1968,6 +1978,8 @@ def add_passenger_to_driver_schedule(
     driver_connection,
     schedule_template,
     passenger_connection,
+    replace_conflicting_schedule=False,
+    allow_driver_on_other_dates=False,
 ):
     """Add a passenger to one driver's schedule and publish all related data.
 
@@ -2161,12 +2173,13 @@ def add_passenger_to_driver_schedule(
             connection=passenger_connection,
         ).exists():
             raise ValidationError({"connection": "connection_already_in_route"})
-        if DriverVehicleAssignment.objects.select_for_update().filter(
+        passenger_has_vehicle = DriverVehicleAssignment.objects.select_for_update().filter(
             organization=organization,
             driver_connection=passenger_connection,
             state=DriverVehicleAssignment.STATE_PUBLISHED,
             starts_on__lte=today,
-        ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today)).exists():
+        ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today)).exists()
+        if passenger_has_vehicle and not allow_driver_on_other_dates:
             raise ValidationError({"connection": "driver_already_has_vehicle_assignment"})
 
         pickup_stop, _ = RouteStop.objects.get_or_create(
@@ -2241,10 +2254,35 @@ def add_passenger_to_driver_schedule(
             work_assignment = publish_worker_project_assignment(
                 actor=actor,
                 assignment=work_assignment,
-                replace_conflicting_assignments=True,
+                allow_parallel_assignments=True,
             )
 
+        replaced_conflicting_shift_count = 0
         for driver_shift in driver_shifts:
+            if replace_conflicting_schedule:
+                conflicting_shifts = list(
+                    ScheduledWorkShift.objects.select_for_update()
+                    .filter(
+                        organization=organization,
+                        connection=passenger_connection,
+                        work_date=driver_shift.work_date,
+                        state__in=(
+                            ScheduledWorkShift.STATE_DRAFT,
+                            ScheduledWorkShift.STATE_PUBLISHED,
+                        ),
+                    )
+                    .exclude(crew=crew)
+                    .order_by("starts_at", "id")
+                )
+                for conflicting_shift in conflicting_shifts:
+                    if conflicting_shift.state == ScheduledWorkShift.STATE_DRAFT:
+                        delete_scheduled_shift_draft(
+                            actor=actor,
+                            shift=conflicting_shift,
+                        )
+                    else:
+                        cancel_scheduled_shift(actor=actor, shift=conflicting_shift)
+                    replaced_conflicting_shift_count += 1
             day_shifts = list(
                 ScheduledWorkShift.objects.select_for_update().filter(
                     organization=organization,
@@ -2310,6 +2348,7 @@ def add_passenger_to_driver_schedule(
                 "schedule_template": str(schedule_template.public_id),
                 "connection": str(passenger_connection.public_id),
                 "copied_shift_count": len(driver_shifts),
+                "replaced_conflicting_shift_count": replaced_conflicting_shift_count,
             },
         )
         enqueue_support_notification(
@@ -2413,13 +2452,12 @@ def replace_passenger_in_driver_schedule(
     passenger_assignment,
     replacement_connection,
 ):
-    """Move a worker into the selected crew and replace their future schedule.
+    """Replace one crew seat only on dates used by the selected crew.
 
-    A replacement may already be a passenger of another crew or have another
-    published schedule.  Those future memberships and shifts are closed in
-    the same transaction before the selected driver's schedule is copied.
-    Any validation error rolls the entire operation back, including the
-    original passenger seat.
+    Other crew memberships and shifts on non-overlapping dates remain intact.
+    On a selected crew date, another shift of the replacement worker is
+    cancelled and replaced by this crew's shift.  This makes the per-day
+    ScheduledWorkShift.crew relation the source of truth for crew composition.
     """
 
     organization = passenger_assignment.route.organization
@@ -2469,50 +2507,34 @@ def replace_passenger_in_driver_schedule(
             organization=organization,
         )
 
-        previous_passenger_rows = list(
-            TransportPassengerAssignment.objects.select_for_update()
-            .select_related("route__crew")
-            .filter(
-                connection=replacement_connection,
-                route__organization=organization,
-                route__state__in=(
-                    TransportRoute.STATE_DRAFT,
-                    TransportRoute.STATE_PUBLISHED,
-                ),
-            )
-            .filter(Q(route__ends_on__isnull=True) | Q(route__ends_on__gte=today))
-            .exclude(route=route)
-        )
-        previous_routes = []
-        for passenger_row in previous_passenger_rows:
-            previous_route = passenger_row.route
-            passenger_row.delete()
-            previous_routes.append(previous_route)
-            if previous_route.crew_id is not None:
-                _close_open_crew_membership(
-                    crew=previous_route.crew,
-                    connection=replacement_connection,
-                    effective_on=today,
-                )
-        for previous_route in previous_routes:
-            for order, remaining in enumerate(
-                TransportPassengerAssignment.objects.select_for_update()
-                .filter(route=previous_route)
-                .order_by("boarding_order", "id"),
-                start=1,
-            ):
-                if remaining.boarding_order != order:
-                    remaining.boarding_order = order
-                    remaining.save(update_fields=["boarding_order", "updated_at"])
-
-        from .timekeeping import cancel_scheduled_shift, delete_scheduled_shift_draft
-
-        previous_future_shifts = list(
+        crew = ensure_transport_crew_for_route(actor=actor, route=route)
+        target_driver_shifts = list(
             ScheduledWorkShift.objects.select_for_update()
             .filter(
                 organization=organization,
-                connection=replacement_connection,
+                connection=route.driver_vehicle_assignment.driver_connection,
+                schedule_template=route.schedule_template,
+                crew=crew,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
                 work_date__gte=today,
+            )
+            .order_by("work_date", "starts_at", "id")
+        )
+        if not target_driver_shifts:
+            raise ValidationError(
+                {"schedule_template": "driver_template_schedule_required"}
+            )
+        target_dates = {item.work_date for item in target_driver_shifts}
+
+        from .timekeeping import cancel_scheduled_shift, delete_scheduled_shift_draft
+
+        old_passenger_shifts = list(
+            ScheduledWorkShift.objects.select_for_update()
+            .filter(
+                organization=organization,
+                connection=old_connection,
+                crew=crew,
+                work_date__in=target_dates,
                 state__in=(
                     ScheduledWorkShift.STATE_DRAFT,
                     ScheduledWorkShift.STATE_PUBLISHED,
@@ -2520,7 +2542,7 @@ def replace_passenger_in_driver_schedule(
             )
             .order_by("work_date", "starts_at", "id")
         )
-        for shift in previous_future_shifts:
+        for shift in old_passenger_shifts:
             if shift.state == ScheduledWorkShift.STATE_DRAFT:
                 delete_scheduled_shift_draft(actor=actor, shift=shift)
             else:
@@ -2538,6 +2560,8 @@ def replace_passenger_in_driver_schedule(
             driver_connection=route.driver_vehicle_assignment.driver_connection,
             schedule_template=route.schedule_template,
             passenger_connection=replacement_connection,
+            replace_conflicting_schedule=True,
+            allow_driver_on_other_dates=True,
         )
         if replacement.boarding_order != original_boarding_order:
             replacement.boarding_order = original_boarding_order
@@ -2561,8 +2585,8 @@ def replace_passenger_in_driver_schedule(
                 "previous_passenger_assignment": str(old_assignment_id),
                 "previous_connection": str(old_connection.public_id),
                 "replacement_connection": str(replacement_connection.public_id),
-                "detached_route_count": len(previous_routes),
-                "replaced_shift_count": len(previous_future_shifts),
+                "target_dates": [item.isoformat() for item in sorted(target_dates)],
+                "removed_previous_passenger_shift_count": len(old_passenger_shifts),
             },
         )
         now = timezone.now()
