@@ -29,7 +29,7 @@ from support.models import (
     WorkProject,
 )
 from support.permission_codes import HOUSING_MANAGE, SCHEDULE_MANAGE, TRANSPORT_MANAGE
-from support.permissions import require_permission, require_worker_connection_access
+from support.permissions import has_permission, require_permission, require_worker_connection_access
 
 from .audit import record_audit_event
 from .notifications import enqueue_support_notification
@@ -2268,6 +2268,342 @@ def create_transport_crew_for_schedule(
             },
         )
     return route
+
+
+def sync_worker_schedule_transport(
+    *,
+    actor,
+    organization,
+    connection,
+    schedule_template,
+    work_dates,
+):
+    """Attach newly published template shifts to the matching transport crew.
+
+    A worker with a published vehicle assignment is the driver and gets a
+    driver crew for that template.  Every other worker joins an existing crew
+    for the same template as a passenger when a seat is available.  The
+    operation deliberately uses the selected work dates instead of ``today``
+    so managers can also repair or enter historical schedules.
+    """
+
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    # A schedule manager without transport rights must still be able to plan
+    # work.  In that case only skip the automatic crew synchronization.
+    if not has_permission(
+        user=actor,
+        organization=organization,
+        permission_code=TRANSPORT_MANAGE,
+    ):
+        return None
+    dates = sorted(set(work_dates))
+    if not dates:
+        raise ValidationError({"work_dates": "schedule_dates_required"})
+
+    with transaction.atomic():
+        connection = SupportConnection.objects.select_for_update().get(pk=connection.pk)
+        template = (
+            ProjectScheduleTemplate.objects.select_for_update()
+            .select_related("project__worksite")
+            .get(pk=schedule_template.pk)
+        )
+        _require_connection_for_operations(
+            connection=connection,
+            organization=organization,
+        )
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=connection,
+        )
+        if (
+            template.project.organization_id != organization.id
+            or not template.is_active
+            or not template.project.is_active
+            or not template.project.worksite.is_active
+        ):
+            raise ValidationError(
+                {"schedule_template": "project_schedule_template_not_available"}
+            )
+
+        shifts = list(
+            ScheduledWorkShift.objects.select_for_update()
+            .filter(
+                organization=organization,
+                connection=connection,
+                schedule_template=template,
+                work_date__in=dates,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            )
+            .order_by("work_date", "starts_at", "id")
+        )
+        if not shifts:
+            return None
+
+        first_date = dates[0]
+        last_date = dates[-1]
+        driver_assignment = None
+        if connection.has_driving_license:
+            driver_assignment = (
+                DriverVehicleAssignment.objects.select_for_update()
+                .select_related("vehicle", "driver_connection__candidate")
+                .filter(
+                    organization=organization,
+                    driver_connection=connection,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                    vehicle__is_active=True,
+                    starts_on__lte=first_date,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=last_date))
+                .order_by("-starts_on", "-id")
+                .first()
+            )
+
+        if driver_assignment is not None:
+            route = (
+                TransportRoute.objects.select_for_update()
+                .filter(
+                    driver_vehicle_assignment=driver_assignment,
+                    schedule_template=template,
+                    state__in=(
+                        TransportRoute.STATE_DRAFT,
+                        TransportRoute.STATE_PUBLISHED,
+                    ),
+                )
+                .first()
+            )
+            if route is None:
+                driver_name = (
+                    connection.candidate.get_full_name().strip()
+                    or connection.candidate.username
+                )
+                route = TransportRoute.objects.create(
+                    organization=organization,
+                    internal_name=(
+                        f"{template.project.internal_name} · {driver_name} · "
+                        f"{driver_assignment.vehicle.registration_identifier} · "
+                        f"{uuid.uuid4().hex[:6]}"
+                    )[:160],
+                    worksite=template.project.worksite,
+                    schedule_template=template,
+                    driver_vehicle_assignment=driver_assignment,
+                    starts_on=first_date,
+                    ends_on=None,
+                    departure_time=template.starts_at_time,
+                    state=TransportRoute.STATE_PUBLISHED,
+                    published_by=actor,
+                    published_at=timezone.now(),
+                    created_by=actor,
+                )
+            else:
+                update_fields = []
+                if route.starts_on > first_date:
+                    route.starts_on = first_date
+                    update_fields.append("starts_on")
+                if route.state != TransportRoute.STATE_PUBLISHED:
+                    route.state = TransportRoute.STATE_PUBLISHED
+                    route.published_by = actor
+                    route.published_at = timezone.now()
+                    update_fields.extend(("state", "published_by", "published_at"))
+                if update_fields:
+                    route.save(update_fields=[*update_fields, "updated_at"])
+            crew = ensure_transport_crew_for_route(actor=actor, route=route)
+            ScheduledWorkShift.objects.filter(pk__in=[item.pk for item in shifts]).update(
+                crew=crew
+            )
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="transport.schedule_driver_auto_assigned",
+                target=crew,
+                details={
+                    "connection": str(connection.public_id),
+                    "schedule_template": str(template.public_id),
+                    "work_dates": [item.isoformat() for item in dates],
+                },
+            )
+            orphan_connection_ids = list(
+                ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    schedule_template=template,
+                    work_date__in=dates,
+                    state=ScheduledWorkShift.STATE_PUBLISHED,
+                    crew__isnull=True,
+                )
+                .exclude(connection=connection)
+                .values_list("connection_id", flat=True)
+                .distinct()
+            )
+            for orphan_connection_id in orphan_connection_ids:
+                orphan_connection = SupportConnection.objects.get(
+                    pk=orphan_connection_id
+                )
+                sync_worker_schedule_transport(
+                    actor=actor,
+                    organization=organization,
+                    connection=orphan_connection,
+                    schedule_template=template,
+                    work_dates=dates,
+                )
+            return {"role": "driver", "crew": crew, "route": route}
+
+        # A passenger can only join a real driver crew.  If the employer has
+        # not created one yet, keep the published work schedule intact; it will
+        # be picked up when a driver receives the same template.
+        routes = list(
+            TransportRoute.objects.select_for_update()
+            .select_related(
+                "driver_vehicle_assignment__vehicle",
+                "driver_vehicle_assignment__driver_connection",
+                "schedule_template__project__worksite",
+            )
+            .filter(
+                organization=organization,
+                schedule_template=template,
+                state=TransportRoute.STATE_PUBLISHED,
+                driver_vehicle_assignment__state=DriverVehicleAssignment.STATE_PUBLISHED,
+                driver_vehicle_assignment__vehicle__is_active=True,
+                starts_on__lte=first_date,
+            )
+            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=last_date))
+            .order_by("starts_on", "id")
+        )
+        if not routes:
+            return None
+        routes = [
+            route
+            for route in routes
+            if ScheduledWorkShift.objects.filter(
+                organization=organization,
+                connection=route.driver_vehicle_assignment.driver_connection,
+                schedule_template=template,
+                work_date__in=dates,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            )
+            .values("work_date")
+            .distinct()
+            .count()
+            == len(dates)
+        ]
+        if not routes:
+            return None
+
+        existing_route = next(
+            (
+                route
+                for route in routes
+                if TransportPassengerAssignment.objects.filter(
+                    route=route,
+                    connection=connection,
+                ).exists()
+            ),
+            None,
+        )
+        route = existing_route
+        if route is None:
+            for candidate in routes:
+                passenger_count = TransportPassengerAssignment.objects.filter(
+                    route=candidate
+                ).count()
+                if passenger_count < candidate.driver_vehicle_assignment.vehicle.seat_capacity - 1:
+                    route = candidate
+                    break
+        if route is None:
+            raise ValidationError({"route": "transport_crew_full"})
+
+        crew = ensure_transport_crew_for_route(actor=actor, route=route)
+        if existing_route is None:
+            check_at = timezone.make_aware(
+                datetime.combine(first_date, datetime.max.time()),
+                timezone.get_current_timezone(),
+            )
+            housing = (
+                HousingAssignment.objects.select_for_update()
+                .select_related("place__room__site")
+                .filter(
+                    organization=organization,
+                    connection=connection,
+                    state=HousingAssignment.STATE_PUBLISHED,
+                    check_in_at__lte=check_at,
+                )
+                .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=check_at))
+                .order_by("-check_in_at", "-id")
+                .first()
+            )
+            if housing is None:
+                # Work planning is still valid without company housing.  The
+                # passenger can be attached later after a pickup point exists.
+                return None
+            pickup_stop, _ = RouteStop.objects.get_or_create(
+                route=route,
+                kind=RouteStop.KIND_PICKUP,
+                housing_site=housing.place.room.site,
+                defaults={
+                    "sequence": RouteStop.objects.filter(
+                        route=route,
+                        kind=RouteStop.KIND_PICKUP,
+                    ).count()
+                    + 1,
+                    "label": (
+                        f"{housing.place.room.site.internal_name} · "
+                        f"{housing.place.room.label} · {housing.place.label}"
+                    ),
+                },
+            )
+            dropoff_stop, _ = RouteStop.objects.get_or_create(
+                route=route,
+                kind=RouteStop.KIND_DROPOFF,
+                housing_site=None,
+                defaults={
+                    "sequence": 500,
+                    "label": (
+                        f"{template.project.worker_visible_name} · "
+                        f"{template.project.worksite.city}, "
+                        f"{template.project.worksite.street} "
+                        f"{template.project.worksite.building}"
+                    ),
+                },
+            )
+            boarding_order = (
+                TransportPassengerAssignment.objects.filter(route=route).count() + 1
+            )
+            TransportPassengerAssignment.objects.create(
+                route=route,
+                connection=connection,
+                pickup_stop=pickup_stop,
+                dropoff_stop=dropoff_stop,
+                boarding_order=boarding_order,
+            )
+            TransportCrewMember.objects.get_or_create(
+                crew=crew,
+                connection=connection,
+                ends_on__isnull=True,
+                defaults={
+                    "starts_on": first_date,
+                    "boarding_order": boarding_order,
+                    "created_by": actor,
+                },
+            )
+
+        ScheduledWorkShift.objects.filter(pk__in=[item.pk for item in shifts]).update(
+            crew=crew
+        )
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.schedule_passenger_auto_assigned",
+            target=crew,
+            details={
+                "connection": str(connection.public_id),
+                "schedule_template": str(template.public_id),
+                "work_dates": [item.isoformat() for item in dates],
+            },
+        )
+        return {"role": "passenger", "crew": crew, "route": route}
 
 
 def add_passenger_to_driver_schedule(

@@ -1370,6 +1370,154 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertContains(response, "cleared")
 
+    def test_template_schedule_automatically_assigns_driver_and_passenger_to_crew(self):
+        historical_day = timezone.localdate() - timedelta(days=4)
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Automatic crew site",
+            country_code="NL",
+            city="Lelystad",
+            street="Crew lane",
+            building="8",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Automatic crew project",
+            worker_visible_name="Automatic crew project",
+            worker_capacity=6,
+            starts_on=historical_day,
+            created_by=self.owner,
+        )
+        template = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Morning crew",
+            starts_at_time=datetime.strptime("06:00", "%H:%M").time(),
+            ends_at_time=datetime.strptime("14:00", "%H:%M").time(),
+            created_by=self.owner,
+        )
+        self.worker_connection.has_driving_license = True
+        self.worker_connection.save(update_fields=["has_driving_license", "updated_at"])
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Automatic van",
+            registration_identifier="AUTO-CREW-1",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        driver_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.worker_connection,
+            vehicle=vehicle,
+            starts_on=historical_day,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        self.client.force_login(self.owner)
+        driver_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
+
+        response = self.client.post(
+            driver_url,
+            {
+                "action": "scheduled_shifts_from_template",
+                "schedule_template_id": str(template.public_id),
+                "work_dates": [historical_day.isoformat()],
+                "return_tab": "company",
+                "return_month": historical_day.strftime("%Y-%m"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        route = TransportRoute.objects.get(
+            driver_vehicle_assignment=driver_assignment,
+            schedule_template=template,
+            state=TransportRoute.STATE_PUBLISHED,
+        )
+        driver_shift = ScheduledWorkShift.objects.get(
+            connection=self.worker_connection,
+            schedule_template=template,
+            work_date=historical_day,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(driver_shift.crew_id, route.crew_id)
+
+        passenger_user = User.objects.create_user(
+            username="automatic-crew-passenger",
+            first_name="Automatic",
+            last_name="Passenger",
+            email="automatic-crew-passenger@example.com",
+            password="password",
+        )
+        passenger_application = SupportApplication.objects.create(
+            vacancy=self.worker_connection.vacancy,
+            candidate=passenger_user,
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        passenger_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=passenger_application,
+            candidate=passenger_user,
+            stage=SupportConnection.STAGE_ACTIVE_WORKER,
+        )
+        site = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="Automatic passenger house",
+            country_code="NL",
+            city="Lelystad",
+            street="Home lane",
+            building="2",
+            created_by=self.owner,
+        )
+        room = HousingRoom.objects.create(site=site, label="1A", capacity=2)
+        place = HousingPlace.objects.create(room=room, label="1")
+        HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=passenger_connection,
+            place=place,
+            check_in_at=timezone.make_aware(
+                datetime.combine(historical_day, datetime.min.time())
+            ),
+            state=HousingAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        passenger_url = f"/employer/support/workers/{passenger_connection.public_id}/"
+
+        response = self.client.post(
+            passenger_url,
+            {
+                "action": "scheduled_shifts_from_template",
+                "schedule_template_id": str(template.public_id),
+                "work_dates": [historical_day.isoformat()],
+                "return_tab": "company",
+                "return_month": historical_day.strftime("%Y-%m"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            TransportPassengerAssignment.objects.filter(
+                route=route,
+                connection=passenger_connection,
+            ).exists()
+        )
+        passenger_shift = ScheduledWorkShift.objects.get(
+            connection=passenger_connection,
+            schedule_template=template,
+            work_date=historical_day,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        self.assertEqual(passenger_shift.crew_id, route.crew_id)
+
     def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):
         self.client.force_login(self.owner)
         registry_url = (

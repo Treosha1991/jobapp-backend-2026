@@ -102,6 +102,7 @@ from .services.operations import (
     publish_transport_route,
     publish_worker_project_assignment,
     set_worker_driving_license,
+    sync_worker_schedule_transport,
     schedule_housing_check_out,
 )
 from .services.timekeeping import (
@@ -1158,6 +1159,13 @@ def _worker_card_operation(request, *, snapshot):
                         publish_scheduled_shift(actor=request.user, shift=shift)
                     if had_current_shift:
                         replaced_count += 1
+                sync_worker_schedule_transport(
+                    actor=request.user,
+                    organization=organization,
+                    connection=connection,
+                    schedule_template=template,
+                    work_dates=work_dates,
+                )
             if action == "scheduled_shift_from_template" and len(work_dates) == 1:
                 message_key = (
                     "support_worker_quick_shift_replaced"
