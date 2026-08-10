@@ -1863,6 +1863,71 @@ class SupportWorkspaceWebTests(TestCase):
             route=route,
             connection=passenger_connection,
         )
+        replacement_work = WorkerProjectAssignment.objects.create(
+            organization=self.organization,
+            connection=replacement_connection,
+            project=project,
+            starts_at=timezone.now(),
+            state=WorkerProjectAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        replacement_old_shift = ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=replacement_connection,
+            work_assignment=replacement_work,
+            work_date=shift_date,
+            starts_at=timezone.make_aware(
+                datetime.combine(shift_date, datetime.strptime("16:00", "%H:%M").time())
+            ),
+            ends_at=timezone.make_aware(
+                datetime.combine(shift_date, datetime.strptime("20:00", "%H:%M").time())
+            ),
+            break_minutes=0,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        previous_template = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Previous crew",
+            starts_at_time=datetime.strptime("16:00", "%H:%M").time(),
+            ends_at_time=datetime.strptime("20:00", "%H:%M").time(),
+            created_by=self.owner,
+        )
+        previous_route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Previous passenger crew",
+            worksite=worksite,
+            schedule_template=previous_template,
+            driver_vehicle_assignment=driver_assignment,
+            starts_on=today,
+            state=TransportRoute.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        previous_pickup = RouteStop.objects.create(
+            route=previous_route,
+            kind=RouteStop.KIND_PICKUP,
+            sequence=1,
+            label="Previous pickup",
+        )
+        previous_dropoff = RouteStop.objects.create(
+            route=previous_route,
+            kind=RouteStop.KIND_DROPOFF,
+            sequence=2,
+            label="Previous project",
+        )
+        TransportPassengerAssignment.objects.create(
+            route=previous_route,
+            connection=replacement_connection,
+            pickup_stop=previous_pickup,
+            dropoff_stop=previous_dropoff,
+            boarding_order=1,
+        )
         replaced = self.client.post(
             project_url,
             {
@@ -1899,6 +1964,18 @@ class SupportWorkspaceWebTests(TestCase):
                 connection=replacement_connection,
                 work_date=shift_date,
                 state=ScheduledWorkShift.STATE_PUBLISHED,
+                schedule_template=template,
+            ).exists()
+        )
+        replacement_old_shift.refresh_from_db()
+        self.assertEqual(
+            replacement_old_shift.state,
+            ScheduledWorkShift.STATE_CANCELLED,
+        )
+        self.assertFalse(
+            TransportPassengerAssignment.objects.filter(
+                route=previous_route,
+                connection=replacement_connection,
             ).exists()
         )
 

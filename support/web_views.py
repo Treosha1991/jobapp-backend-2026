@@ -402,6 +402,16 @@ def _transport_operation_error_key(error):
         return "support_transport_driver_unchanged"
     if "transport_crew_driver_busy" in detail:
         return "support_transport_driver_busy"
+    if "passenger_housing_required" in detail:
+        return "support_transport_passenger_requires_housing"
+    if "transport_crew_full" in detail:
+        return "support_transport_crew_full"
+    if "driver_already_has_vehicle_assignment" in detail:
+        return "support_transport_passenger_is_driver"
+    if "transport_passenger_unchanged" in detail:
+        return "support_transport_passenger_unchanged"
+    if "work_project_capacity_reached" in detail:
+        return "support_worker_work_project_capacity_reached"
     return "support_transport_operation_error"
 
 

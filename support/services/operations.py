@@ -2413,7 +2413,14 @@ def replace_passenger_in_driver_schedule(
     passenger_assignment,
     replacement_connection,
 ):
-    """Atomically replace one crew passenger and prepare the new worker's shifts."""
+    """Move a worker into the selected crew and replace their future schedule.
+
+    A replacement may already be a passenger of another crew or have another
+    published schedule.  Those future memberships and shifts are closed in
+    the same transaction before the selected driver's schedule is copied.
+    Any validation error rolls the entire operation back, including the
+    original passenger seat.
+    """
 
     organization = passenger_assignment.route.organization
     require_permission(
@@ -2444,6 +2451,81 @@ def replace_passenger_in_driver_schedule(
             raise ValidationError({"connection": "transport_passenger_unchanged"})
         old_connection = current.connection
         old_assignment_id = current.public_id
+        original_boarding_order = current.boarding_order
+        today = timezone.localdate()
+
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=old_connection,
+        )
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=replacement_connection,
+        )
+        _require_connection_for_operations(
+            connection=replacement_connection,
+            organization=organization,
+        )
+
+        previous_passenger_rows = list(
+            TransportPassengerAssignment.objects.select_for_update()
+            .select_related("route__crew")
+            .filter(
+                connection=replacement_connection,
+                route__organization=organization,
+                route__state__in=(
+                    TransportRoute.STATE_DRAFT,
+                    TransportRoute.STATE_PUBLISHED,
+                ),
+            )
+            .filter(Q(route__ends_on__isnull=True) | Q(route__ends_on__gte=today))
+            .exclude(route=route)
+        )
+        previous_routes = []
+        for passenger_row in previous_passenger_rows:
+            previous_route = passenger_row.route
+            passenger_row.delete()
+            previous_routes.append(previous_route)
+            if previous_route.crew_id is not None:
+                _close_open_crew_membership(
+                    crew=previous_route.crew,
+                    connection=replacement_connection,
+                    effective_on=today,
+                )
+        for previous_route in previous_routes:
+            for order, remaining in enumerate(
+                TransportPassengerAssignment.objects.select_for_update()
+                .filter(route=previous_route)
+                .order_by("boarding_order", "id"),
+                start=1,
+            ):
+                if remaining.boarding_order != order:
+                    remaining.boarding_order = order
+                    remaining.save(update_fields=["boarding_order", "updated_at"])
+
+        from .timekeeping import cancel_scheduled_shift, delete_scheduled_shift_draft
+
+        previous_future_shifts = list(
+            ScheduledWorkShift.objects.select_for_update()
+            .filter(
+                organization=organization,
+                connection=replacement_connection,
+                work_date__gte=today,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
+            )
+            .order_by("work_date", "starts_at", "id")
+        )
+        for shift in previous_future_shifts:
+            if shift.state == ScheduledWorkShift.STATE_DRAFT:
+                delete_scheduled_shift_draft(actor=actor, shift=shift)
+            else:
+                cancel_scheduled_shift(actor=actor, shift=shift)
+
         current.delete()
         if route.crew_id is not None:
             _close_open_crew_membership(
@@ -2457,6 +2539,18 @@ def replace_passenger_in_driver_schedule(
             schedule_template=route.schedule_template,
             passenger_connection=replacement_connection,
         )
+        if replacement.boarding_order != original_boarding_order:
+            replacement.boarding_order = original_boarding_order
+            replacement.save(update_fields=["boarding_order", "updated_at"])
+        for order, remaining in enumerate(
+            TransportPassengerAssignment.objects.select_for_update()
+            .filter(route=route)
+            .order_by("boarding_order", "id"),
+            start=1,
+        ):
+            if remaining.boarding_order != order:
+                remaining.boarding_order = order
+                remaining.save(update_fields=["boarding_order", "updated_at"])
         record_audit_event(
             organization=organization,
             actor=actor,
@@ -2467,6 +2561,8 @@ def replace_passenger_in_driver_schedule(
                 "previous_passenger_assignment": str(old_assignment_id),
                 "previous_connection": str(old_connection.public_id),
                 "replacement_connection": str(replacement_connection.public_id),
+                "detached_route_count": len(previous_routes),
+                "replaced_shift_count": len(previous_future_shifts),
             },
         )
         now = timezone.now()
