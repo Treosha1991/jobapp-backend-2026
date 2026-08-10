@@ -42,7 +42,7 @@
   .worker-calendar-weekdays span { padding:2px 4px; color:var(--muted); text-align:center; font-size:10px; font-weight:900; text-transform:uppercase; }
   .worker-calendar { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; }
   .worker-calendar-empty { min-height:36px; }
-  .worker-calendar-day { position:relative; display:block; min-height:36px; padding:0; border:1px solid var(--line); border-radius:9px; background:rgba(5,22,36,.24); cursor:pointer; overflow:hidden; transition:border-color .14s ease, background .14s ease, transform .14s ease; }
+  .worker-calendar-day { position:relative; display:block; min-height:36px; padding:0; border:1px solid var(--line); border-radius:9px; background:rgba(5,22,36,.24); cursor:pointer; overflow:hidden; user-select:none; -webkit-user-select:none; transition:border-color .14s ease, background .14s ease, transform .14s ease; }
   .worker-calendar-day:hover { border-color:rgba(110,199,255,.62); background:rgba(110,199,255,.07); }
   .worker-calendar-checkbox { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
   .worker-calendar-day-content { min-height:36px; display:grid; align-content:start; gap:1px; padding:4px 6px; }
@@ -281,6 +281,7 @@
           });
           day.addEventListener('dblclick', function (event) {
             event.preventDefault();
+            window.getSelection()?.removeAllRanges();
             showCalendarDay(input);
             input.checked = !input.checked;
             input.dispatchEvent(new Event('change', {bubbles: true}));

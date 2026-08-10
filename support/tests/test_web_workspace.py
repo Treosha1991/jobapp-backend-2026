@@ -1176,6 +1176,8 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(worker_page, 'data-worker-day-crew-target')
         self.assertContains(worker_page, "day.addEventListener('dblclick'")
         self.assertContains(worker_page, "input.checked = !input.checked")
+        self.assertContains(worker_page, "user-select:none")
+        self.assertContains(worker_page, "window.getSelection()?.removeAllRanges()")
         self.assertNotContains(worker_page, '<details data-calendar-day')
         self.assertNotContains(worker_page, 'value="work_draft"')
         self.assertNotContains(worker_page, 'value="scheduled_shift_create"')
