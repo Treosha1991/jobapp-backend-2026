@@ -389,6 +389,34 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(published, "The assignment was published. The worker will receive a notification.")
         self.assertContains(published, "Set check-out date")
 
+        second_room = HousingRoom.objects.create(site=site, label="Room 4", capacity=1)
+        second_place = HousingPlace.objects.create(room=second_room, label="Bed 1")
+        self.client.post(
+            card_url,
+            {
+                "action": "housing_draft",
+                "place_id": str(second_place.public_id),
+                "check_in_on": "2026-09-05",
+            },
+        )
+        conflicting_assignment = HousingAssignment.objects.get(place=second_place)
+        conflict = self.client.post(
+            card_url,
+            {
+                "action": "publish_housing",
+                "assignment_id": str(conflicting_assignment.public_id),
+                "return_tab": "housing",
+                "return_site": str(site.public_id),
+            },
+            follow=True,
+        )
+        self.assertContains(
+            conflict,
+            "Housing cannot be published: the worker already has other published housing during this period.",
+        )
+        conflicting_assignment.refresh_from_db()
+        self.assertEqual(conflicting_assignment.state, HousingAssignment.STATE_DRAFT)
+
         checked_out = self.client.post(
             card_url,
             {

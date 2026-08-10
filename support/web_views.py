@@ -432,6 +432,10 @@ def _worker_operation_error_key(error):
     """Expose expected work-assignment conflicts without hiding the cause."""
 
     detail = str(getattr(error, "detail", error))
+    if "housing_place_conflicts_with_published_assignment" in detail:
+        return "support_worker_housing_place_conflict"
+    if "housing_worker_conflicts_with_published_assignment" in detail:
+        return "support_worker_housing_worker_conflict"
     if "work_assignment_conflicts_with_published_assignment" in detail:
         return "support_worker_work_assignment_conflict"
     if "work_project_capacity_reached" in detail:

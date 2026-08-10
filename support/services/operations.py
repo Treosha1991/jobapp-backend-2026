@@ -263,8 +263,14 @@ def publish_housing_assignment(*, actor, assignment):
             starts_at=assignment.check_in_at,
             ends_at=assignment.check_out_at,
         ).exists()
-        if place_conflict or worker_conflict:
-            raise ValidationError({"assignment": "housing_assignment_conflicts_with_published_assignment"})
+        if place_conflict:
+            raise ValidationError(
+                {"place": "housing_place_conflicts_with_published_assignment"}
+            )
+        if worker_conflict:
+            raise ValidationError(
+                {"connection": "housing_worker_conflicts_with_published_assignment"}
+            )
         assignment.state = HousingAssignment.STATE_PUBLISHED
         assignment.published_by = actor
         assignment.published_at = timezone.now()
