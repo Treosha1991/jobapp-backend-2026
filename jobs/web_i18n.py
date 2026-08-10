@@ -1948,6 +1948,7 @@ TRANSLATIONS["uk"].update({
 
 TRANSLATIONS["ru"].update({
     "support_worker_back": "К рабочему кабинету",
+    "support_worker_card_back": "Назад",
     "support_worker_intro": "Карточка показывает только разделы, разрешённые вашей ролью.",
     "support_worker_vacancy": "Вакансия",
     "support_worker_stage": "Этап",
@@ -2014,6 +2015,7 @@ TRANSLATIONS["ru"].update({
 })
 TRANSLATIONS["en"].update({
     "support_worker_back": "Back to workspace",
+    "support_worker_card_back": "Back",
     "support_worker_intro": "The card shows only sections allowed for your role.",
     "support_worker_vacancy": "Vacancy",
     "support_worker_stage": "Stage",
@@ -2080,6 +2082,7 @@ TRANSLATIONS["en"].update({
 })
 TRANSLATIONS["pl"].update({
     "support_worker_back": "Wróć do panelu",
+    "support_worker_card_back": "Wstecz",
     "support_worker_intro": "Karta pokazuje tylko sekcje dozwolone dla Twojej roli.",
     "support_worker_vacancy": "Oferta",
     "support_worker_stage": "Etap",
@@ -2146,6 +2149,7 @@ TRANSLATIONS["pl"].update({
 })
 TRANSLATIONS["uk"].update({
     "support_worker_back": "До робочого кабінету",
+    "support_worker_card_back": "Назад",
     "support_worker_intro": "Картка показує лише розділи, дозволені вашою роллю.",
     "support_worker_vacancy": "Вакансія",
     "support_worker_stage": "Етап",

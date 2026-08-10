@@ -4,14 +4,13 @@
 
 {% block extra_head %}
 <style>
-  .worker-back { margin-bottom:16px; }
-  .worker-header { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; flex-wrap:wrap; }
-  .worker-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
-  .worker-meta { display:grid; grid-template-columns:repeat(2,minmax(170px,1fr)); gap:10px; min-width:min(100%,420px); }
-  .worker-meta div { padding:12px 13px; border:1px solid var(--line); border-radius:14px; background:rgba(5,22,36,.3); }
-  .worker-meta span { display:block; color:var(--muted); font-size:11px; font-weight:800; }
-  .worker-meta strong { display:block; margin-top:5px; font-size:13px; }
-  .worker-tabs { display:flex; flex-wrap:wrap; gap:9px; margin:20px 0 4px; padding-top:20px; border-top:1px solid var(--line); }
+  .worker-profile-bar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; padding:9px 10px; border:1px solid var(--line); border-radius:14px; background:linear-gradient(135deg,rgba(17,61,92,.72),rgba(5,22,36,.3)); }
+  .worker-profile-back { padding:6px 9px; font-size:11px; white-space:nowrap; }
+  .worker-profile-name { min-width:0; margin:0; overflow:hidden; color:var(--text); font-size:clamp(19px,2.2vw,27px); line-height:1.1; text-overflow:ellipsis; white-space:nowrap; }
+  .worker-profile-stage { min-width:0; display:flex; align-items:center; gap:6px; padding:6px 9px; border:1px solid rgba(110,199,255,.24); border-radius:10px; background:rgba(5,22,36,.32); }
+  .worker-profile-stage span { color:var(--muted); font-size:9px; font-weight:900; letter-spacing:.05em; text-transform:uppercase; }
+  .worker-profile-stage strong { max-width:210px; overflow:hidden; font-size:11px; line-height:1.15; text-overflow:ellipsis; white-space:nowrap; }
+  .worker-tabs { display:flex; flex-wrap:wrap; gap:9px; margin:10px 0 4px; padding-top:10px; border-top:1px solid var(--line); }
   .worker-license-toggle { margin-left:auto; display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--line); border-radius:11px; color:var(--muted); font-size:12px; font-weight:800; }
   .worker-license-toggle input { width:36px; height:20px; margin:0; accent-color:var(--green); cursor:pointer; }
   .worker-warning { margin:19px 0; padding:13px 15px; border:1px solid rgba(255,211,106,.35); border-radius:16px; color:#ffe7ae; background:rgba(255,211,106,.08); line-height:1.45; }
@@ -167,10 +166,22 @@
   .worker-checkout .jh-btn { justify-self:start; padding:7px 10px; font-size:12px; }
   .worker-form small { display:block; margin-top:7px; color:var(--muted); line-height:1.35; }
   @media (max-width:1120px) { .worker-work-transport-grid { grid-template-columns:1fr; } }
-  @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:36px; } .worker-calendar-day-content { padding:4px; } .worker-calendar-time { font-size:8px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } .worker-crew-tabs { grid-template-columns:repeat(auto-fit,minmax(105px,1fr)); } }
+  @media (max-width:850px) { .worker-profile-bar { grid-template-columns:auto minmax(0,1fr); } .worker-profile-stage { grid-column:1 / -1; justify-content:center; } .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:36px; } .worker-calendar-day-content { padding:4px; } .worker-calendar-time { font-size:8px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } .worker-crew-tabs { grid-template-columns:repeat(auto-fit,minmax(105px,1fr)); } }
 </style>
 <script>
-  document.addEventListener('DOMContentLoaded', function () {
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('[data-worker-step-back]').forEach(function (link) {
+        link.addEventListener('click', function (event) {
+          if (window.history.length > 1 && document.referrer) {
+            try {
+              if (new URL(document.referrer).origin === window.location.origin) {
+                event.preventDefault();
+                window.history.back();
+              }
+            } catch (error) {}
+          }
+        });
+      });
       document.querySelectorAll('[data-route-passenger-form]').forEach(function (form) {
       var pickup = form.querySelector('[data-route-pickup]');
       var filter = form.querySelector('[data-worker-filter]');
@@ -337,18 +348,11 @@
 {% endblock %}
 
 {% block content %}
-  <div class="jh-actions worker-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a></div>
   <section class="jh-card">
-    <div class="worker-header">
-      <div>
-        <p class="worker-kicker">JobHub Support · {{ organization.display_name }}</p>
-        <h1 class="jh-title">{{ candidate_name }}</h1>
-        <p class="jh-subtitle">{{ employer_t.support_worker_intro }}</p>
-      </div>
-      <div class="worker-meta">
-        <div><span>{{ employer_t.support_worker_vacancy }}</span><strong>{{ connection.vacancy.internal_title }}</strong></div>
-        <div><span>{{ employer_t.support_worker_stage }}</span><strong>{{ connection.stage_label }}</strong></div>
-      </div>
+    <div class="worker-profile-bar">
+      <a class="jh-btn worker-profile-back" href="{{ workspace_url }}" data-worker-step-back>← {{ employer_t.support_worker_card_back }}</a>
+      <h1 class="worker-profile-name">{{ candidate_name }}</h1>
+      <div class="worker-profile-stage"><span>{{ employer_t.support_worker_stage }}</span><strong>{{ connection.stage_label }}</strong></div>
     </div>
 
     <nav class="worker-tabs" aria-label="{{ candidate_name }}">
