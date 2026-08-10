@@ -102,10 +102,11 @@
   .worker-site-link span { display:block; margin-top:4px; color:var(--muted); font-size:12px; }
   .worker-transport-dashboard { margin-top:14px; padding-top:14px; }
   .worker-transport-dashboard > h2 { margin-bottom:10px; }
-  .worker-crew-tabs { display:flex; gap:7px; margin:0 0 11px; padding:3px 2px 7px; overflow-x:auto; scrollbar-width:thin; }
-  .worker-crew-tab { flex:0 0 auto; min-width:185px; max-width:260px; padding:9px 11px; border:1px solid var(--line); border-radius:12px; color:var(--text); text-decoration:none; background:rgba(5,22,36,.24); }
-  .worker-crew-tab strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
-  .worker-crew-tab span { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
+  .worker-crew-tabs { display:grid; grid-template-columns:repeat(var(--crew-tab-count,1),minmax(0,1fr)); gap:5px; margin:0 0 9px; padding:0; overflow:visible; }
+  .worker-crew-tab { min-width:0; padding:6px 7px; border:1px solid var(--line); border-radius:9px; color:var(--text); text-decoration:none; background:rgba(5,22,36,.24); }
+  .worker-crew-tab strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; line-height:1.15; }
+  .worker-crew-tab span, .worker-crew-tab small { display:block; overflow:hidden; margin-top:2px; color:var(--muted); font-size:9px; line-height:1.1; text-overflow:ellipsis; white-space:nowrap; }
+  .worker-crew-tab small { color:#ccecff; font-weight:800; }
   .worker-crew-tab.active { border-color:var(--green); background:rgba(24,223,103,.10); box-shadow:inset 0 0 0 1px rgba(24,223,103,.16); }
   .worker-crew-summary { display:grid; grid-template-columns:1.25fr 1fr auto; gap:8px; align-items:stretch; }
   .worker-crew-summary-card { min-width:0; padding:10px 11px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.23); }
@@ -166,7 +167,7 @@
   .worker-checkout .jh-btn { justify-self:start; padding:7px 10px; font-size:12px; }
   .worker-form small { display:block; margin-top:7px; color:var(--muted); line-height:1.35; }
   @media (max-width:1120px) { .worker-work-transport-grid { grid-template-columns:1fr; } }
-  @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:36px; } .worker-calendar-day-content { padding:4px; } .worker-calendar-time { font-size:8px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } }
+  @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:36px; } .worker-calendar-day-content { padding:4px; } .worker-calendar-time { font-size:8px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } .worker-crew-tabs { grid-template-columns:repeat(auto-fit,minmax(105px,1fr)); } }
 </style>
 <script>
   document.addEventListener('DOMContentLoaded', function () {
@@ -480,11 +481,12 @@
           {% if selected_transport_template and transport_new_crew_candidates and can_operate and permissions.work %}<button class="jh-btn primary" type="button" data-worker-passenger-dialog-target="worker-crew-create">{{ employer_t.support_transport_add_crew }}</button>{% endif %}
         </div>
         {% if transport_crews %}
-          <nav class="worker-crew-tabs" aria-label="{{ employer_t.support_transport_schedule_switcher }}">
+          <nav class="worker-crew-tabs" aria-label="{{ employer_t.support_transport_schedule_switcher }}" style="--crew-tab-count:{{ transport_crews|length }}">
             {% for crew in transport_crews %}
               <a class="worker-crew-tab {% if selected_transport_crew.key == crew.key %}active{% endif %}" href="{{ crew.transport_url }}">
                 <strong>{{ crew.schedule_template.project.worker_visible_name }}</strong>
-                <span>{{ crew.schedule_template.name }} · {{ crew.schedule_template.starts_at_time|time:'H:i' }}—{{ crew.schedule_template.ends_at_time|time:'H:i' }} · {% if crew.is_selected_worker_driver %}{{ employer_t.support_worker_driver }}{% else %}{{ employer_t.support_transport_role_passenger }}{% endif %}</span>
+                <span>{{ crew.schedule_template.starts_at_time|time:'H:i' }}—{{ crew.schedule_template.ends_at_time|time:'H:i' }}</span>
+                <small>{% if crew.is_selected_worker_driver %}{{ employer_t.support_worker_driver }}{% else %}{{ employer_t.support_transport_role_passenger }}{% endif %}</small>
               </a>
             {% endfor %}
           </nav>
