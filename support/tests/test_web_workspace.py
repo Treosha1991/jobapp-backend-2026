@@ -2185,6 +2185,26 @@ class SupportWorkspaceWebTests(TestCase):
             dropoff_stop=dropoff,
             boarding_order=1,
         )
+        shift_start = timezone.make_aware(
+            datetime.combine(today, schedule_template.starts_at_time)
+        )
+        shift_end = timezone.make_aware(
+            datetime.combine(today, schedule_template.ends_at_time)
+        )
+        ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            schedule_template=schedule_template,
+            crew=route.crew,
+            work_date=today,
+            starts_at=shift_start,
+            ends_at=shift_end,
+            break_minutes=schedule_template.break_minutes,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
         self.client.force_login(self.owner)
         card_url = reverse(
             "support:worker-card",
@@ -2196,7 +2216,7 @@ class SupportWorkspaceWebTests(TestCase):
             f"{assignment.public_id}.{schedule_template.public_id}"
         )
         self.assertContains(page, "worker-crew-summary-main")
-        self.assertContains(page, "Change driver")
+        self.assertContains(page, "Assign or change driver")
 
         response = self.client.post(
             card_url,
@@ -2255,6 +2275,10 @@ class SupportWorkspaceWebTests(TestCase):
         passenger = connection_for("multi-crew-worker", "Multi", "Crew Worker")
         second_driver = connection_for("second-crew-driver", "Second", "Driver")
         third_driver = connection_for("third-crew-driver", "Third", "Driver")
+        second_driver.has_driving_license = True
+        second_driver.save(update_fields=["has_driving_license"])
+        third_driver.has_driving_license = True
+        third_driver.save(update_fields=["has_driving_license"])
 
         def crew_for(*, suffix, driver, project_name, start_time, end_time):
             worksite = Worksite.objects.create(
@@ -2430,6 +2454,8 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(page, "CREW-C")
         self.assertContains(page, "is-selected-template")
         self.assertContains(page, "has-other-template")
+        self.assertContains(page, "Assign or change driver")
+        self.assertContains(page, 'id="worker-driver-change"')
         first_key = f"{first_assignment.public_id}.{first_template.public_id}"
         second_key = f"{second_assignment.public_id}.{second_template.public_id}"
         self.assertContains(page, f"transport_crew={first_key}")
@@ -2447,6 +2473,18 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(second_page, "Second Driver")
         self.assertContains(second_page, "CREW-B")
         self.assertContains(second_page, "Pickup B")
+
+        ScheduledWorkShift.objects.filter(connection=passenger).update(
+            state=ScheduledWorkShift.STATE_CANCELLED,
+            cancelled_at=timezone.now(),
+        )
+        empty_calendar_page = self.client.get(base_url)
+        self.assertEqual(empty_calendar_page.status_code, 200)
+        self.assertNotContains(empty_calendar_page, 'class="worker-crew-tab')
+        self.assertContains(
+            empty_calendar_page,
+            "No crew is assigned to this worker for the selected month.",
+        )
 
     def test_worker_card_allows_one_day_route_and_explains_invalid_period(self):
         vehicle = Vehicle.objects.create(

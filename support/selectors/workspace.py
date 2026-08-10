@@ -1099,6 +1099,14 @@ def worker_card_snapshot(
     transport_driver_candidates = []
     related_transport_crews = []
     transport_new_crew_candidates = []
+    calendar_shift_crew_ids = {
+        shift.crew_id for shift in scheduled_shifts if shift.crew_id is not None
+    }
+    calendar_legacy_template_ids = {
+        shift.schedule_template_id
+        for shift in scheduled_shifts
+        if shift.crew_id is None and shift.schedule_template_id is not None
+    }
     if permissions["transport"]:
         driver_assignments = list(
             DriverVehicleAssignment.objects.filter(
@@ -1372,6 +1380,15 @@ def worker_card_snapshot(
                 "id",
             )
         )
+        # The worker card represents the selected calendar month, not every
+        # historical route membership.  Once all active shifts are removed,
+        # its former crew must disappear from the operational column too.
+        crew_routes = [
+            route
+            for route in crew_routes
+            if route.crew_id in calendar_shift_crew_ids
+            or route.schedule_template_id in calendar_legacy_template_ids
+        ]
         crews_by_key = {}
 
         def add_transport_crew(*, assignment, schedule_template, route=None):
@@ -1410,9 +1427,11 @@ def worker_card_snapshot(
                 ProjectScheduleTemplate.objects.filter(
                     is_active=True,
                     project__organization=organization,
-                    scheduled_shifts__connection=connection,
-                    scheduled_shifts__state=ScheduledWorkShift.STATE_PUBLISHED,
-                    scheduled_shifts__work_date__gte=today,
+                    id__in={
+                        shift.schedule_template_id
+                        for shift in scheduled_shifts
+                        if shift.schedule_template_id is not None
+                    },
                 )
                 .select_related("project__worksite")
                 .distinct()
@@ -1448,8 +1467,6 @@ def worker_card_snapshot(
                 (item for item in transport_crews if item.key == transport_crew_key),
                 None,
             )
-            if selected_transport_crew is None:
-                raise Http404("support_transport_crew_not_found")
         elif transport_template_public_id:
             selected_transport_crew = next(
                 (
@@ -1553,23 +1570,11 @@ def worker_card_snapshot(
                 .order_by("-check_in_at", "-id")
             ):
                 published_housing.setdefault(housing.connection_id, housing)
-            active_driver_ids = set(
-                DriverVehicleAssignment.objects.filter(
-                    organization=organization,
-                    state=DriverVehicleAssignment.STATE_PUBLISHED,
-                    starts_on__lte=today,
-                )
-                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
-                .values_list("driver_connection_id", flat=True)
-            )
             for item in transport_workers:
                 if (
                     item.id == transport_driver_connection.id
                     or not item.has_driving_license
                 ):
-                    continue
-                is_current_passenger = item.id in assigned_ids
-                if item.id in active_driver_ids and not is_current_passenger:
                     continue
                 item.transport_driver_option_label = _display_name(item.candidate)
                 transport_driver_candidates.append(item)
