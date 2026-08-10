@@ -42,12 +42,12 @@
   .worker-calendar-weekdays { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; margin-bottom:4px; }
   .worker-calendar-weekdays span { padding:2px 4px; color:var(--muted); text-align:center; font-size:10px; font-weight:900; text-transform:uppercase; }
   .worker-calendar { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; }
-  .worker-calendar-empty { min-height:52px; }
-  .worker-calendar-day { position:relative; display:block; min-height:52px; padding:0; border:1px solid var(--line); border-radius:10px; background:rgba(5,22,36,.24); cursor:pointer; overflow:hidden; transition:border-color .14s ease, background .14s ease, transform .14s ease; }
+  .worker-calendar-empty { min-height:36px; }
+  .worker-calendar-day { position:relative; display:block; min-height:36px; padding:0; border:1px solid var(--line); border-radius:9px; background:rgba(5,22,36,.24); cursor:pointer; overflow:hidden; transition:border-color .14s ease, background .14s ease, transform .14s ease; }
   .worker-calendar-day:hover { border-color:rgba(110,199,255,.62); background:rgba(110,199,255,.07); }
   .worker-calendar-checkbox { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
-  .worker-calendar-day-content { min-height:52px; display:grid; align-content:start; gap:3px; padding:6px 7px; }
-  .worker-calendar-number { display:flex; align-items:center; justify-content:space-between; gap:5px; font-size:12px; font-weight:900; line-height:1; }
+  .worker-calendar-day-content { min-height:36px; display:grid; align-content:start; gap:1px; padding:4px 6px; }
+  .worker-calendar-number { display:flex; align-items:center; justify-content:space-between; gap:4px; font-size:11px; font-weight:900; line-height:1; }
   .worker-calendar-day.is-today { box-shadow:inset 0 0 0 1px rgba(110,199,255,.65); }
   .worker-calendar-day.has-published { border-color:rgba(24,223,103,.75); background:rgba(24,223,103,.08); }
   .worker-calendar-day.has-draft { border-color:rgba(255,176,71,.85); background:rgba(255,176,71,.08); }
@@ -57,9 +57,9 @@
   .worker-calendar-day.is-selected-template { border-color:#62f59b; background:rgba(24,223,103,.17); box-shadow:inset 0 0 0 2px rgba(24,223,103,.72),0 0 18px rgba(24,223,103,.12); }
   .worker-calendar-day.is-selected { border-color:#6ec7ff; background:rgba(110,199,255,.17); box-shadow:inset 0 0 0 2px rgba(110,199,255,.95); transform:translateY(-1px); }
   .worker-calendar-conflict-mark { display:inline-grid; width:15px; height:15px; place-items:center; border-radius:999px; background:#ff6b6b; color:#fff; font-size:10px; line-height:1; }
-  .worker-calendar-time { color:#d7fce3; font-size:10px; font-weight:800; line-height:1.2; white-space:nowrap; }
+  .worker-calendar-time { color:#d7fce3; font-size:9px; font-weight:800; line-height:1.1; white-space:nowrap; }
   .worker-calendar-time.is-preview { color:#ffe4ad; }
-  .worker-calendar-actions { position:sticky; bottom:10px; z-index:3; margin-top:10px; padding:11px; border:1px solid rgba(110,199,255,.55); border-radius:15px; background:linear-gradient(135deg,rgba(17,61,92,.98),rgba(6,27,45,.98)); box-shadow:0 12px 30px rgba(0,0,0,.28); }
+  .worker-calendar-actions { position:relative; margin-top:7px; padding:11px; border:1px solid rgba(110,199,255,.55); border-radius:15px; background:linear-gradient(135deg,rgba(17,61,92,.98),rgba(6,27,45,.98)); box-shadow:0 8px 22px rgba(0,0,0,.2); }
   .worker-calendar-actions[hidden] { display:none; }
   .worker-calendar-selection { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:9px; color:#dff4ff; font-size:12px; font-weight:900; }
   .worker-calendar-selection strong { color:var(--green); font-size:16px; }
@@ -67,7 +67,10 @@
   .worker-calendar-actions .jh-input { min-height:36px; padding:7px 9px; font-size:12px; }
   .worker-calendar-actions .jh-actions { margin-top:9px; }
   .worker-crew-override { margin-top:10px; padding-top:10px; border-top:1px solid rgba(110,199,255,.28); }
-  .worker-crew-override h4 { margin:0 0 3px; font-size:13px; }
+  .worker-crew-override > summary { width:max-content; list-style:none; cursor:pointer; }
+  .worker-crew-override > summary::-webkit-details-marker { display:none; }
+  .worker-crew-override[open] > summary { border-color:var(--green); }
+  .worker-crew-override-body { margin-top:9px; }
   .worker-crew-override p { margin:0 0 9px; color:var(--muted); font-size:11px; }
   .worker-calendar-legend { display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; color:var(--muted); font-size:10px; }
   .worker-calendar-legend span { display:inline-flex; align-items:center; gap:5px; }
@@ -163,7 +166,7 @@
   .worker-checkout .jh-btn { justify-self:start; padding:7px 10px; font-size:12px; }
   .worker-form small { display:block; margin-top:7px; color:var(--muted); line-height:1.35; }
   @media (max-width:1120px) { .worker-work-transport-grid { grid-template-columns:1fr; } }
-  @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:46px; } .worker-calendar-day-content { padding:5px; } .worker-calendar-time { font-size:9px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } }
+  @media (max-width:850px) { .worker-meta, .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:36px; } .worker-calendar-day-content { padding:4px; } .worker-calendar-time { font-size:8px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } }
 </style>
 <script>
   document.addEventListener('DOMContentLoaded', function () {
@@ -408,11 +411,6 @@
                 {% else %}<div class="worker-calendar-empty"></div>{% endif %}
               {% endfor %}
             </div>
-            <div class="worker-calendar-legend">
-              <span><i class="published"></i>{{ employer_t.support_worker_state_published }}</span>
-              <span><i class="draft"></i>{{ employer_t.support_worker_state_draft }}</span>
-              <span><i class="conflict"></i>{{ employer_t.support_worker_schedule_overlap }}</span>
-            </div>
             {% if can_operate %}
               <div class="worker-calendar-actions" data-calendar-actions hidden>
                 <div class="worker-calendar-selection"><span>{{ employer_t.support_worker_schedule_selected_count }}: <strong data-selected-count>0</strong></span><button class="jh-btn" type="button" data-clear-selection>{{ employer_t.support_worker_schedule_clear_selection }}</button></div>
@@ -423,23 +421,30 @@
                 <p class="jh-help" data-template-empty hidden>{{ employer_t.support_worker_project_templates_empty }}</p>
                 <div class="jh-actions"><button class="jh-btn primary" name="action" value="scheduled_shifts_from_template" type="submit" data-template-submit disabled>{{ employer_t.support_worker_schedule_bulk_apply }}</button><button class="jh-btn" name="action" value="scheduled_shifts_clear" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_bulk_clear }}</button></div>
                 {% if permissions.transport and selected_transport_route %}
-                  <div class="worker-crew-override">
-                    <h4>{{ employer_t.support_crew_override_title }}</h4>
-                    <p>{{ employer_t.support_crew_override_text }}</p>
-                    <input type="hidden" name="route_id" value="{{ selected_transport_route.public_id }}">
-                    <input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}">
-                    <div class="worker-form-grid">
-                      <label class="jh-field"><span>{{ employer_t.support_crew_override_kind }}</span><select class="jh-input" name="override_kind" data-crew-override-kind><option value="shift">{{ employer_t.support_crew_override_shift }}</option><option value="day_off">{{ employer_t.support_crew_override_day_off }}</option><option value="cancelled">{{ employer_t.support_crew_override_cancelled }}</option></select></label>
-                      <label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" type="number" min="0" max="720" name="override_break_minutes" value="{{ selected_transport_template.break_minutes|default:0 }}" data-crew-override-time></label>
-                      <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="time" name="override_starts_at_time" value="{{ selected_transport_template.starts_at_time|time:'H:i' }}" data-crew-override-time></label>
-                      <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" type="time" name="override_ends_at_time" value="{{ selected_transport_template.ends_at_time|time:'H:i' }}" data-crew-override-time></label>
-                      <label class="jh-field"><span>{{ employer_t.support_crew_override_note }}</span><input class="jh-input" name="override_note" maxlength="240"></label>
+                  <details class="worker-crew-override">
+                    <summary class="jh-btn">{{ employer_t.support_crew_override_title }}</summary>
+                    <div class="worker-crew-override-body">
+                      <p>{{ employer_t.support_crew_override_text }}</p>
+                      <input type="hidden" name="route_id" value="{{ selected_transport_route.public_id }}">
+                      <input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}">
+                      <div class="worker-form-grid">
+                        <label class="jh-field"><span>{{ employer_t.support_crew_override_kind }}</span><select class="jh-input" name="override_kind" data-crew-override-kind><option value="shift">{{ employer_t.support_crew_override_shift }}</option><option value="day_off">{{ employer_t.support_crew_override_day_off }}</option><option value="cancelled">{{ employer_t.support_crew_override_cancelled }}</option></select></label>
+                        <label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" type="number" min="0" max="720" name="override_break_minutes" value="{{ selected_transport_template.break_minutes|default:0 }}" data-crew-override-time></label>
+                        <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="time" name="override_starts_at_time" value="{{ selected_transport_template.starts_at_time|time:'H:i' }}" data-crew-override-time></label>
+                        <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" type="time" name="override_ends_at_time" value="{{ selected_transport_template.ends_at_time|time:'H:i' }}" data-crew-override-time></label>
+                        <label class="jh-field"><span>{{ employer_t.support_crew_override_note }}</span><input class="jh-input" name="override_note" maxlength="240"></label>
+                      </div>
+                      <div class="jh-actions"><button class="jh-btn primary" name="action" value="crew_schedule_override" type="submit" formnovalidate>{{ employer_t.support_crew_override_apply }}</button></div>
                     </div>
-                    <div class="jh-actions"><button class="jh-btn primary" name="action" value="crew_schedule_override" type="submit" formnovalidate>{{ employer_t.support_crew_override_apply }}</button></div>
-                  </div>
+                  </details>
                 {% endif %}
               </div>
             {% endif %}
+            <div class="worker-calendar-legend">
+              <span><i class="published"></i>{{ employer_t.support_worker_state_published }}</span>
+              <span><i class="draft"></i>{{ employer_t.support_worker_state_draft }}</span>
+              <span><i class="conflict"></i>{{ employer_t.support_worker_schedule_overlap }}</span>
+            </div>
           </div>
         {% if can_operate %}</form>{% else %}</div>{% endif %}
 
