@@ -78,7 +78,7 @@ from .services.operations import (
     create_transport_crew_for_schedule,
     ensure_transport_crew_for_route,
     remove_passenger_from_driver_schedule,
-    replace_transport_crew_driver,
+    replace_transport_crew_resources_for_dates,
     resolve_transport_crew_schedule_conflict,
     replace_passenger_in_driver_schedule,
     create_driver_vehicle_assignment,
@@ -402,6 +402,19 @@ def _transport_operation_error_key(error):
         return "support_transport_driver_unchanged"
     if "transport_crew_driver_busy" in detail:
         return "support_transport_driver_busy"
+    if "schedule_dates_required" in detail:
+        return "support_transport_driver_dates_required"
+    if "driver_vehicle_assignment_not_active_for_selected_dates" in detail:
+        return "support_transport_driver_vehicle_dates_unavailable"
+    if (
+        "driver_vehicle_assignment_not_available" in detail
+        or "driver_vehicle_assignment_not_published" in detail
+    ):
+        return "support_transport_driver_vehicle_unavailable"
+    if "transport_crew_selected_day_has_no_shift" in detail:
+        return "support_transport_driver_day_has_no_shift"
+    if "transport_crew_vehicle_capacity_too_small" in detail:
+        return "support_transport_driver_vehicle_too_small"
     if "passenger_housing_required" in detail:
         return "support_transport_passenger_requires_housing"
     if "transport_crew_full" in detail:
@@ -834,35 +847,27 @@ def _worker_card_operation(request, *, snapshot):
                 organization=organization,
                 public_id=request.POST.get("route_id"),
             )
-            replacement_connection = get_object_or_404(
-                worker_connection_queryset_for(
-                    user=request.user,
-                    organization=organization,
-                    queryset=SupportConnection.objects.filter(
-                        organization=organization,
-                        is_archived=False,
-                        has_driving_license=True,
-                    ),
+            replacement_assignment = get_object_or_404(
+                DriverVehicleAssignment.objects.select_related(
+                    "driver_connection__candidate",
+                    "vehicle",
                 ),
-                public_id=request.POST.get("replacement_driver_connection_id"),
+                organization=organization,
+                state=DriverVehicleAssignment.STATE_PUBLISHED,
+                driver_connection__has_driving_license=True,
+                driver_connection__is_archived=False,
+                public_id=request.POST.get("replacement_driver_vehicle_assignment_id"),
             )
-            route = replace_transport_crew_driver(
+            work_dates = sorted(
+                {_operation_date(value) for value in request.POST.getlist("work_dates")}
+            )
+            if not work_dates:
+                raise ValidationError({"work_dates": "schedule_dates_required"})
+            replace_transport_crew_resources_for_dates(
                 actor=request.user,
                 route=route,
-                replacement_connection=replacement_connection,
-            )
-            request.POST = request.POST.copy()
-            selected_worker_still_in_crew = (
-                route.driver_vehicle_assignment.driver_connection_id == connection.id
-                or route.passenger_assignments.filter(connection=connection).exists()
-            )
-            request.POST["return_transport_crew"] = (
-                (
-                    f"{route.driver_vehicle_assignment.public_id}."
-                    f"{route.schedule_template.public_id}"
-                )
-                if selected_worker_still_in_crew
-                else ""
+                replacement_assignment=replacement_assignment,
+                work_dates=work_dates,
             )
             messages.success(
                 request,
@@ -1409,6 +1414,7 @@ def worker_card(request, connection_public_id):
         housing_site_public_id=request.GET.get("site"),
         transport_template_public_id=request.GET.get("transport_template"),
         transport_crew_key=request.GET.get("transport_crew"),
+        transport_crew_date=request.GET.get("crew_date"),
     )
     if request.method == "POST":
         return _worker_card_operation(request, snapshot=snapshot)
@@ -1519,7 +1525,10 @@ def worker_card(request, connection_public_id):
     for day in snapshot["calendar_days"]:
         if day is None:
             continue
-        day["transport_url"] = crew_url_by_key.get(day.get("transport_crew_key"))
+        crew_url = crew_url_by_key.get(day.get("transport_crew_key"))
+        day["transport_url"] = (
+            f"{crew_url}&crew_date={day['date'].isoformat()}" if crew_url else None
+        )
     for crew in snapshot["related_transport_crews"]:
         crew.transport_url = (
             f"{worker_base_url}?tab=work_transport&month={snapshot['calendar_month']}"

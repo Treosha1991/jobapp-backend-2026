@@ -20,6 +20,7 @@ from support.models import (
     ScheduledWorkShift,
     SupportApplication,
     TransportCrew,
+    TransportCrewResourceOverride,
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
@@ -2182,6 +2183,68 @@ class SupportWorkspaceWebTests(TestCase):
             published_by=self.owner,
             published_at=timezone.now(),
         )
+        replacement_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Replacement van",
+            registration_identifier="CREW-NEW",
+            seat_capacity=5,
+            created_by=self.owner,
+        )
+        replacement_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=replacement_connection,
+            vehicle=replacement_vehicle,
+            starts_on=today,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        source_schedule_template = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Late",
+            starts_at_time=datetime.strptime("15:00", "%H:%M").time(),
+            ends_at_time=datetime.strptime("20:00", "%H:%M").time(),
+            created_by=self.owner,
+        )
+        source_crew = TransportCrew.objects.create(
+            organization=self.organization,
+            project=project,
+            schedule_template=source_schedule_template,
+            internal_name="Replacement driver's original crew",
+            starts_on=today,
+            created_by=self.owner,
+        )
+        source_route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Replacement driver's original crew",
+            worksite=worksite,
+            schedule_template=source_schedule_template,
+            crew=source_crew,
+            driver_vehicle_assignment=replacement_assignment,
+            starts_on=today,
+            state=TransportRoute.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=replacement_connection,
+            schedule_template=source_schedule_template,
+            crew=source_route.crew,
+            work_date=today,
+            starts_at=timezone.make_aware(
+                datetime.combine(today, source_schedule_template.starts_at_time)
+            ),
+            ends_at=timezone.make_aware(
+                datetime.combine(today, source_schedule_template.ends_at_time)
+            ),
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
         route = TransportRoute.objects.create(
             organization=self.organization,
             internal_name="Driver replacement route",
@@ -2251,7 +2314,10 @@ class SupportWorkspaceWebTests(TestCase):
             {
                 "action": "transport_crew_driver_replace",
                 "route_id": str(route.public_id),
-                "replacement_driver_connection_id": str(replacement_connection.public_id),
+                "replacement_driver_vehicle_assignment_id": str(
+                    replacement_assignment.public_id
+                ),
+                "work_dates": [today.isoformat()],
                 "return_tab": "transport",
                 "return_transport_crew": (
                     f"{assignment.public_id}.{schedule_template.public_id}"
@@ -2261,16 +2327,40 @@ class SupportWorkspaceWebTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "The crew driver has been changed")
+        self.assertContains(response, "The driver and vehicle were assigned")
         route.refresh_from_db()
         assignment.refresh_from_db()
         passenger.refresh_from_db()
+        resource_override = TransportCrewResourceOverride.objects.get(
+            crew=route.crew,
+            work_date=today,
+        )
+        source_resource_override = TransportCrewResourceOverride.objects.get(
+            crew=source_route.crew,
+            work_date=today,
+        )
+        self.assertEqual(
+            resource_override.driver_vehicle_assignment_id,
+            replacement_assignment.id,
+        )
         self.assertEqual(
             route.driver_vehicle_assignment.driver_connection_id,
-            replacement_connection.id,
+            self.worker_connection.id,
         )
-        self.assertEqual(passenger.connection_id, self.worker_connection.id)
-        self.assertEqual(assignment.state, DriverVehicleAssignment.STATE_CANCELLED)
+        self.assertEqual(passenger.connection_id, replacement_connection.id)
+        self.assertEqual(assignment.state, DriverVehicleAssignment.STATE_PUBLISHED)
+        self.assertIsNone(source_resource_override.driver_vehicle_assignment_id)
+        replacement_card_url = reverse(
+            "support:worker-card",
+            kwargs={"connection_public_id": replacement_connection.public_id},
+        )
+        day_page = self.client.get(
+            f"{replacement_card_url}?tab=work_transport&transport_crew="
+            f"{assignment.public_id}.{schedule_template.public_id}"
+            f"&crew_date={today.isoformat()}"
+        )
+        self.assertContains(day_page, "Replacement Driver")
+        self.assertContains(day_page, "CREW-NEW")
 
     def test_worker_transport_card_lists_each_passenger_crew_as_a_tab(self):
         today = timezone.localdate()

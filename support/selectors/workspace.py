@@ -29,6 +29,7 @@ from support.models import (
     SupportApplication,
     SupportConnection,
     SupportConversation,
+    TransportCrewResourceOverride,
     TransportCrewScheduleOverride,
     TransportPassengerAssignment,
     TransportRoute,
@@ -778,6 +779,7 @@ def worker_card_snapshot(
     housing_site_public_id=None,
     transport_template_public_id=None,
     transport_crew_key=None,
+    transport_crew_date=None,
 ):
     """Return one worker card without expanding access beyond its organization.
 
@@ -1488,6 +1490,31 @@ def worker_card_snapshot(
             transport_driver_connection = selected_transport_crew.driver_connection
             selected_transport_template = selected_transport_crew.schedule_template
             selected_transport_route = selected_transport_crew.route
+            viewed_crew_date = parse_date(str(transport_crew_date or ""))
+            if viewed_crew_date is not None and selected_transport_route is not None:
+                resource_override = (
+                    TransportCrewResourceOverride.objects.filter(
+                        crew=selected_transport_route.crew,
+                        work_date=viewed_crew_date,
+                    )
+                    .select_related(
+                        "driver_vehicle_assignment__driver_connection__candidate",
+                        "driver_vehicle_assignment__vehicle",
+                    )
+                    .first()
+                )
+                if resource_override is not None:
+                    transport_driver_assignment = resource_override.driver_vehicle_assignment
+                    transport_driver_connection = (
+                        resource_override.driver_vehicle_assignment.driver_connection
+                        if resource_override.driver_vehicle_assignment is not None
+                        else None
+                    )
+                    selected_transport_crew.has_daily_resource_override = True
+                    selected_transport_crew.is_driverless_for_viewed_date = (
+                        resource_override.driver_vehicle_assignment_id is None
+                    )
+            selected_transport_crew.viewed_date = viewed_crew_date
             existing_crew_assignment_ids = set(
                 TransportRoute.objects.filter(
                     organization=organization,
@@ -1544,6 +1571,12 @@ def worker_card_snapshot(
                 transport_passengers = list(
                     selected_transport_route.passenger_assignments.all()
                 )
+                if transport_driver_connection is not None:
+                    transport_passengers = [
+                        item
+                        for item in transport_passengers
+                        if item.connection_id != transport_driver_connection.id
+                    ]
                 for passenger in transport_passengers:
                     passenger.is_selected_worker = passenger.connection_id == connection.id
                     passenger.chat_conversation = _active_worker_conversation(
@@ -1551,11 +1584,15 @@ def worker_card_snapshot(
                         organization=organization,
                         connection=passenger.connection,
                     )
-            transport_free_seats = max(
-                0,
-                transport_driver_assignment.vehicle.seat_capacity
-                - 1
-                - len(transport_passengers),
+            transport_free_seats = (
+                max(
+                    0,
+                    transport_driver_assignment.vehicle.seat_capacity
+                    - 1
+                    - len(transport_passengers),
+                )
+                if transport_driver_assignment is not None
+                else 0
             )
             assigned_ids = {item.connection_id for item in transport_passengers}
             published_housing = {}
@@ -1570,17 +1607,48 @@ def worker_card_snapshot(
                 .order_by("-check_in_at", "-id")
             ):
                 published_housing.setdefault(housing.connection_id, housing)
+            candidate_period_start = selected_calendar_date or today
+            candidate_period_end = date(
+                candidate_period_start.year,
+                candidate_period_start.month,
+                monthrange(candidate_period_start.year, candidate_period_start.month)[1],
+            )
+            transport_driver_candidates = list(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                    driver_connection_id__in=transport_worker_ids,
+                    driver_connection__has_driving_license=True,
+                    starts_on__lte=candidate_period_end,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=candidate_period_start))
+                .exclude(
+                    id=(
+                        transport_driver_assignment.id
+                        if transport_driver_assignment is not None
+                        else None
+                    )
+                )
+                .select_related("driver_connection__candidate", "vehicle")
+                .order_by(
+                    "driver_connection__candidate__first_name",
+                    "driver_connection__candidate__last_name",
+                    "vehicle__registration_identifier",
+                    "id",
+                )
+            )
+            for item in transport_driver_candidates:
+                item.transport_driver_option_label = (
+                    f"{_display_name(item.driver_connection.candidate)} · "
+                    f"{item.vehicle.registration_identifier} · "
+                    f"{item.vehicle.internal_name} · {item.vehicle.seat_capacity}"
+                )
             for item in transport_workers:
                 if (
-                    item.id == transport_driver_connection.id
-                    or not item.has_driving_license
-                ):
-                    continue
-                item.transport_driver_option_label = _display_name(item.candidate)
-                transport_driver_candidates.append(item)
-            for item in transport_workers:
-                if (
-                    item.id == transport_driver_connection.id
+                    (
+                        transport_driver_connection is not None
+                        and item.id == transport_driver_connection.id
+                    )
                     or item.id in assigned_ids
                 ):
                     continue
@@ -1596,11 +1664,12 @@ def worker_card_snapshot(
                 )
                 transport_passenger_candidates.append(item)
 
-            transport_driver_conversation = _active_worker_conversation(
-                user=user,
-                organization=organization,
-                connection=transport_driver_connection,
-            )
+            if transport_driver_connection is not None:
+                transport_driver_conversation = _active_worker_conversation(
+                    user=user,
+                    organization=organization,
+                    connection=transport_driver_connection,
+                )
 
             # Show every crew that uses the selected schedule template.  The
             # worker's own crew stays expanded in the card; the remaining
@@ -1696,6 +1765,7 @@ def worker_card_snapshot(
         else None
     )
     overrides_by_date = {}
+    resource_overrides_by_date = {}
     if selected_stable_crew_id is not None and selected_calendar_date is not None:
         selected_month_end = date(
             selected_calendar_date.year,
@@ -1708,6 +1778,13 @@ def worker_card_snapshot(
                 crew_id=selected_stable_crew_id,
                 work_date__range=(selected_calendar_date, selected_month_end),
             )
+        }
+        resource_overrides_by_date = {
+            item.work_date: item
+            for item in TransportCrewResourceOverride.objects.filter(
+                crew_id=selected_stable_crew_id,
+                work_date__range=(selected_calendar_date, selected_month_end),
+            ).select_related("driver_vehicle_assignment")
         }
     for day in calendar_days:
         if day is None:
@@ -1740,6 +1817,11 @@ def worker_card_snapshot(
         day["has_other_template"] = bool(other_template_shifts)
         day["crew_override"] = overrides_by_date.get(day["date"])
         day["has_crew_override"] = day["crew_override"] is not None
+        day["crew_resource_override"] = resource_overrides_by_date.get(day["date"])
+        day["crew_has_no_driver"] = (
+            day["crew_resource_override"] is not None
+            and day["crew_resource_override"].driver_vehicle_assignment_id is None
+        )
         if selected_template_shifts:
             day["display_shift"] = max(
                 selected_template_shifts,

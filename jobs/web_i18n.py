@@ -1125,9 +1125,11 @@ TRANSLATIONS["ru"].update({
     "support_transport_driver_card": "Водитель",
     "support_transport_write_driver": "Написать водителю",
     "support_transport_change_driver": "Сменить водителя",
-    "support_transport_no_eligible_drivers": "Нет другого работника с подтверждённым водительским удостоверением.",
-    "support_transport_change_driver_help": "Маршрут и пассажиры сохранятся. Если новый водитель уже пассажир этого экипажа, прежний водитель займёт его место.",
-    "support_transport_driver_changed": "Водитель экипажа изменён.",
+    "support_transport_no_eligible_drivers": "Нет другого работника с подтверждёнными водительскими правами и опубликованным автомобилем.",
+    "support_transport_change_driver_help": "Сначала выберите дни в календаре двойным нажатием. Новый водитель перейдёт вместе со своим автомобилем; пассажиры останутся в этом экипаже.",
+    "support_transport_driver_changed": "Водитель и его автомобиль назначены на выбранные дни.",
+    "support_transport_crew_no_driver": "Нет водителя",
+    "support_transport_crew_no_vehicle_for_day": "На этот день автомобиль не назначен",
     "support_transport_driver_unchanged": "Выбранный работник уже является водителем этого экипажа.",
     "support_transport_driver_busy": "Выбранный водитель уже закреплён за другим автомобилем на эту дату.",
     "support_transport_chat_unavailable": "Чат пока не назначен",
@@ -1166,9 +1168,11 @@ TRANSLATIONS["en"].update({
     "support_transport_driver_card": "Driver",
     "support_transport_write_driver": "Message driver",
     "support_transport_change_driver": "Change driver",
-    "support_transport_no_eligible_drivers": "No other worker has a confirmed driving licence.",
-    "support_transport_change_driver_help": "The route and passengers will stay unchanged. If the new driver is already a passenger in this crew, the previous driver will take that seat.",
-    "support_transport_driver_changed": "The crew driver has been changed.",
+    "support_transport_no_eligible_drivers": "No other worker has a confirmed driving licence and a published vehicle assignment.",
+    "support_transport_change_driver_help": "First select dates in the calendar with a double click. The new driver moves with their vehicle; passengers stay in this crew.",
+    "support_transport_driver_changed": "The driver and vehicle were assigned on the selected dates.",
+    "support_transport_crew_no_driver": "No driver",
+    "support_transport_crew_no_vehicle_for_day": "No vehicle is assigned for this day",
     "support_transport_driver_unchanged": "The selected worker is already the driver of this crew.",
     "support_transport_driver_busy": "The selected driver is already assigned to another vehicle on this date.",
     "support_transport_chat_unavailable": "Chat is not assigned yet",
@@ -1207,9 +1211,11 @@ TRANSLATIONS["pl"].update({
     "support_transport_driver_card": "Kierowca",
     "support_transport_write_driver": "Napisz do kierowcy",
     "support_transport_change_driver": "Zmień kierowcę",
-    "support_transport_no_eligible_drivers": "Żaden inny pracownik nie ma potwierdzonego prawa jazdy.",
-    "support_transport_change_driver_help": "Trasa i pasażerowie pozostaną bez zmian. Jeśli nowy kierowca jest już pasażerem tej załogi, poprzedni kierowca zajmie jego miejsce.",
-    "support_transport_driver_changed": "Kierowca załogi został zmieniony.",
+    "support_transport_no_eligible_drivers": "Żaden inny pracownik nie ma potwierdzonego prawa jazdy i opublikowanego przypisania pojazdu.",
+    "support_transport_change_driver_help": "Najpierw wybierz dni w kalendarzu podwójnym kliknięciem. Nowy kierowca przechodzi ze swoim autem; pasażerowie zostają w tej załodze.",
+    "support_transport_driver_changed": "Kierowca i pojazd zostali przypisani w wybranych dniach.",
+    "support_transport_crew_no_driver": "Brak kierowcy",
+    "support_transport_crew_no_vehicle_for_day": "Na ten dzień nie przypisano pojazdu",
     "support_transport_driver_unchanged": "Wybrany pracownik jest już kierowcą tej załogi.",
     "support_transport_driver_busy": "Wybrany kierowca jest już przypisany do innego pojazdu w tym dniu.",
     "support_transport_chat_unavailable": "Czat nie jest jeszcze przypisany",
@@ -1248,9 +1254,11 @@ TRANSLATIONS["uk"].update({
     "support_transport_driver_card": "Водій",
     "support_transport_write_driver": "Написати водієві",
     "support_transport_change_driver": "Змінити водія",
-    "support_transport_no_eligible_drivers": "Жоден інший працівник не має підтвердженого посвідчення водія.",
-    "support_transport_change_driver_help": "Маршрут і пасажири залишаться без змін. Якщо новий водій уже є пасажиром цього екіпажу, попередній водій займе його місце.",
-    "support_transport_driver_changed": "Водія екіпажу змінено.",
+    "support_transport_no_eligible_drivers": "Жоден інший працівник не має підтвердженого посвідчення водія та опублікованого закріплення автомобіля.",
+    "support_transport_change_driver_help": "Спочатку виберіть дні в календарі подвійним натисканням. Новий водій переходить зі своїм авто; пасажири залишаються в цьому екіпажі.",
+    "support_transport_driver_changed": "Водія й автомобіль призначено на вибрані дні.",
+    "support_transport_crew_no_driver": "Немає водія",
+    "support_transport_crew_no_vehicle_for_day": "На цей день автомобіль не призначено",
     "support_transport_driver_unchanged": "Вибраний працівник уже є водієм цього екіпажу.",
     "support_transport_driver_busy": "Вибраний водій уже закріплений за іншим автомобілем на цю дату.",
     "support_transport_chat_unavailable": "Чат ще не призначено",
@@ -2747,6 +2755,37 @@ TRANSLATIONS["uk"].update({
     "support_transport_driver_vehicle_published": "Автомобіль закріплено за водієм. Маршрут можна додати пізніше.",
     "support_transport_route_cancelled": "Маршрут скасовано. Історію збережено; водій і пасажири отримають сповіщення.",
     "support_transport_operation_error": "Не вдалося виконати дію. Перевірте строки, місця, пасажирів і свої права.",
+})
+
+# Date-specific driver and vehicle changes.  These messages intentionally name
+# the failed rule instead of falling back to the generic transport error.
+TRANSLATIONS["ru"].update({
+    "support_transport_driver_dates_required": "Сначала выберите один или несколько дней в календаре двойным нажатием.",
+    "support_transport_driver_vehicle_dates_unavailable": "Автомобиль выбранного водителя закреплён за ним не на все выбранные дни. Измените даты или его закрепление в «Автопарке».",
+    "support_transport_driver_vehicle_unavailable": "Выбранная связка водитель–автомобиль недоступна или ещё не опубликована.",
+    "support_transport_driver_day_has_no_shift": "В одном из выбранных дней у этого экипажа нет активной смены. Выберите только дни его графика.",
+    "support_transport_driver_vehicle_too_small": "В автомобиле нового водителя недостаточно мест для пассажиров этого экипажа.",
+})
+TRANSLATIONS["en"].update({
+    "support_transport_driver_dates_required": "First select one or more calendar days with a double click.",
+    "support_transport_driver_vehicle_dates_unavailable": "The selected driver's vehicle assignment does not cover every selected day. Change the dates or update it in Fleet.",
+    "support_transport_driver_vehicle_unavailable": "The selected driver–vehicle assignment is unavailable or has not been published.",
+    "support_transport_driver_day_has_no_shift": "This crew has no active shift on one of the selected days. Select only its scheduled days.",
+    "support_transport_driver_vehicle_too_small": "The new driver's vehicle does not have enough seats for this crew's passengers.",
+})
+TRANSLATIONS["pl"].update({
+    "support_transport_driver_dates_required": "Najpierw wybierz jeden lub kilka dni w kalendarzu podwójnym kliknięciem.",
+    "support_transport_driver_vehicle_dates_unavailable": "Przypisanie auta wybranego kierowcy nie obejmuje wszystkich wybranych dni. Zmień dni lub przypisanie we Flocie.",
+    "support_transport_driver_vehicle_unavailable": "Wybrane przypisanie kierowca–pojazd jest niedostępne lub nieopublikowane.",
+    "support_transport_driver_day_has_no_shift": "W jednym z wybranych dni ta załoga nie ma aktywnej zmiany. Wybierz tylko dni jej grafiku.",
+    "support_transport_driver_vehicle_too_small": "Auto nowego kierowcy nie ma wystarczającej liczby miejsc dla pasażerów tej załogi.",
+})
+TRANSLATIONS["uk"].update({
+    "support_transport_driver_dates_required": "Спочатку виберіть один або кілька днів у календарі подвійним натисканням.",
+    "support_transport_driver_vehicle_dates_unavailable": "Закріплення авто вибраного водія не охоплює всі вибрані дні. Змініть дні або закріплення в «Автопарку».",
+    "support_transport_driver_vehicle_unavailable": "Вибране закріплення водій–автомобіль недоступне або ще не опубліковане.",
+    "support_transport_driver_day_has_no_shift": "В один із вибраних днів цей екіпаж не має активної зміни. Виберіть лише дні його графіка.",
+    "support_transport_driver_vehicle_too_small": "В автомобілі нового водія недостатньо місць для пасажирів цього екіпажу.",
 })
 
 

@@ -428,6 +428,58 @@ class TransportCrewVehicle(models.Model):
         ]
 
 
+class TransportCrewResourceOverride(models.Model):
+    """Driver and vehicle used by one stable crew on one calendar day.
+
+    A null assignment intentionally means that the crew keeps its passengers
+    and project schedule but has no driver or vehicle for this date.
+    """
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    crew = models.ForeignKey(
+        TransportCrew,
+        on_delete=models.CASCADE,
+        related_name="resource_overrides",
+    )
+    work_date = models.DateField()
+    driver_vehicle_assignment = models.ForeignKey(
+        DriverVehicleAssignment,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="transport_crew_resource_overrides",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_support_transport_crew_resource_overrides",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_support_transport_crew_resource_overrides",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("work_date", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("crew", "work_date"),
+                name="support_unique_crew_resource_day",
+            )
+        ]
+        indexes = [
+            models.Index(fields=("crew", "work_date")),
+            models.Index(fields=("driver_vehicle_assignment", "work_date")),
+        ]
+
+
 class TransportCrewMember(models.Model):
     """Effective-dated passenger membership for one crew."""
 

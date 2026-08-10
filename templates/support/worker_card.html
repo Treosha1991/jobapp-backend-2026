@@ -52,6 +52,7 @@
   .worker-calendar-day.has-draft { border-color:rgba(255,176,71,.85); background:rgba(255,176,71,.08); }
   .worker-calendar-day.has-conflict { border-color:rgba(255,107,107,.95); background:rgba(255,107,107,.10); }
   .worker-calendar-day.has-crew-override::after { content:"↺"; position:absolute; right:5px; bottom:4px; color:#6ec7ff; font-size:11px; font-weight:900; }
+  .worker-calendar-day.has-no-driver::before { content:""; position:absolute; right:5px; top:5px; width:7px; height:7px; border-radius:50%; background:#ff6b6b; box-shadow:0 0 0 2px rgba(255,107,107,.18),0 0 8px rgba(255,107,107,.8); }
   .worker-calendar-day.has-other-template:not(.is-selected-template) { opacity:.48; filter:saturate(.55); }
   .worker-calendar-day.is-selected-template { border-color:#62f59b; background:rgba(24,223,103,.17); box-shadow:inset 0 0 0 2px rgba(24,223,103,.72),0 0 18px rgba(24,223,103,.12); }
   .worker-calendar-day.is-selected { border-color:#6ec7ff; background:rgba(110,199,255,.17); box-shadow:inset 0 0 0 2px rgba(110,199,255,.95); transform:translateY(-1px); }
@@ -311,6 +312,20 @@
           });
           if (count) count.textContent = selected.length;
           if (actions) actions.hidden = selected.length === 0;
+          document.querySelectorAll('[data-driver-date-inputs]').forEach(function (container) {
+            container.replaceChildren();
+            selected.forEach(function (input) {
+              var hidden = document.createElement('input');
+              hidden.type = 'hidden';
+              hidden.name = 'work_dates';
+              hidden.value = input.value;
+              container.appendChild(hidden);
+            });
+          });
+          document.querySelectorAll('[data-requires-selected-dates]').forEach(function (button) {
+            button.disabled = selected.length === 0;
+            button.setAttribute('aria-disabled', selected.length === 0 ? 'true' : 'false');
+          });
         };
         var showCalendarDay = function (input) {
           inputs.forEach(function (candidate) {
@@ -495,7 +510,7 @@
             <div class="worker-calendar">
               {% for day in calendar_days %}
                 {% if day %}
-                  {% if can_operate %}<label data-calendar-day data-calendar-date="{{ day.date|date:'Y-m-d' }}" data-calendar-crew-url="{{ day.transport_url|default:'' }}" class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
+                  {% if can_operate %}<label data-calendar-day data-calendar-date="{{ day.date|date:'Y-m-d' }}" data-calendar-crew-url="{{ day.transport_url|default:'' }}" class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
                     <span class="worker-calendar-number">{{ day.date|date:"j" }}{% if day.has_conflict %}<span class="worker-calendar-conflict-mark">!</span>{% endif %}</span>
                     {% if day.display_shift %}<span class="worker-calendar-time{% if day.display_shift.state == 'draft' %} is-preview{% endif %}">{{ day.display_shift.starts_at|time:"H:i" }}–{{ day.display_shift.ends_at|time:"H:i" }}</span>{% endif %}
                   </span>{% if can_operate %}</label>{% else %}</div>{% endif %}
@@ -516,9 +531,9 @@
                     <summary class="jh-btn">{{ employer_t.support_crew_override_title }}</summary>
                     <div class="worker-crew-override-body">
                       <p>{{ employer_t.support_crew_override_text }}</p>
-                      <input type="hidden" name="route_id" value="{{ selected_transport_route.public_id }}">
                       <input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}">
                       <div class="worker-form-grid">
+                        <label class="jh-field"><span>{{ employer_t.support_transport_schedule_switcher }}</span><select class="jh-input" name="route_id" required>{% for crew in transport_crews %}{% if crew.route %}<option value="{{ crew.route.public_id }}"{% if crew.key == selected_transport_crew.key %} selected{% endif %}>{{ crew.schedule_template.project.worker_visible_name }} · {{ crew.schedule_template.name }} · {{ crew.schedule_template.starts_at_time|time:'H:i' }}–{{ crew.schedule_template.ends_at_time|time:'H:i' }}</option>{% endif %}{% endfor %}</select></label>
                         <label class="jh-field"><span>{{ employer_t.support_crew_override_kind }}</span><select class="jh-input" name="override_kind" data-crew-override-kind><option value="shift">{{ employer_t.support_crew_override_shift }}</option><option value="day_off">{{ employer_t.support_crew_override_day_off }}</option><option value="cancelled">{{ employer_t.support_crew_override_cancelled }}</option></select></label>
                         <label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" type="number" min="0" max="720" name="override_break_minutes" value="{{ selected_transport_template.break_minutes|default:0 }}" data-crew-override-time></label>
                         <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="time" name="override_starts_at_time" value="{{ selected_transport_template.starts_at_time|time:'H:i' }}" data-crew-override-time></label>
@@ -587,8 +602,8 @@
               <div class="worker-crew-summary-main">
                 <div class="worker-crew-summary-part">
                   <small>{{ employer_t.support_transport_driver_card }}</small>
-                  <strong>{{ transport_driver_connection.candidate.get_full_name|default:transport_driver_connection.candidate.username }}</strong>
-                  <span>{{ transport_driver_assignment.vehicle.registration_identifier }} · {{ transport_driver_assignment.vehicle.internal_name }}</span>
+                  {% if transport_driver_connection and transport_driver_assignment %}<strong>{{ transport_driver_connection.candidate.get_full_name|default:transport_driver_connection.candidate.username }}</strong>
+                  <span>{{ transport_driver_assignment.vehicle.registration_identifier }} · {{ transport_driver_assignment.vehicle.internal_name }}</span>{% else %}<strong>{{ employer_t.support_transport_crew_no_driver }}</strong><span>{{ employer_t.support_transport_crew_no_vehicle_for_day }}</span>{% endif %}
                 </div>
                 <div class="worker-crew-summary-part">
                   <small>{{ employer_t.support_transport_selected_schedule }}</small>
@@ -597,20 +612,20 @@
                 </div>
                 <div class="worker-crew-summary-part worker-crew-summary-occupancy">
                   <small>{{ employer_t.support_worker_occupancy }}</small>
-                  <strong>{{ transport_passengers|length|add:'1' }}/{{ transport_driver_assignment.vehicle.seat_capacity }}</strong>
+                  {% if transport_driver_assignment %}<strong>{{ transport_passengers|length|add:'1' }}/{{ transport_driver_assignment.vehicle.seat_capacity }}</strong>{% else %}<strong>—</strong>{% endif %}
                 </div>
               </div>
               <div class="worker-crew-summary-actions">
-                {% if selected_transport_route and can_operate and permissions.work %}{% if transport_driver_candidates %}<button class="jh-btn" type="button" data-worker-passenger-dialog-target="worker-driver-change">{{ employer_t.support_fleet_assign_driver }}</button>{% else %}<span class="jh-btn worker-passenger-chat-disabled" title="{{ employer_t.support_transport_no_eligible_drivers }}">{{ employer_t.support_fleet_assign_driver }}</span>{% endif %}{% endif %}
+                {% if selected_transport_route and can_operate and permissions.work %}{% if transport_driver_candidates %}<button class="jh-btn" type="button" data-worker-passenger-dialog-target="worker-driver-change" data-requires-selected-dates disabled>{{ employer_t.support_fleet_assign_driver }}</button>{% else %}<span class="jh-btn worker-passenger-chat-disabled" title="{{ employer_t.support_transport_no_eligible_drivers }}">{{ employer_t.support_fleet_assign_driver }}</span>{% endif %}{% endif %}
                 {% if transport_driver_chat_url %}<a class="jh-btn" href="{{ transport_driver_chat_url }}">{{ employer_t.support_transport_passenger_chat }}</a>{% endif %}
               </div>
             </div>
 
             {% if selected_transport_route and transport_driver_candidates and can_operate and permissions.work %}
-              <dialog class="worker-passenger-modal" id="worker-driver-change" aria-labelledby="worker-driver-change-title"><div class="worker-passenger-modal-card"><div class="worker-passenger-modal-head"><h2 id="worker-driver-change-title">{{ employer_t.support_fleet_assign_driver }}</h2><button class="jh-btn" type="button" data-worker-passenger-modal-close aria-label="{{ employer_t.support_modal_close }}">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="transport_crew_driver_replace"><input type="hidden" name="route_id" value="{{ selected_transport_route.public_id }}"><input type="hidden" name="return_tab" value="transport"><input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}"><label class="jh-field"><span>{{ employer_t.support_transport_driver_card }}</span><select class="jh-input" name="replacement_driver_connection_id" required>{% for item in transport_driver_candidates %}<option value="{{ item.public_id }}">{{ item.transport_driver_option_label }}</option>{% endfor %}</select></label><p class="jh-help">{{ employer_t.support_transport_change_driver_help }}</p><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_fleet_assign_driver }}</button></div></form></div></dialog>
+              <dialog class="worker-passenger-modal" id="worker-driver-change" aria-labelledby="worker-driver-change-title"><div class="worker-passenger-modal-card"><div class="worker-passenger-modal-head"><h2 id="worker-driver-change-title">{{ employer_t.support_fleet_assign_driver }}</h2><button class="jh-btn" type="button" data-worker-passenger-modal-close aria-label="{{ employer_t.support_modal_close }}">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="transport_crew_driver_replace"><input type="hidden" name="route_id" value="{{ selected_transport_route.public_id }}"><input type="hidden" name="return_tab" value="transport"><input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}"><span data-driver-date-inputs></span><label class="jh-field"><span>{{ employer_t.support_transport_driver_card }}</span><select class="jh-input" name="replacement_driver_vehicle_assignment_id" required>{% for item in transport_driver_candidates %}<option value="{{ item.public_id }}">{{ item.transport_driver_option_label }}</option>{% endfor %}</select></label><p class="jh-help">{{ employer_t.support_transport_change_driver_help }}</p><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_fleet_assign_driver }}</button></div></form></div></dialog>
             {% endif %}
 
-            <div class="worker-passenger-head"><h3>{{ employer_t.support_transport_passenger_list }}</h3><span class="worker-passenger-count">{{ transport_passengers|length }} / {{ transport_driver_assignment.vehicle.seat_capacity|add:'-1' }}</span></div>
+            <div class="worker-passenger-head"><h3>{{ employer_t.support_transport_passenger_list }}</h3><span class="worker-passenger-count">{% if transport_driver_assignment %}{{ transport_passengers|length }} / {{ transport_driver_assignment.vehicle.seat_capacity|add:'-1' }}{% else %}{{ transport_passengers|length }} / —{% endif %}</span></div>
             <div class="worker-passenger-list">
               {% for passenger in transport_passengers %}
                 <div class="worker-passenger-row">
