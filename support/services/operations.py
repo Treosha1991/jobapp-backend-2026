@@ -1235,6 +1235,226 @@ def ensure_transport_crew_for_route(*, actor, route):
     return crew
 
 
+def replace_transport_crew_driver(*, actor, route, replacement_connection):
+    """Replace a selected crew's driver without rebuilding its route or passengers.
+
+    The legacy route still points at a driver/vehicle assignment, while the
+    stable crew stores effective-dated driver history.  Both records are
+    updated in one transaction so the employer never sees a half-switched
+    crew.  A passenger promoted to driver swaps places with the previous
+    driver; otherwise the existing passenger list is left untouched.
+    """
+
+    organization = route.organization
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=TRANSPORT_MANAGE,
+    )
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SCHEDULE_MANAGE,
+    )
+    require_worker_connection_access(
+        user=actor,
+        organization=organization,
+        connection=replacement_connection,
+    )
+    _require_connection_for_operations(
+        connection=replacement_connection,
+        organization=organization,
+    )
+    if not replacement_connection.has_driving_license:
+        raise ValidationError({"driver": "driver_license_required"})
+
+    crew = ensure_transport_crew_for_route(actor=actor, route=route)
+    effective_on = max(timezone.localdate(), route.starts_on)
+    with transaction.atomic():
+        route = (
+            TransportRoute.objects.select_for_update()
+            .select_related(
+                "driver_vehicle_assignment__driver_connection",
+                "driver_vehicle_assignment__vehicle",
+                "schedule_template__project",
+                "crew",
+            )
+            .prefetch_related("passenger_assignments")
+            .get(pk=route.pk)
+        )
+        crew = TransportCrew.objects.select_for_update().get(pk=crew.pk)
+        old_assignment = DriverVehicleAssignment.objects.select_for_update().get(
+            pk=route.driver_vehicle_assignment_id
+        )
+        old_driver = old_assignment.driver_connection
+        if old_driver.id == replacement_connection.id:
+            raise ValidationError({"driver": "transport_crew_driver_unchanged"})
+
+        replacement_is_passenger = (
+            TransportPassengerAssignment.objects.select_for_update()
+            .filter(route=route, connection=replacement_connection)
+            .first()
+        )
+        if replacement_is_passenger is None:
+            replacement_busy = (
+                DriverVehicleAssignment.objects.select_for_update()
+                .filter(
+                    organization=organization,
+                    driver_connection=replacement_connection,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                    starts_on__lte=effective_on,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=effective_on))
+                .exists()
+            )
+            if replacement_busy:
+                raise ValidationError({"driver": "transport_crew_driver_busy"})
+
+        new_assignment = DriverVehicleAssignment.objects.create(
+            organization=organization,
+            driver_connection=replacement_connection,
+            vehicle=old_assignment.vehicle,
+            starts_on=effective_on,
+            ends_on=route.ends_on,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=actor,
+            published_by=actor,
+            published_at=timezone.now(),
+        )
+        route.driver_vehicle_assignment = new_assignment
+        route.save(update_fields=["driver_vehicle_assignment", "updated_at"])
+
+        open_driver_rows = list(
+            TransportCrewDriver.objects.select_for_update().filter(
+                crew=crew,
+                ends_on__isnull=True,
+            )
+        )
+        previous_date = effective_on - timedelta(days=1)
+        for row in open_driver_rows:
+            if row.starts_on >= effective_on:
+                row.delete()
+            else:
+                row.ends_on = previous_date
+                row.save(update_fields=["ends_on", "updated_at"])
+        TransportCrewDriver.objects.create(
+            crew=crew,
+            driver_connection=replacement_connection,
+            starts_on=effective_on,
+            ends_on=crew.ends_on,
+            created_by=actor,
+        )
+
+        old_driver_shift_rows = list(
+            ScheduledWorkShift.objects.select_for_update()
+            .filter(
+                organization=organization,
+                connection=old_driver,
+                crew=crew,
+                work_date__gte=effective_on,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
+            )
+            .order_by("work_date", "starts_at", "id")
+        )
+        if replacement_is_passenger is not None:
+            replacement_is_passenger.connection = old_driver
+            replacement_is_passenger.save(update_fields=["connection", "updated_at"])
+            _close_open_crew_membership(
+                crew=crew,
+                connection=replacement_connection,
+                effective_on=effective_on,
+            )
+            if not TransportCrewMember.objects.filter(
+                crew=crew,
+                connection=old_driver,
+                ends_on__isnull=True,
+            ).exists():
+                TransportCrewMember.objects.create(
+                    crew=crew,
+                    connection=old_driver,
+                    starts_on=effective_on,
+                    boarding_order=replacement_is_passenger.boarding_order,
+                    created_by=actor,
+                )
+        else:
+            from .timekeeping import create_scheduled_shift, publish_scheduled_shift
+
+            work_assignment = _published_assignment_for_crew_member(
+                actor=actor,
+                crew=crew,
+                connection=replacement_connection,
+                starts_at=(
+                    old_driver_shift_rows[0].starts_at
+                    if old_driver_shift_rows
+                    else timezone.now()
+                ),
+            )
+            for source_shift in old_driver_shift_rows:
+                existing = (
+                    ScheduledWorkShift.objects.select_for_update()
+                    .filter(
+                        organization=organization,
+                        connection=replacement_connection,
+                        crew=crew,
+                        work_date=source_shift.work_date,
+                        state__in=(
+                            ScheduledWorkShift.STATE_DRAFT,
+                            ScheduledWorkShift.STATE_PUBLISHED,
+                        ),
+                    )
+                    .first()
+                )
+                if existing is not None:
+                    continue
+                cloned = create_scheduled_shift(
+                    actor=actor,
+                    organization=organization,
+                    connection=replacement_connection,
+                    work_date=source_shift.work_date,
+                    starts_at=source_shift.starts_at,
+                    ends_at=source_shift.ends_at,
+                    break_minutes=source_shift.break_minutes,
+                    worker_label=source_shift.worker_label,
+                    work_assignment=work_assignment,
+                    schedule_template=route.schedule_template,
+                    crew=crew,
+                )
+                publish_scheduled_shift(actor=actor, shift=cloned)
+            ScheduledWorkShift.objects.filter(
+                pk__in=[item.pk for item in old_driver_shift_rows]
+            ).update(crew=None)
+
+        if not TransportRoute.objects.filter(
+            driver_vehicle_assignment=old_assignment,
+            state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
+        ).exists():
+            old_assignment.state = DriverVehicleAssignment.STATE_CANCELLED
+            old_assignment.cancelled_at = timezone.now()
+            if old_assignment.ends_on is None or old_assignment.ends_on >= effective_on:
+                old_assignment.ends_on = max(old_assignment.starts_on, previous_date)
+            old_assignment.save(
+                update_fields=["state", "cancelled_at", "ends_on", "updated_at"]
+            )
+
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="transport.crew_driver_replaced",
+            target=crew,
+            details={
+                "route": str(route.public_id),
+                "previous_driver": str(old_driver.public_id),
+                "replacement_driver": str(replacement_connection.public_id),
+                "vehicle": str(old_assignment.vehicle.public_id),
+                "passenger_swap": replacement_is_passenger is not None,
+            },
+        )
+    return route
+
+
 def _published_assignment_for_crew_member(
     *,
     actor,

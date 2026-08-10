@@ -78,6 +78,7 @@ from .services.operations import (
     create_transport_crew_for_schedule,
     ensure_transport_crew_for_route,
     remove_passenger_from_driver_schedule,
+    replace_transport_crew_driver,
     resolve_transport_crew_schedule_conflict,
     replace_passenger_in_driver_schedule,
     create_driver_vehicle_assignment,
@@ -397,6 +398,10 @@ def _transport_operation_error_key(error):
         return "support_transport_crew_add_no_vehicle"
     if "driver_license_required" in detail:
         return "support_transport_crew_add_no_license"
+    if "transport_crew_driver_unchanged" in detail:
+        return "support_transport_driver_unchanged"
+    if "transport_crew_driver_busy" in detail:
+        return "support_transport_driver_busy"
     return "support_transport_operation_error"
 
 
@@ -792,6 +797,49 @@ def _worker_card_operation(request, *, snapshot):
             messages.success(
                 request,
                 tr(request, "support_transport_passenger_added_and_scheduled"),
+            )
+        elif action == "transport_crew_driver_replace":
+            route = get_object_or_404(
+                TransportRoute.objects.select_related(
+                    "organization",
+                    "driver_vehicle_assignment__driver_connection",
+                ),
+                organization=organization,
+                public_id=request.POST.get("route_id"),
+            )
+            replacement_connection = get_object_or_404(
+                worker_connection_queryset_for(
+                    user=request.user,
+                    organization=organization,
+                    queryset=SupportConnection.objects.filter(
+                        organization=organization,
+                        is_archived=False,
+                        has_driving_license=True,
+                    ),
+                ),
+                public_id=request.POST.get("replacement_driver_connection_id"),
+            )
+            route = replace_transport_crew_driver(
+                actor=request.user,
+                route=route,
+                replacement_connection=replacement_connection,
+            )
+            request.POST = request.POST.copy()
+            selected_worker_still_in_crew = (
+                route.driver_vehicle_assignment.driver_connection_id == connection.id
+                or route.passenger_assignments.filter(connection=connection).exists()
+            )
+            request.POST["return_transport_crew"] = (
+                (
+                    f"{route.driver_vehicle_assignment.public_id}."
+                    f"{route.schedule_template.public_id}"
+                )
+                if selected_worker_still_in_crew
+                else ""
+            )
+            messages.success(
+                request,
+                tr(request, "support_transport_driver_changed"),
             )
         elif action in {
             "transport_schedule_passenger_remove",
@@ -1287,6 +1335,7 @@ def _worker_card_operation(request, *, snapshot):
                 _transport_operation_error_key(error)
                 if action == "route_create"
                 or action == "transport_schedule_crew_create"
+                or action == "transport_crew_driver_replace"
                 or action.startswith("transport_schedule_passenger_")
                 else _worker_operation_error_key(error)
             )

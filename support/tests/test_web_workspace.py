@@ -1940,6 +1940,146 @@ class SupportWorkspaceWebTests(TestCase):
             ).exists()
         )
 
+    def test_worker_transport_card_replaces_driver_and_keeps_route_passengers(self):
+        today = timezone.localdate()
+        self.worker_connection.has_driving_license = True
+        self.worker_connection.save(update_fields=["has_driving_license", "updated_at"])
+        replacement_user = User.objects.create_user(
+            username="replacement-driver",
+            first_name="Replacement",
+            last_name="Driver",
+            email="replacement-driver@example.com",
+            password="password",
+        )
+        replacement_application = SupportApplication.objects.create(
+            vacancy=self.worker_connection.vacancy,
+            candidate=replacement_user,
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        replacement_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=replacement_application,
+            candidate=replacement_user,
+            stage=SupportConnection.STAGE_ACTIVE_WORKER,
+            has_driving_license=True,
+        )
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Driver replacement site",
+            country_code="NL",
+            city="Lelystad",
+            street="Crew road",
+            building="3",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Driver replacement project",
+            worker_visible_name="Driver replacement project",
+            worker_capacity=10,
+            starts_on=today,
+            created_by=self.owner,
+        )
+        schedule_template = ProjectScheduleTemplate.objects.create(
+            project=project,
+            name="Morning",
+            starts_at_time=datetime.strptime("06:00", "%H:%M").time(),
+            ends_at_time=datetime.strptime("14:00", "%H:%M").time(),
+            created_by=self.owner,
+        )
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Crew van",
+            registration_identifier="CREW-CHANGE",
+            seat_capacity=5,
+            created_by=self.owner,
+        )
+        assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.worker_connection,
+            vehicle=vehicle,
+            starts_on=today,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        route = TransportRoute.objects.create(
+            organization=self.organization,
+            internal_name="Driver replacement route",
+            worksite=worksite,
+            schedule_template=schedule_template,
+            driver_vehicle_assignment=assignment,
+            starts_on=today,
+            state=TransportRoute.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        pickup = RouteStop.objects.create(
+            route=route,
+            kind=RouteStop.KIND_PICKUP,
+            sequence=1,
+            label="Worker home",
+        )
+        dropoff = RouteStop.objects.create(
+            route=route,
+            kind=RouteStop.KIND_DROPOFF,
+            sequence=2,
+            label="Project",
+        )
+        passenger = TransportPassengerAssignment.objects.create(
+            route=route,
+            connection=replacement_connection,
+            pickup_stop=pickup,
+            dropoff_stop=dropoff,
+            boarding_order=1,
+        )
+        self.client.force_login(self.owner)
+        card_url = reverse(
+            "support:worker-card",
+            kwargs={"connection_public_id": self.worker_connection.public_id},
+        )
+
+        page = self.client.get(
+            f"{card_url}?tab=work_transport&transport_crew="
+            f"{assignment.public_id}.{schedule_template.public_id}"
+        )
+        self.assertContains(page, "worker-crew-summary-main")
+        self.assertContains(page, "Change driver")
+
+        response = self.client.post(
+            card_url,
+            {
+                "action": "transport_crew_driver_replace",
+                "route_id": str(route.public_id),
+                "replacement_driver_connection_id": str(replacement_connection.public_id),
+                "return_tab": "transport",
+                "return_transport_crew": (
+                    f"{assignment.public_id}.{schedule_template.public_id}"
+                ),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The crew driver has been changed")
+        route.refresh_from_db()
+        assignment.refresh_from_db()
+        passenger.refresh_from_db()
+        self.assertEqual(
+            route.driver_vehicle_assignment.driver_connection_id,
+            replacement_connection.id,
+        )
+        self.assertEqual(passenger.connection_id, self.worker_connection.id)
+        self.assertEqual(assignment.state, DriverVehicleAssignment.STATE_CANCELLED)
+
     def test_worker_transport_card_lists_each_passenger_crew_as_a_tab(self):
         today = timezone.localdate()
 

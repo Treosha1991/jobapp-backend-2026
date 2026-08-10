@@ -1098,6 +1098,7 @@ def worker_card_snapshot(
     transport_free_seats = 0
     transport_driver_shifts = []
     transport_driver_conversation = None
+    transport_driver_candidates = []
     related_transport_crews = []
     transport_new_crew_candidates = []
     if permissions["transport"]:
@@ -1566,6 +1567,17 @@ def worker_card_snapshot(
             for item in transport_workers:
                 if (
                     item.id == transport_driver_connection.id
+                    or not item.has_driving_license
+                ):
+                    continue
+                is_current_passenger = item.id in assigned_ids
+                if item.id in active_driver_ids and not is_current_passenger:
+                    continue
+                item.transport_driver_option_label = _display_name(item.candidate)
+                transport_driver_candidates.append(item)
+            for item in transport_workers:
+                if (
+                    item.id == transport_driver_connection.id
                     or item.id in assigned_ids
                     or item.id in active_driver_ids
                 ):
@@ -1785,6 +1797,7 @@ def worker_card_snapshot(
         "transport_free_seats": transport_free_seats,
         "transport_driver_shifts": transport_driver_shifts,
         "transport_driver_conversation": transport_driver_conversation,
+        "transport_driver_candidates": transport_driver_candidates,
         "related_transport_crews": related_transport_crews,
         "transport_new_crew_candidates": transport_new_crew_candidates,
         "document_packages": document_packages,

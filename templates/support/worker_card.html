@@ -107,12 +107,15 @@
   .worker-crew-tab span, .worker-crew-tab small { display:block; overflow:hidden; margin-top:2px; color:var(--muted); font-size:9px; line-height:1.1; text-overflow:ellipsis; white-space:nowrap; }
   .worker-crew-tab small { color:#ccecff; font-weight:800; }
   .worker-crew-tab.active { border-color:var(--green); background:rgba(24,223,103,.10); box-shadow:inset 0 0 0 1px rgba(24,223,103,.16); }
-  .worker-crew-summary { display:grid; grid-template-columns:1.25fr 1fr auto; gap:8px; align-items:stretch; }
-  .worker-crew-summary-card { min-width:0; padding:10px 11px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.23); }
-  .worker-crew-summary-card small { display:block; margin-bottom:4px; color:var(--muted); font-size:9px; font-weight:900; letter-spacing:.06em; text-transform:uppercase; }
-  .worker-crew-summary-card strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
-  .worker-crew-summary-card span { display:block; margin-top:3px; color:var(--muted); font-size:11px; }
-  .worker-crew-summary-card .worker-crew-chat { display:inline-flex; margin-top:7px; white-space:nowrap; }
+  .worker-crew-summary { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 11px; border:1px solid var(--line); border-radius:12px; background:rgba(5,22,36,.23); }
+  .worker-crew-summary-main { display:grid; grid-template-columns:minmax(135px,1.05fr) minmax(135px,1fr) auto; gap:12px; align-items:center; min-width:0; }
+  .worker-crew-summary-part { min-width:0; }
+  .worker-crew-summary-part small { display:block; margin-bottom:3px; color:var(--muted); font-size:8px; font-weight:900; letter-spacing:.06em; text-transform:uppercase; }
+  .worker-crew-summary-part strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+  .worker-crew-summary-part span { display:block; overflow:hidden; margin-top:2px; color:var(--muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+  .worker-crew-summary-occupancy strong { font-size:15px; }
+  .worker-crew-summary-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+  .worker-crew-summary-actions .jh-btn { padding:7px 9px; font-size:10px; white-space:nowrap; }
   .worker-passenger-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; }
   .worker-passenger-count { color:var(--muted); font-size:11px; font-weight:800; }
   .worker-passenger-list { display:grid; gap:6px; margin-top:7px; }
@@ -136,7 +139,8 @@
   .worker-work-transport-grid > .worker-section { min-width:0; margin-top:0; padding:14px; border:1px solid var(--line); border-radius:18px; background:rgba(5,22,36,.18); }
   .worker-work-transport-grid > .worker-company-panel { order:2; }
   .worker-work-transport-grid > .worker-transport-dashboard { order:1; }
-  .worker-work-transport-grid .worker-crew-summary { grid-template-columns:1fr; }
+  .worker-work-transport-grid .worker-crew-summary { grid-template-columns:minmax(0,1fr); }
+  .worker-work-transport-grid .worker-crew-summary-actions { justify-content:flex-start; }
   .worker-work-transport-grid .worker-passenger-row { grid-template-columns:1fr; }
   .worker-work-transport-grid .worker-passenger-address { text-align:left; }
   .worker-work-transport-grid .worker-passenger-actions { justify-content:flex-start; }
@@ -166,7 +170,7 @@
   .worker-checkout .jh-btn { justify-self:start; padding:7px 10px; font-size:12px; }
   .worker-form small { display:block; margin-top:7px; color:var(--muted); line-height:1.35; }
   @media (max-width:1120px) { .worker-work-transport-grid { grid-template-columns:1fr; } }
-  @media (max-width:850px) { .worker-profile-bar { grid-template-columns:auto minmax(0,1fr); } .worker-profile-stage { grid-column:1 / -1; justify-content:center; } .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:36px; } .worker-calendar-day-content { padding:4px; } .worker-calendar-time { font-size:8px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } .worker-crew-tabs { grid-template-columns:repeat(auto-fit,minmax(105px,1fr)); } }
+  @media (max-width:850px) { .worker-profile-bar { grid-template-columns:auto minmax(0,1fr); } .worker-profile-stage { grid-column:1 / -1; justify-content:center; } .worker-form-grid, .worker-route-grid, .worker-site-list, .worker-housing-map, .worker-crew-summary, .worker-crew-summary-main { grid-template-columns:1fr; } .worker-item, .worker-passenger-row { grid-template-columns:1fr; } .worker-status { justify-items:start; } .worker-passenger-address { text-align:left; } .worker-passenger-actions, .worker-crew-summary-actions { justify-content:flex-start; } .worker-calendar-toolbar { grid-template-columns:auto 1fr auto; } .worker-calendar-today { display:none; } .worker-calendar, .worker-calendar-weekdays { gap:3px; } .worker-calendar-day, .worker-calendar-day-content, .worker-calendar-empty { min-height:36px; } .worker-calendar-day-content { padding:4px; } .worker-calendar-time { font-size:8px; } .worker-calendar-actions .worker-form-grid { grid-template-columns:1fr; } .worker-crew-tabs { grid-template-columns:repeat(auto-fit,minmax(105px,1fr)); } }
 </style>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
@@ -497,23 +501,31 @@
 
           {% if selected_transport_crew %}
             <div class="worker-crew-summary">
-              <div class="worker-crew-summary-card">
-                <small>{{ employer_t.support_transport_driver_card }}</small>
-                <strong>{{ transport_driver_connection.candidate.get_full_name|default:transport_driver_connection.candidate.username }}</strong>
-                <span>{{ transport_driver_assignment.vehicle.registration_identifier }} · {{ transport_driver_assignment.vehicle.internal_name }}</span>
-                {% if transport_driver_chat_url %}<a class="jh-btn worker-crew-chat" href="{{ transport_driver_chat_url }}">{{ employer_t.support_transport_write_driver }}</a>{% endif %}
+              <div class="worker-crew-summary-main">
+                <div class="worker-crew-summary-part">
+                  <small>{{ employer_t.support_transport_driver_card }}</small>
+                  <strong>{{ transport_driver_connection.candidate.get_full_name|default:transport_driver_connection.candidate.username }}</strong>
+                  <span>{{ transport_driver_assignment.vehicle.registration_identifier }} · {{ transport_driver_assignment.vehicle.internal_name }}</span>
+                </div>
+                <div class="worker-crew-summary-part">
+                  <small>{{ employer_t.support_transport_selected_schedule }}</small>
+                  <strong>{{ selected_transport_template.name }}</strong>
+                  <span>{{ selected_transport_template.starts_at_time|time:'H:i' }}—{{ selected_transport_template.ends_at_time|time:'H:i' }}</span>
+                </div>
+                <div class="worker-crew-summary-part worker-crew-summary-occupancy">
+                  <small>{{ employer_t.support_worker_occupancy }}</small>
+                  <strong>{{ transport_passengers|length|add:'1' }}/{{ transport_driver_assignment.vehicle.seat_capacity }}</strong>
+                </div>
               </div>
-              <div class="worker-crew-summary-card">
-                <small>{{ employer_t.support_transport_selected_schedule }}</small>
-                <strong>{{ selected_transport_template.project.worker_visible_name }}</strong>
-                <span>{{ selected_transport_template.name }} · {{ selected_transport_template.starts_at_time|time:'H:i' }}—{{ selected_transport_template.ends_at_time|time:'H:i' }} · {{ employer_t.support_worker_break }}: {{ selected_transport_template.break_minutes }}</span>
-              </div>
-              <div class="worker-crew-summary-card">
-                <small>{{ employer_t.support_worker_occupancy }}</small>
-                <strong>{{ transport_passengers|length|add:'1' }} / {{ transport_driver_assignment.vehicle.seat_capacity }}</strong>
-                <span>{{ employer_t.support_transport_free_seats }}: {{ transport_free_seats }}</span>
+              <div class="worker-crew-summary-actions">
+                {% if selected_transport_route and transport_driver_candidates and can_operate and permissions.work %}<button class="jh-btn" type="button" data-worker-passenger-dialog-target="worker-driver-change">{{ employer_t.support_transport_change_driver }}</button>{% endif %}
+                {% if transport_driver_chat_url %}<a class="jh-btn" href="{{ transport_driver_chat_url }}">{{ employer_t.support_transport_passenger_chat }}</a>{% endif %}
               </div>
             </div>
+
+            {% if selected_transport_route and transport_driver_candidates and can_operate and permissions.work %}
+              <dialog class="worker-passenger-modal" id="worker-driver-change" aria-labelledby="worker-driver-change-title"><div class="worker-passenger-modal-card"><div class="worker-passenger-modal-head"><h2 id="worker-driver-change-title">{{ employer_t.support_transport_change_driver }}</h2><button class="jh-btn" type="button" data-worker-passenger-modal-close aria-label="{{ employer_t.support_modal_close }}">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="transport_crew_driver_replace"><input type="hidden" name="route_id" value="{{ selected_transport_route.public_id }}"><input type="hidden" name="return_tab" value="transport"><input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}"><label class="jh-field"><span>{{ employer_t.support_transport_driver_card }}</span><select class="jh-input" name="replacement_driver_connection_id" required>{% for item in transport_driver_candidates %}<option value="{{ item.public_id }}">{{ item.transport_driver_option_label }}</option>{% endfor %}</select></label><p class="jh-help">{{ employer_t.support_transport_change_driver_help }}</p><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_transport_change_driver }}</button></div></form></div></dialog>
+            {% endif %}
 
             <div class="worker-passenger-head"><h3>{{ employer_t.support_transport_passenger_list }}</h3><span class="worker-passenger-count">{{ transport_passengers|length }} / {{ transport_driver_assignment.vehicle.seat_capacity|add:'-1' }}</span></div>
             <div class="worker-passenger-list">
