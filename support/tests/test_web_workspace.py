@@ -1570,6 +1570,71 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertEqual(passenger_shift.crew_id, route.crew_id)
 
+        # A driver's later schedule must not drag former passengers into the
+        # new calendar day.  Passenger membership is derived from that day's
+        # ScheduledWorkShift.crew, not from permanent route metadata.
+        later_day = historical_day + timedelta(days=2)
+        response = self.client.post(
+            driver_url,
+            {
+                "action": "scheduled_shifts_from_template",
+                "schedule_template_id": str(template.public_id),
+                "work_dates": [later_day.isoformat()],
+                "return_tab": "company",
+                "return_month": later_day.strftime("%Y-%m"),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            ScheduledWorkShift.objects.filter(
+                connection=passenger_connection,
+                schedule_template=template,
+                work_date=later_day,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).exists()
+        )
+        later_card = self.client.get(
+            f"{driver_url}?tab=work_transport"
+            f"&month={later_day.strftime('%Y-%m')}"
+            f"&transport_crew={driver_assignment.public_id}.{template.public_id}"
+            f"&crew_date={later_day.isoformat()}"
+        )
+        self.assertEqual(later_card.status_code, 200)
+        self.assertEqual(later_card.context["transport_passengers"], [])
+
+        # Clearing and assigning another day remains one successful atomic
+        # operation even though the route and old passenger metadata exist.
+        self.client.post(
+            driver_url,
+            {
+                "action": "scheduled_shifts_clear",
+                "work_dates": [later_day.isoformat()],
+                "return_tab": "company",
+                "return_month": later_day.strftime("%Y-%m"),
+            },
+        )
+        replacement_day = later_day + timedelta(days=1)
+        response = self.client.post(
+            driver_url,
+            {
+                "action": "scheduled_shifts_from_template",
+                "schedule_template_id": str(template.public_id),
+                "work_dates": [replacement_day.isoformat()],
+                "return_tab": "company",
+                "return_month": replacement_day.strftime("%Y-%m"),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            ScheduledWorkShift.objects.filter(
+                connection=self.worker_connection,
+                schedule_template=template,
+                work_date=replacement_day,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+                crew=route.crew,
+            ).exists()
+        )
+
     def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):
         self.client.force_login(self.owner)
         registry_url = (
@@ -2217,6 +2282,7 @@ class SupportWorkspaceWebTests(TestCase):
                 "action": "transport_schedule_passenger_replace",
                 "passenger_assignment_id": str(passenger_assignment.public_id),
                 "replacement_connection_id": str(replacement_connection.public_id),
+                "work_dates": [shift_date.isoformat()],
                 "return_project_crew": (
                     f"{driver_assignment.public_id}.{template.public_id}"
                 ),
@@ -2290,6 +2356,7 @@ class SupportWorkspaceWebTests(TestCase):
             {
                 "action": "transport_schedule_passenger_remove",
                 "passenger_assignment_id": str(replacement_assignment.public_id),
+                "work_dates": [shift_date.isoformat()],
                 "return_tab": "transport",
                 "return_transport_crew": (
                     f"{driver_assignment.public_id}.{template.public_id}"

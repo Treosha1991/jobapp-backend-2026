@@ -884,6 +884,7 @@ def replace_scheduled_shift(
     replacement_state=None,
     schedule_template=None,
     crew=None,
+    inherit_existing_crew=True,
 ):
     """Replace one planned shift while preserving the old audit record.
 
@@ -921,7 +922,7 @@ def replace_scheduled_shift(
             ended_at=ends_at,
             break_minutes=break_minutes,
         )
-        if crew is None:
+        if crew is None and inherit_existing_crew:
             crew = shift.crew
         if crew is not None:
             if crew.organization_id != organization.id:

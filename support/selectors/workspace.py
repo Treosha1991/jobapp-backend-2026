@@ -1568,8 +1568,36 @@ def worker_card_snapshot(
                 ).order_by("work_date", "starts_at", "id")
             )
             if selected_transport_route is not None:
+                passenger_shift_query = ScheduledWorkShift.objects.filter(
+                    organization=organization,
+                    crew=selected_transport_route.crew,
+                    state=ScheduledWorkShift.STATE_PUBLISHED,
+                )
+                if viewed_crew_date is not None:
+                    passenger_shift_query = passenger_shift_query.filter(
+                        work_date=viewed_crew_date
+                    )
+                else:
+                    month_end = date(
+                        selected_calendar_date.year,
+                        selected_calendar_date.month,
+                        monthrange(
+                            selected_calendar_date.year,
+                            selected_calendar_date.month,
+                        )[1],
+                    )
+                    passenger_shift_query = passenger_shift_query.filter(
+                        work_date__range=(selected_calendar_date, month_end)
+                    )
+                active_passenger_ids = set(
+                    passenger_shift_query.exclude(
+                        connection=transport_driver_connection
+                    ).values_list("connection_id", flat=True)
+                )
                 transport_passengers = list(
-                    selected_transport_route.passenger_assignments.all()
+                    selected_transport_route.passenger_assignments.filter(
+                        connection_id__in=active_passenger_ids
+                    )
                 )
                 if transport_driver_connection is not None:
                     transport_passengers = [

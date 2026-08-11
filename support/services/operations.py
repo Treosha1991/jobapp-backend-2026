@@ -2426,29 +2426,6 @@ def sync_worker_schedule_transport(
                     "work_dates": [item.isoformat() for item in dates],
                 },
             )
-            orphan_connection_ids = list(
-                ScheduledWorkShift.objects.filter(
-                    organization=organization,
-                    schedule_template=template,
-                    work_date__in=dates,
-                    state=ScheduledWorkShift.STATE_PUBLISHED,
-                    crew__isnull=True,
-                )
-                .exclude(connection=connection)
-                .values_list("connection_id", flat=True)
-                .distinct()
-            )
-            for orphan_connection_id in orphan_connection_ids:
-                orphan_connection = SupportConnection.objects.get(
-                    pk=orphan_connection_id
-                )
-                sync_worker_schedule_transport(
-                    actor=actor,
-                    organization=organization,
-                    connection=orphan_connection,
-                    schedule_template=template,
-                    work_dates=dates,
-                )
             return {"role": "driver", "crew": crew, "route": route}
 
         # A passenger can only join a real driver crew.  If the employer has
@@ -2612,6 +2589,7 @@ def add_passenger_to_driver_schedule(
     driver_connection,
     schedule_template,
     passenger_connection,
+    work_dates=None,
     replace_conflicting_schedule=False,
     allow_driver_on_other_dates=False,
 ):
@@ -2685,6 +2663,9 @@ def add_passenger_to_driver_schedule(
             )
 
         today = timezone.localdate()
+        requested_dates = sorted(set(work_dates or []))
+        assignment_start = requested_dates[0] if requested_dates else today
+        assignment_end = requested_dates[-1] if requested_dates else today
         driver_assignment = (
             DriverVehicleAssignment.objects.select_for_update()
             .select_related("vehicle", "driver_connection__candidate")
@@ -2692,9 +2673,9 @@ def add_passenger_to_driver_schedule(
                 organization=organization,
                 driver_connection=driver_connection,
                 state=DriverVehicleAssignment.STATE_PUBLISHED,
-                starts_on__lte=today,
+                starts_on__lte=assignment_start,
             )
-            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=assignment_end))
             .order_by("-starts_on", "-id")
             .first()
         )
@@ -2703,15 +2684,19 @@ def add_passenger_to_driver_schedule(
                 {"driver_vehicle_assignment": "driver_vehicle_assignment_required"}
             )
 
-        driver_shifts = list(
-            ScheduledWorkShift.objects.select_for_update()
-            .filter(
+        driver_shift_query = ScheduledWorkShift.objects.select_for_update().filter(
                 organization=organization,
                 connection=driver_connection,
                 schedule_template=schedule_template,
                 state=ScheduledWorkShift.STATE_PUBLISHED,
-                work_date__gte=today,
             )
+        driver_shift_query = (
+            driver_shift_query.filter(work_date__in=requested_dates)
+            if requested_dates
+            else driver_shift_query.filter(work_date__gte=today)
+        )
+        driver_shifts = list(
+            driver_shift_query
             # Do not join the nullable work_assignment while locking rows.
             # PostgreSQL rejects FOR UPDATE on the nullable side of an outer
             # join; the assignment is not used while building this crew.
@@ -2797,16 +2782,28 @@ def add_passenger_to_driver_schedule(
         crew = ensure_transport_crew_for_route(actor=actor, route=route)
         route.crew = crew
 
-        passenger_count = TransportPassengerAssignment.objects.select_for_update().filter(
-            route=route
-        ).count()
-        if passenger_count >= driver_assignment.vehicle.seat_capacity - 1:
+        active_counts = {}
+        for crew_shift in ScheduledWorkShift.objects.select_for_update().filter(
+            organization=organization,
+            crew=crew,
+            work_date__in=[item.work_date for item in driver_shifts],
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        ).exclude(connection=driver_connection):
+            active_counts.setdefault(crew_shift.work_date, set()).add(
+                crew_shift.connection_id
+            )
+        if any(
+            len(active_counts.get(item.work_date, set()))
+            >= driver_assignment.vehicle.seat_capacity - 1
+            and passenger_connection.id
+            not in active_counts.get(item.work_date, set())
+            for item in driver_shifts
+        ):
             raise ValidationError({"route": "transport_crew_full"})
-        if TransportPassengerAssignment.objects.filter(
+        passenger = TransportPassengerAssignment.objects.select_for_update().filter(
             route=route,
             connection=passenger_connection,
-        ).exists():
-            raise ValidationError({"connection": "connection_already_in_route"})
+        ).first()
         passenger_has_vehicle = DriverVehicleAssignment.objects.select_for_update().filter(
             organization=organization,
             driver_connection=passenger_connection,
@@ -2844,13 +2841,16 @@ def add_passenger_to_driver_schedule(
                 ),
             },
         )
-        passenger = TransportPassengerAssignment.objects.create(
-            route=route,
-            connection=passenger_connection,
-            pickup_stop=pickup_stop,
-            dropoff_stop=dropoff_stop,
-            boarding_order=passenger_count + 1,
-        )
+        if passenger is None:
+            passenger = TransportPassengerAssignment.objects.create(
+                route=route,
+                connection=passenger_connection,
+                pickup_stop=pickup_stop,
+                dropoff_stop=dropoff_stop,
+                boarding_order=(
+                    TransportPassengerAssignment.objects.filter(route=route).count() + 1
+                ),
+            )
         current_member = TransportCrewMember.objects.filter(
             crew=crew,
             connection=passenger_connection,
@@ -2861,7 +2861,7 @@ def add_passenger_to_driver_schedule(
                 crew=crew,
                 connection=passenger_connection,
                 starts_on=first_date,
-                boarding_order=passenger_count + 1,
+                boarding_order=passenger.boarding_order,
                 created_by=actor,
             )
 
@@ -3000,7 +3000,7 @@ def add_passenger_to_driver_schedule(
     return passenger
 
 
-def remove_passenger_from_driver_schedule(*, actor, passenger_assignment):
+def remove_passenger_from_driver_schedule(*, actor, passenger_assignment, work_dates=None):
     """Remove only the transport seat, preserving the worker's job and shifts."""
 
     organization = passenger_assignment.route.organization
@@ -3037,8 +3037,55 @@ def remove_passenger_from_driver_schedule(*, actor, passenger_assignment):
         )
         connection = passenger.connection
         removed_passenger_id = passenger.public_id
-        passenger.delete()
-        if route.crew_id is not None:
+        selected_dates = sorted(set(work_dates or []))
+        if selected_dates and route.crew_id is not None:
+            crew_shifts = list(
+                ScheduledWorkShift.objects.select_for_update().filter(
+                    organization=organization,
+                    connection=connection,
+                    crew=route.crew,
+                    work_date__in=selected_dates,
+                    state__in=(
+                        ScheduledWorkShift.STATE_DRAFT,
+                        ScheduledWorkShift.STATE_PUBLISHED,
+                    ),
+                )
+            )
+            for shift in crew_shifts:
+                competing_shift = ScheduledWorkShift.objects.select_for_update().filter(
+                    organization=organization,
+                    connection=connection,
+                    work_date=shift.work_date,
+                    crew__isnull=True,
+                    state__in=(
+                        ScheduledWorkShift.STATE_DRAFT,
+                        ScheduledWorkShift.STATE_PUBLISHED,
+                    ),
+                ).exclude(pk=shift.pk).first()
+                if competing_shift is None:
+                    shift.crew = None
+                    shift.save(update_fields=["crew", "updated_at"])
+                else:
+                    from .timekeeping import cancel_scheduled_shift, delete_scheduled_shift_draft
+
+                    if shift.state == ScheduledWorkShift.STATE_DRAFT:
+                        delete_scheduled_shift_draft(actor=actor, shift=shift)
+                    else:
+                        cancel_scheduled_shift(actor=actor, shift=shift)
+            has_remaining_crew_days = ScheduledWorkShift.objects.filter(
+                organization=organization,
+                connection=connection,
+                crew=route.crew,
+                state__in=(
+                    ScheduledWorkShift.STATE_DRAFT,
+                    ScheduledWorkShift.STATE_PUBLISHED,
+                ),
+            ).exists()
+        else:
+            has_remaining_crew_days = False
+        if not has_remaining_crew_days:
+            passenger.delete()
+        if route.crew_id is not None and not has_remaining_crew_days:
             _close_open_crew_membership(
                 crew=route.crew,
                 connection=connection,
@@ -3085,6 +3132,7 @@ def replace_passenger_in_driver_schedule(
     actor,
     passenger_assignment,
     replacement_connection,
+    work_dates=None,
 ):
     """Replace one crew seat only on dates used by the selected crew.
 
@@ -3142,16 +3190,21 @@ def replace_passenger_in_driver_schedule(
         )
 
         crew = ensure_transport_crew_for_route(actor=actor, route=route)
-        target_driver_shifts = list(
-            ScheduledWorkShift.objects.select_for_update()
-            .filter(
+        requested_dates = sorted(set(work_dates or []))
+        target_shift_query = ScheduledWorkShift.objects.select_for_update().filter(
                 organization=organization,
                 connection=route.driver_vehicle_assignment.driver_connection,
                 schedule_template=route.schedule_template,
                 crew=crew,
                 state=ScheduledWorkShift.STATE_PUBLISHED,
-                work_date__gte=today,
             )
+        target_shift_query = (
+            target_shift_query.filter(work_date__in=requested_dates)
+            if requested_dates
+            else target_shift_query.filter(work_date__gte=today)
+        )
+        target_driver_shifts = list(
+            target_shift_query
             .order_by("work_date", "starts_at", "id")
         )
         if not target_driver_shifts:
@@ -3182,8 +3235,18 @@ def replace_passenger_in_driver_schedule(
             else:
                 cancel_scheduled_shift(actor=actor, shift=shift)
 
-        current.delete()
-        if route.crew_id is not None:
+        remaining_old_days = ScheduledWorkShift.objects.filter(
+            organization=organization,
+            connection=old_connection,
+            crew=crew,
+            state__in=(
+                ScheduledWorkShift.STATE_DRAFT,
+                ScheduledWorkShift.STATE_PUBLISHED,
+            ),
+        ).exists()
+        if not remaining_old_days:
+            current.delete()
+        if route.crew_id is not None and not remaining_old_days:
             _close_open_crew_membership(
                 crew=route.crew,
                 connection=old_connection,
@@ -3194,6 +3257,7 @@ def replace_passenger_in_driver_schedule(
             driver_connection=route.driver_vehicle_assignment.driver_connection,
             schedule_template=route.schedule_template,
             passenger_connection=replacement_connection,
+            work_dates=target_dates,
             replace_conflicting_schedule=True,
             allow_driver_on_other_dates=True,
         )

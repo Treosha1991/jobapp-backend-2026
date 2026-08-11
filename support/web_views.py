@@ -801,6 +801,9 @@ def _worker_card_operation(request, *, snapshot):
                     f"{route.schedule_template.public_id}"
                 )
         elif action == "transport_schedule_passenger_add":
+            work_dates = sorted(
+                {_operation_date(value) for value in request.POST.getlist("work_dates")}
+            )
             driver_connection = get_object_or_404(
                 worker_connection_queryset_for(
                     user=request.user,
@@ -834,6 +837,9 @@ def _worker_card_operation(request, *, snapshot):
                 driver_connection=driver_connection,
                 schedule_template=schedule_template,
                 passenger_connection=passenger_connection,
+                work_dates=work_dates,
+                replace_conflicting_schedule=True,
+                allow_driver_on_other_dates=True,
             )
             messages.success(
                 request,
@@ -888,15 +894,22 @@ def _worker_card_operation(request, *, snapshot):
                 public_id=request.POST.get("passenger_assignment_id"),
             )
             if action == "transport_schedule_passenger_remove":
+                work_dates = sorted(
+                    {_operation_date(value) for value in request.POST.getlist("work_dates")}
+                )
                 remove_passenger_from_driver_schedule(
                     actor=request.user,
                     passenger_assignment=passenger_assignment,
+                    work_dates=work_dates,
                 )
                 messages.success(
                     request,
                     tr(request, "support_transport_passenger_removed"),
                 )
             else:
+                work_dates = sorted(
+                    {_operation_date(value) for value in request.POST.getlist("work_dates")}
+                )
                 replacement_connection = get_object_or_404(
                     worker_connection_queryset_for(
                         user=request.user,
@@ -912,6 +925,7 @@ def _worker_card_operation(request, *, snapshot):
                     actor=request.user,
                     passenger_assignment=passenger_assignment,
                     replacement_connection=replacement_connection,
+                    work_dates=work_dates,
                 )
                 messages.success(
                     request,
@@ -1131,6 +1145,10 @@ def _worker_card_operation(request, *, snapshot):
                             shift=duplicate_shift,
                         )
                     if current_shift is not None:
+                        clear_existing_crew = bool(
+                            current_shift.crew_id
+                            and current_shift.crew.schedule_template_id != template.id
+                        )
                         replace_scheduled_shift(
                             actor=request.user,
                             shift=current_shift,
@@ -1142,6 +1160,7 @@ def _worker_card_operation(request, *, snapshot):
                             work_assignment=work_assignment,
                             replacement_state=ScheduledWorkShift.STATE_PUBLISHED,
                             schedule_template=template,
+                            inherit_existing_crew=not clear_existing_crew,
                         )
                     else:
                         shift = create_scheduled_shift(
