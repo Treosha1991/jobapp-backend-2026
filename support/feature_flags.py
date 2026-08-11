@@ -10,3 +10,11 @@ def is_support_feature_enabled():
     """
 
     return bool(getattr(settings, "SUPPORT_FEATURE_ENABLED", False))
+
+
+def is_project_first_workspace_enabled():
+    """Return whether the isolated project-first employer preview is enabled."""
+
+    return is_support_feature_enabled() and bool(
+        getattr(settings, "SUPPORT_PROJECT_FIRST_ENABLED", False)
+    )

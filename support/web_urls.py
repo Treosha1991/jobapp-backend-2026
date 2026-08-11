@@ -1,11 +1,18 @@
 from django.urls import path
 
 from . import web_views
+from .project_first_web import project_first_workspace
 
 
 app_name = "support"
 
 urlpatterns = [
+    path("project-first/", project_first_workspace, name="project-first"),
+    path(
+        "project-first/projects/<uuid:project_public_id>/",
+        project_first_workspace,
+        name="project-first-detail",
+    ),
     path("", web_views.workspace_home, name="workspace"),
     path("team/", web_views.team_management, name="team"),
     path("time/", web_views.timekeeping_workspace, name="time"),

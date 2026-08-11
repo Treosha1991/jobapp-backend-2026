@@ -1,0 +1,158 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ pf.title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .pf-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .pf-kicker{margin:0 0 6px;color:var(--green);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+  .pf-projects{display:grid;gap:8px;margin-top:18px}
+  .pf-project{display:grid;grid-template-columns:minmax(180px,1.3fr) minmax(220px,1fr) auto auto;gap:12px;align-items:center;padding:11px 13px;border:1px solid var(--line);border-radius:14px;background:rgba(5,22,36,.28)}
+  .pf-project strong,.pf-project span{display:block}.pf-project span,.pf-muted{color:var(--muted);font-size:12px}
+  .pf-crews{display:grid;gap:12px;margin-top:18px}
+  .pf-crew{padding:14px;border:1px solid var(--line);border-radius:17px;background:rgba(5,22,36,.3)}
+  .pf-crew-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .pf-crew-head h2{margin:0;font-size:18px}.pf-resource{display:flex;gap:9px;flex-wrap:wrap;color:var(--muted);font-size:12px}
+  .pf-panels{display:grid;grid-template-columns:1.1fr 1fr;gap:10px;margin-top:12px}
+  .pf-panel{min-width:0;padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(20,63,97,.28)}
+  .pf-panel h3{margin:0 0 9px;font-size:15px}.pf-panel form{display:grid;gap:8px}
+  .pf-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.pf-row.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .pf-field{display:grid;gap:5px}.pf-field>span{color:#d7edf9;font-size:11px;font-weight:800}
+  .pf-dates{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+  .pf-dates .jh-input{min-width:0;padding-right:32px}
+  .pf-list{display:grid;gap:6px}.pf-person{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border:1px solid var(--line);border-radius:11px;background:rgba(5,22,36,.25)}
+  .pf-person form{display:flex;align-items:center;gap:6px}.pf-person strong{font-size:12px}
+  .pf-select-days{min-height:90px}.pf-create{margin-top:14px;padding:14px;border:1px solid rgba(24,223,103,.3);border-radius:16px;background:rgba(24,223,103,.06)}
+  .pf-create h2{margin:0 0 10px;font-size:17px}.pf-empty{padding:18px;text-align:center;border:1px dashed var(--line);border-radius:14px;color:var(--muted)}
+  @media(max-width:850px){.pf-project,.pf-panels{grid-template-columns:1fr}.pf-row,.pf-row.three{grid-template-columns:1fr}.pf-dates{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="jh-card">
+  <div class="pf-head">
+    <div>
+      <p class="pf-kicker">{{ pf.preview }} · {{ organization.display_name }}</p>
+      <h1 class="jh-title">{% if project %}{{ project.internal_name }}{% else %}{{ pf.title }}{% endif %}</h1>
+      <p class="jh-subtitle">{{ pf.subtitle }}</p>
+    </div>
+    {% if project %}<a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>{% endif %}
+  </div>
+
+  {% if not project %}
+    {% if projects %}
+      <div class="pf-projects">
+        {% for item in projects %}
+          <article class="pf-project">
+            <div><strong>{{ item.internal_name }}</strong><span>{{ item.worker_visible_name }}</span></div>
+            <div><strong>{{ pf.project_address }}</strong><span>{{ item.worksite.city }}, {{ item.worksite.street }} {{ item.worksite.building }}</span></div>
+            <div><strong>{{ item.crew_count }}</strong><span>{{ pf.crews }}</span></div>
+            <a class="jh-btn primary" href="{% url 'support:project-first-detail' item.public_id %}?organization={{ organization.public_id }}">{{ pf.open }}</a>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}<div class="pf-empty">{{ pf.no_projects }}</div>{% endif %}
+  {% else %}
+    <div class="pf-muted">{{ project.worksite.city }}, {{ project.worksite.street }} {{ project.worksite.building }} · {{ project.starts_on|date:"d.m.Y" }}</div>
+
+    <div class="pf-crews">
+      {% for crew in crews %}
+        <article class="pf-crew">
+          <div class="pf-crew-head">
+            <div><p class="pf-kicker">{{ pf.crew }}</p><h2>{{ crew.internal_name|default:pf.crew }}</h2></div>
+            {% if crew.current_resource %}
+              <div class="pf-resource">
+                <span><strong>{{ crew.current_resource.driver_name }}</strong> · {{ pf.driver }}</span>
+                <span><strong>{{ crew.current_resource.vehicle.registration_identifier }}</strong> · {{ crew.current_resource.vehicle.internal_name }}</span>
+                <span><strong>{{ crew.occupied }}/{{ crew.current_resource.vehicle.seat_capacity }}</strong> · {{ pf.seats }}</span>
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="pf-panels">
+            <section class="pf-panel">
+              <h3>{{ pf.schedule }}</h3>
+              <form method="post">
+                {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="shifts_publish"><input type="hidden" name="crew_id" value="{{ crew.public_id }}">
+                <div class="pf-dates">
+                  <input class="jh-input" type="date" name="work_dates" value="{{ today|date:'Y-m-d' }}">
+                  <input class="jh-input" type="date" name="work_dates">
+                  <input class="jh-input" type="date" name="work_dates">
+                  <input class="jh-input" type="date" name="work_dates">
+                </div>
+                <div class="pf-row three">
+                  <label class="pf-field"><span>{{ pf.shift_start }}</span><input class="jh-input" type="time" name="starts_at_time" value="06:00" required></label>
+                  <label class="pf-field"><span>{{ pf.shift_end }}</span><input class="jh-input" type="time" name="ends_at_time" value="14:45" required></label>
+                  <label class="pf-field"><span>{{ pf.break }}</span><input class="jh-input" type="number" min="0" name="break_minutes" value="0"></label>
+                </div>
+                <button class="jh-btn primary" type="submit">{{ pf.publish }}</button>
+              </form>
+              {% if crew.published_shifts %}
+                <form method="post" style="margin-top:10px">
+                  {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="shifts_release"><input type="hidden" name="crew_id" value="{{ crew.public_id }}">
+                  <select class="jh-input pf-select-days" name="work_dates" multiple required>
+                    {% for shift in crew.published_shifts %}<option value="{{ shift.work_date|date:'Y-m-d' }}">{{ shift.work_date|date:"d.m.Y" }} · {{ shift.starts_at|date:"H:i" }}–{{ shift.ends_at|date:"H:i" }}</option>{% endfor %}
+                  </select>
+                  <button class="jh-btn danger" type="submit">{{ pf.release }}</button>
+                </form>
+              {% else %}<div class="pf-muted" style="margin-top:9px">{{ pf.no_shifts }}</div>{% endif %}
+            </section>
+
+            <section class="pf-panel">
+              <h3>{{ pf.passengers }}</h3>
+              {% if crew.open_passengers %}
+                <div class="pf-list">
+                  {% for passenger in crew.open_passengers %}
+                    <div class="pf-person">
+                      <strong>{{ passenger.display_name }}</strong>
+                      <form method="post">
+                        {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="passenger_remove"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><input type="hidden" name="connection_id" value="{{ passenger.connection.public_id }}"><input type="hidden" name="scope" value="future"><input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">
+                        <button class="jh-btn danger" type="submit">{{ pf.remove }}</button>
+                      </form>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% else %}<div class="pf-muted">{{ pf.no_passengers }}</div>{% endif %}
+
+              {% if crew.published_shifts %}
+                <form method="post" style="margin-top:10px">
+                  {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="passenger_add"><input type="hidden" name="crew_id" value="{{ crew.public_id }}">
+                  <select class="jh-input" name="connection_id" required><option value="">{{ pf.add_passenger }}</option>{% for worker in connections %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% endfor %}</select>
+                  <select class="jh-input" name="scope" data-scope-select><option value="future">{{ pf.future }}</option><option value="selected">{{ pf.selected }}</option></select>
+                  <select class="jh-input pf-select-days" name="work_dates" multiple>
+                    {% for shift in crew.published_shifts %}<option value="{{ shift.work_date|date:'Y-m-d' }}">{{ shift.work_date|date:"d.m.Y" }}</option>{% endfor %}
+                  </select>
+                  <input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">
+                  <button class="jh-btn primary" type="submit">{{ pf.add_passenger }}</button>
+                </form>
+              {% endif %}
+
+              {% if crew.passenger_driver_options %}
+                <form method="post" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
+                  {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="driver_replace"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">
+                  <select class="jh-input" name="driver_id" required><option value="">{{ pf.new_driver }}</option>{% for passenger in crew.passenger_driver_options %}<option value="{{ passenger.connection.public_id }}">{{ passenger.display_name }}</option>{% endfor %}</select>
+                  <button class="jh-btn" type="submit">{{ pf.replace }}</button>
+                </form>
+              {% endif %}
+            </section>
+          </div>
+        </article>
+      {% empty %}<div class="pf-empty">{{ pf.no_crews }}</div>{% endfor %}
+    </div>
+
+    <section class="pf-create">
+      <h2>{{ pf.create_crew }}</h2>
+      <form method="post">
+        {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="crew_create">
+        <div class="pf-row">
+          <label class="pf-field"><span>{{ pf.name }}</span><input class="jh-input" name="internal_name" maxlength="160"></label>
+          <label class="pf-field"><span>{{ pf.start_date }}</span><input class="jh-input" type="date" name="starts_on" value="{{ today|date:'Y-m-d' }}" required></label>
+          <label class="pf-field"><span>{{ pf.driver }}</span><select class="jh-input" name="driver_id" required><option value="">—</option>{% for driver in available_drivers %}<option value="{{ driver.public_id }}">{{ driver.display_name }}</option>{% endfor %}</select></label>
+          <label class="pf-field"><span>{{ pf.vehicle }}</span><select class="jh-input" name="vehicle_id" required><option value="">—</option>{% for vehicle in available_vehicles %}<option value="{{ vehicle.public_id }}">{{ vehicle.internal_name }} · {{ vehicle.registration_identifier }} · {{ vehicle.seat_capacity }}</option>{% endfor %}</select></label>
+        </div>
+        <button class="jh-btn primary" type="submit" style="margin-top:10px">{{ pf.create }}</button>
+      </form>
+    </section>
+  {% endif %}
+</section>
+{% endblock %}

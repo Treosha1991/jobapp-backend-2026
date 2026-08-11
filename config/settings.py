@@ -211,6 +211,12 @@ REWARDED_ADS_ENABLED = os.environ.get("REWARDED_ADS_ENABLED", "0") == "1"
 # JobHub Support is developed behind a server-side feature flag.  It is off by
 # default so deploying the new Django app cannot change the public JobHub flow.
 SUPPORT_FEATURE_ENABLED = os.environ.get("SUPPORT_FEATURE_ENABLED", "0") == "1"
+# The project-first employer workspace is a second, narrower switch.  It lets
+# staging exercise the replacement crew/calendar flow without changing the
+# URLs or behaviour of the legacy Support cabinet.
+SUPPORT_PROJECT_FIRST_ENABLED = (
+    os.environ.get("SUPPORT_PROJECT_FIRST_ENABLED", "0") == "1"
+)
 # Live Support-chat text must not be sent to an external translation provider
 # until its privacy/retention terms have been reviewed.  The translation API is
 # intentionally disabled by default, but its safe cache/access boundary exists.

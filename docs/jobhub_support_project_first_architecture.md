@@ -39,8 +39,32 @@ licence, resource or driver conflict rolls the complete operation back.
 Ordinary passenger conflicts are replaced for the selected dates; a driver of
 another crew is never silently converted into a passenger on overlapping days.
 
+## Stage 3: isolated employer preview
+
+The project-first employer preview is available at
+`/employer/support/project-first/` only when both server-side switches are on:
+
+- `SUPPORT_FEATURE_ENABLED=1`;
+- `SUPPORT_PROJECT_FIRST_ENABLED=1`.
+
+The preview lists active projects and lets an owner/deputy with unrestricted
+worker access:
+
+- create a crew from an available licensed driver and vehicle;
+- publish or replace several directly entered calendar days;
+- release selected published days;
+- add or remove a passenger for selected days or all future days;
+- permanently replace a driver with a licensed passenger of that crew;
+- see the exact service validation reason instead of a generic form error.
+
+Every write uses the stage-2 transactional services. The preview never reads
+or writes legacy `TransportCrew` data, and the legacy workspace remains the
+default URL and fallback. Russian, English, Polish and Ukrainian interface copy
+is present in the isolated template context.
+
 ## Next stage
 
-Build the project-first employer workspace and connect it to these services
-behind an isolated feature switch. The legacy workspace remains the fallback
-until the new project, crew and compact calendar screens pass manual testing.
+Run visual/manual testing of the isolated preview, refine the compact calendar
+and project page, then prepare the explicit staging reset/cutover command. The
+reset must remain a separate operator action and must preserve workers, housing
+and the vehicle registry.
