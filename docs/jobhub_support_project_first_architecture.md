@@ -62,9 +62,38 @@ or writes legacy `TransportCrew` data, and the legacy workspace remains the
 default URL and fallback. Russian, English, Polish and Ukrainian interface copy
 is present in the isolated template context.
 
+## Stage 4: guarded staging reset and cutover preparation
+
+The reset is an explicit operator-only management command. It is never run by
+the deployment script and defaults to a read-only dry run:
+
+```text
+python manage.py reset_support_project_first_staging \
+  --organization <organization-public-uuid>
+```
+
+The preview reports organization-specific deletion and preservation counts.
+Applying that exact plan requires all three protections:
+
+1. temporary server setting `SUPPORT_PROJECT_FIRST_RESET_ALLOWED=1`;
+2. command option `--apply`;
+3. exact option `--confirm RESET-<organization-public-uuid>`.
+
+An optional `--actor-email` must resolve to an active staff account and is
+written to the append-only audit event. The apply transaction removes both
+legacy and isolated-preview project operations: projects, worksites, project
+templates, planned shifts/batches, routes, crews, driver/vehicle assignments
+and worker/project assignments. It preserves and verifies unchanged counts for
+workers, housing sites/rooms/places/assignments, the vehicle registry and
+factual work-time entries. A preserved factual entry loses only its deleted
+planned-shift link through `SET_NULL`.
+
+No staging data has been reset by adding this command. Manual preview testing
+and an operator-approved dry-run report are required before cutover. The legacy
+workspace remains the default until that separate decision.
+
 ## Next stage
 
-Run visual/manual testing of the isolated preview, refine the compact calendar
-and project page, then prepare the explicit staging reset/cutover command. The
-reset must remain a separate operator action and must preserve workers, housing
-and the vehicle registry.
+Enable only `SUPPORT_PROJECT_FIRST_ENABLED=1` on staging, test the isolated
+project workspace visually, review the dry-run report, and then decide whether
+to perform the one-time reset and switch the employer's default navigation.

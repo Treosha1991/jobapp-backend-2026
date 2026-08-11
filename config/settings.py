@@ -217,6 +217,14 @@ SUPPORT_FEATURE_ENABLED = os.environ.get("SUPPORT_FEATURE_ENABLED", "0") == "1"
 SUPPORT_PROJECT_FIRST_ENABLED = (
     os.environ.get("SUPPORT_PROJECT_FIRST_ENABLED", "0") == "1"
 )
+
+# Destructive project-first staging reset is deliberately separate from the
+# preview feature flag.  The management command remains dry-run only unless
+# this operator-controlled switch and its explicit CLI confirmation are both
+# present.  Never enable it permanently in a production environment.
+SUPPORT_PROJECT_FIRST_RESET_ALLOWED = (
+    os.environ.get("SUPPORT_PROJECT_FIRST_RESET_ALLOWED", "0") == "1"
+)
 # Live Support-chat text must not be sent to an external translation provider
 # until its privacy/retention terms have been reviewed.  The translation API is
 # intentionally disabled by default, but its safe cache/access boundary exists.
