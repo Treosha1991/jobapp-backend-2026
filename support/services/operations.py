@@ -1154,8 +1154,14 @@ def add_route_passenger(*, actor, route, connection, pickup_stop, dropoff_stop, 
     return passenger
 
 
-def ensure_transport_crew_for_route(*, actor, route):
-    """Mirror a legacy route into the stable crew records exactly once."""
+def ensure_transport_crew_for_route(*, actor, route, include_legacy_passengers=True):
+    """Mirror a legacy route into the stable crew records exactly once.
+
+    Schedule-driven crew creation deliberately passes
+    ``include_legacy_passengers=False``.  Historical route rows describe a
+    former route, not a passenger's membership on every future day that uses
+    the same driver and template.
+    """
 
     organization = route.organization
     require_permission(
@@ -1209,6 +1215,11 @@ def ensure_transport_crew_for_route(*, actor, route):
             ends_on=route.ends_on,
             created_by=actor,
         )
+        legacy_passengers = (
+            route.passenger_assignments.all()
+            if include_legacy_passengers
+            else ()
+        )
         members = [
             TransportCrewMember(
                 crew=crew,
@@ -1218,7 +1229,7 @@ def ensure_transport_crew_for_route(*, actor, route):
                 boarding_order=passenger.boarding_order,
                 created_by=actor,
             )
-            for passenger in route.passenger_assignments.all()
+            for passenger in legacy_passengers
         ]
         TransportCrewMember.objects.bulk_create(members)
         route.crew = crew
@@ -2411,7 +2422,11 @@ def sync_worker_schedule_transport(
                     update_fields.extend(("state", "published_by", "published_at"))
                 if update_fields:
                     route.save(update_fields=[*update_fields, "updated_at"])
-            crew = ensure_transport_crew_for_route(actor=actor, route=route)
+            crew = ensure_transport_crew_for_route(
+                actor=actor,
+                route=route,
+                include_legacy_passengers=False,
+            )
             ScheduledWorkShift.objects.filter(pk__in=[item.pk for item in shifts]).update(
                 crew=crew
             )

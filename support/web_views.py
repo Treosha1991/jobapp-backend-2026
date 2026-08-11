@@ -1178,12 +1178,39 @@ def _worker_card_operation(request, *, snapshot):
                         publish_scheduled_shift(actor=request.user, shift=shift)
                     if had_current_shift:
                         replaced_count += 1
+            # Work planning is the primary operation. Transport synchronization
+            # uses legacy route data too, so a damaged old route must never
+            # roll back otherwise valid published shifts. It runs in its own
+            # transaction and reports a precise warning if only the automatic
+            # crew attachment needs attention.
+            transport_sync_warning = None
+            transport_sync_detail = None
+            try:
                 sync_worker_schedule_transport(
                     actor=request.user,
                     organization=organization,
                     connection=connection,
                     schedule_template=template,
                     work_dates=work_dates,
+                )
+            except APIException as error:
+                transport_sync_warning = "support_worker_schedule_saved_transport_sync_error"
+                transport_sync_detail = _transport_operation_error_key(error)
+                print(
+                    "[SUPPORT-SCHEDULE-TRANSPORT-VALIDATION] "
+                    f"connection={connection.public_id} "
+                    f"template={template.public_id} "
+                    f"dates={[item.isoformat() for item in work_dates]} "
+                    f"detail={getattr(error, 'detail', error)}"
+                )
+            except Exception as error:
+                transport_sync_warning = "support_worker_schedule_saved_transport_sync_error"
+                print(
+                    "[SUPPORT-SCHEDULE-TRANSPORT-ERROR] "
+                    f"connection={connection.public_id} "
+                    f"template={template.public_id} "
+                    f"dates={[item.isoformat() for item in work_dates]} "
+                    f"type={type(error).__name__} detail={error}"
                 )
             if action == "scheduled_shift_from_template" and len(work_dates) == 1:
                 message_key = (
@@ -1198,6 +1225,11 @@ def _worker_card_operation(request, *, snapshot):
                     else "support_worker_quick_shifts_published"
                 )
             messages.success(request, tr(request, message_key))
+            if transport_sync_warning:
+                warning_text = tr(request, transport_sync_warning)
+                if transport_sync_detail:
+                    warning_text = f"{warning_text} {tr(request, transport_sync_detail)}"
+                messages.warning(request, warning_text)
         elif action == "scheduled_shifts_clear":
             work_dates = sorted(
                 {_operation_date(value) for value in request.POST.getlist("work_dates")}

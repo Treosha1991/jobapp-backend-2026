@@ -1,5 +1,6 @@
 import re
 from datetime import date, datetime, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -1633,6 +1634,77 @@ class SupportWorkspaceWebTests(TestCase):
                 state=ScheduledWorkShift.STATE_PUBLISHED,
                 crew=route.crew,
             ).exists()
+        )
+
+        # Reassigning a driver's template to several fresh dates must remain
+        # atomic even when the stable route/crew and historical passenger
+        # metadata already exist from an earlier day.
+        self.client.post(
+            driver_url,
+            {
+                "action": "scheduled_shifts_clear",
+                "work_dates": [replacement_day.isoformat()],
+                "return_tab": "company",
+                "return_month": replacement_day.strftime("%Y-%m"),
+            },
+        )
+        batch_days = [
+            replacement_day + timedelta(days=2),
+            replacement_day + timedelta(days=3),
+        ]
+        response = self.client.post(
+            driver_url,
+            {
+                "action": "scheduled_shifts_from_template",
+                "schedule_template_id": str(template.public_id),
+                "work_dates": [item.isoformat() for item in batch_days],
+                "return_tab": "company",
+                "return_month": batch_days[0].strftime("%Y-%m"),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            ScheduledWorkShift.objects.filter(
+                connection=self.worker_connection,
+                schedule_template=template,
+                work_date__in=batch_days,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+                crew=route.crew,
+            ).count(),
+            2,
+        )
+
+        # A corrupted legacy transport relation must not roll back valid work
+        # planning. The schedule is committed first; automatic crew sync is a
+        # separate recoverable operation with an explicit warning.
+        warning_day = batch_days[-1] + timedelta(days=1)
+        with patch(
+            "support.web_views.sync_worker_schedule_transport",
+            side_effect=RuntimeError("legacy transport relation is inconsistent"),
+        ):
+            response = self.client.post(
+                driver_url,
+                {
+                    "action": "scheduled_shifts_from_template",
+                    "schedule_template_id": str(template.public_id),
+                    "work_dates": [warning_day.isoformat()],
+                    "return_tab": "company",
+                    "return_month": warning_day.strftime("%Y-%m"),
+                },
+                follow=True,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            ScheduledWorkShift.objects.filter(
+                connection=self.worker_connection,
+                schedule_template=template,
+                work_date=warning_day,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).exists()
+        )
+        self.assertContains(
+            response,
+            "The schedule was saved and published, but the crew could not be attached automatically",
         )
 
     def test_owner_builds_registry_items_for_safe_worker_assignment_forms(self):
