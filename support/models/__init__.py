@@ -54,6 +54,13 @@ from .pipeline import (
     SupportConnection,
     SupportVacancy,
 )
+from .project_crews import (
+    ProjectCrew,
+    ProjectCrewPassenger,
+    ProjectCrewResourceAssignment,
+    ProjectCrewShift,
+    ProjectCrewShiftMember,
+)
 from .timekeeping import (
     CalendarMarkBatch,
     CalendarMarkBatchItem,
@@ -105,6 +112,11 @@ __all__ = [
     "NotificationOutbox",
     "PermissionGrant",
     "PartnerPairRequest",
+    "ProjectCrew",
+    "ProjectCrewPassenger",
+    "ProjectCrewResourceAssignment",
+    "ProjectCrewShift",
+    "ProjectCrewShiftMember",
     "PushDelivery",
     "RouteStop",
     "TransportCrew",
