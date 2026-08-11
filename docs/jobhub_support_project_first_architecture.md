@@ -23,12 +23,24 @@ Stage 1 adds new tables alongside the legacy `TransportCrew` implementation. No 
 
 Cross-organization assignments, drivers without a confirmed licence, duplicate drivers for one shift and invalid shift/break periods are rejected by validation and database constraints.
 
-## Next stage
+## Stage 2: transactional service layer
 
-Build the transactional service layer for:
+The isolated service layer now supports:
 
 - creating a project crew with its first driver and vehicle;
 - publishing/replacing selected calendar days;
+- releasing selected calendar days while preserving their historical snapshot;
 - applying or removing passengers for future or selected days;
 - permanent driver replacement with vehicle transfer/release rules;
 - exact conflict reporting and append-only audit events.
+
+All multi-record changes run inside a database transaction. A capacity,
+licence, resource or driver conflict rolls the complete operation back.
+Ordinary passenger conflicts are replaced for the selected dates; a driver of
+another crew is never silently converted into a passenger on overlapping days.
+
+## Next stage
+
+Build the project-first employer workspace and connect it to these services
+behind an isolated feature switch. The legacy workspace remains the fallback
+until the new project, crew and compact calendar screens pass manual testing.

@@ -1,0 +1,424 @@
+from datetime import date, time
+
+from django.contrib.auth.models import User
+from django.test import TestCase, override_settings
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError
+
+from support.models import (
+    AuditEvent,
+    ProjectCrewPassenger,
+    ProjectCrewResourceAssignment,
+    ProjectCrewShiftMember,
+    SupportApplication,
+    SupportConnection,
+    SupportVacancy,
+    Vehicle,
+    WorkProject,
+    Worksite,
+)
+from support.services.organizations import activate_organization, create_organization
+from support.services.project_crews import (
+    PASSENGER_SCOPE_FUTURE,
+    PASSENGER_SCOPE_SELECTED,
+    assign_project_crew_passenger,
+    create_project_crew,
+    publish_project_crew_shifts,
+    release_project_crew_shifts,
+    remove_project_crew_passenger,
+    replace_project_crew_driver,
+)
+
+
+@override_settings(SUPPORT_FEATURE_ENABLED=True)
+class ProjectCrewServiceTests(TestCase):
+    def setUp(self):
+        self.operator = User.objects.create_user(
+            username="project-crew-service-operator",
+            email="project-crew-service-operator@example.com",
+            password="password",
+            is_staff=True,
+        )
+        self.owner = User.objects.create_user(
+            username="project-crew-service-owner",
+            email="project-crew-service-owner@example.com",
+            password="password",
+        )
+        self.organization, _ = create_organization(
+            jobhub_operator=self.operator,
+            legal_name="Project Crew Service Agency sp. z o.o.",
+            display_name="Project Crew Service Agency",
+            owner_email=self.owner.email,
+        )
+        activate_organization(jobhub_operator=self.operator, organization=self.organization)
+        self.worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Service worksite",
+            country_code="NL",
+            city="Lelystad",
+            street="Servicelaan",
+            building="1",
+            created_by=self.owner,
+        )
+        self.project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=self.worksite,
+            internal_name="Service project",
+            worker_visible_name="Service project",
+            worker_capacity=20,
+            created_by=self.owner,
+        )
+        self.driver = self._connection("driver", "Driver", licence=True)
+        self.second_driver = self._connection("second-driver", "Second", licence=True)
+        self.passenger = self._connection("passenger", "Passenger")
+        self.other_passenger = self._connection("other-passenger", "Other")
+        self.vehicle = self._vehicle("SERVICE-01", seats=4)
+        self.second_vehicle = self._vehicle("SERVICE-02", seats=4)
+
+    def _connection(self, suffix, first_name, *, licence=False):
+        user = User.objects.create_user(
+            username=f"project-crew-service-{suffix}",
+            email=f"project-crew-service-{suffix}@example.com",
+            password="password",
+            first_name=first_name,
+            last_name="Worker",
+        )
+        vacancy = SupportVacancy.objects.create(
+            organization=self.organization,
+            internal_title=f"Service vacancy {suffix}",
+            created_by=self.owner,
+        )
+        application = SupportApplication.objects.create(
+            vacancy=vacancy,
+            candidate=user,
+            revision=1,
+            preferred_language="ru",
+            citizenship_country_code="BY",
+            current_country_code="PL",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+        )
+        return SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=vacancy,
+            application=application,
+            candidate=user,
+            stage=SupportConnection.STAGE_ACTIVE_WORKER,
+            has_driving_license=licence,
+        )
+
+    def _vehicle(self, registration, *, seats):
+        return Vehicle.objects.create(
+            organization=self.organization,
+            internal_name=registration,
+            registration_identifier=registration,
+            seat_capacity=seats,
+            created_by=self.owner,
+        )
+
+    def _crew(self, *, driver=None, vehicle=None, name="Crew A"):
+        return create_project_crew(
+            actor=self.owner,
+            organization=self.organization,
+            project=self.project,
+            driver_connection=driver or self.driver,
+            vehicle=vehicle or self.vehicle,
+            internal_name=name,
+            starts_on=date(2026, 8, 1),
+        )
+
+    def _publish(self, crew, dates):
+        return publish_project_crew_shifts(
+            actor=self.owner,
+            crew=crew,
+            work_dates=dates,
+            starts_at_time=time(6, 0),
+            ends_at_time=time(14, 45),
+            break_minutes=45,
+        )
+
+    @staticmethod
+    def _error_code(exception):
+        return str(exception.detail["code"])
+
+    def test_create_crew_and_publish_selected_days_atomically(self):
+        crew = self._crew()
+        shifts = self._publish(crew, [date(2026, 8, 11), date(2026, 8, 12)])
+
+        self.assertEqual(len(shifts), 2)
+        self.assertEqual(crew.resource_assignments.count(), 1)
+        self.assertEqual(crew.calendar_shifts.count(), 2)
+        self.assertEqual(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+                connection=self.driver,
+                vehicle=self.vehicle,
+            ).count(),
+            2,
+        )
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                action="project_crew.shifts_published",
+                target_public_id=crew.public_id,
+            ).exists()
+        )
+
+        replaced = publish_project_crew_shifts(
+            actor=self.owner,
+            crew=crew,
+            work_dates=[date(2026, 8, 11)],
+            starts_at_time=time(7, 0),
+            ends_at_time=time(15, 0),
+            break_minutes=30,
+        )[0]
+        self.assertEqual(timezone.localtime(replaced.starts_at).time(), time(7, 0))
+        self.assertEqual(replaced.break_minutes, 30)
+        self.assertEqual(replaced.members.count(), 1)
+
+        released = release_project_crew_shifts(
+            actor=self.owner,
+            crew=crew,
+            work_dates=[date(2026, 8, 11)],
+        )
+        self.assertEqual(len(released), 1)
+        replaced.refresh_from_db()
+        self.assertEqual(replaced.state, replaced.STATE_CANCELLED)
+        # The composition remains as a historical snapshot, while cancelled
+        # days no longer participate in schedule conflicts.
+        self.assertEqual(replaced.members.count(), 1)
+
+    def test_create_crew_rejects_worker_without_licence_with_exact_code(self):
+        with self.assertRaises(ValidationError) as error:
+            self._crew(driver=self.passenger)
+        self.assertEqual(self._error_code(error.exception), "driver_licence_not_confirmed")
+        self.assertEqual(self.project.project_crews.count(), 0)
+
+    def test_future_passenger_roster_populates_existing_and_new_days(self):
+        crew = self._crew()
+        self._publish(crew, [date(2026, 8, 11)])
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=date(2026, 8, 11),
+        )
+        self._publish(crew, [date(2026, 8, 12)])
+
+        self.assertTrue(
+            ProjectCrewPassenger.objects.filter(
+                crew=crew,
+                connection=self.passenger,
+                ends_on__isnull=True,
+            ).exists()
+        )
+        self.assertEqual(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                connection=self.passenger,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).count(),
+            2,
+        )
+
+        remove_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=date(2026, 8, 12),
+        )
+        self.assertTrue(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=date(2026, 8, 11),
+                connection=self.passenger,
+            ).exists()
+        )
+        self.assertFalse(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=date(2026, 8, 12),
+                connection=self.passenger,
+            ).exists()
+        )
+
+    def test_selected_passenger_replaces_other_passenger_day(self):
+        first_crew = self._crew()
+        second_crew = self._crew(
+            driver=self.second_driver,
+            vehicle=self.second_vehicle,
+            name="Crew B",
+        )
+        work_date = date(2026, 8, 11)
+        self._publish(first_crew, [work_date])
+        self._publish(second_crew, [work_date])
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=second_crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_SELECTED,
+            selected_dates=[work_date],
+        )
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=first_crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_SELECTED,
+            selected_dates=[work_date],
+        )
+
+        memberships = ProjectCrewShiftMember.objects.filter(
+            connection=self.passenger,
+            shift__work_date=work_date,
+        )
+        self.assertEqual(memberships.count(), 1)
+        self.assertEqual(memberships.get().shift.crew, first_crew)
+
+    def test_driver_of_other_crew_cannot_become_passenger_and_rolls_back(self):
+        first_crew = self._crew()
+        second_crew = self._crew(
+            driver=self.second_driver,
+            vehicle=self.second_vehicle,
+            name="Crew B",
+        )
+        work_date = date(2026, 8, 11)
+        self._publish(first_crew, [work_date])
+        self._publish(second_crew, [work_date])
+
+        with self.assertRaises(ValidationError) as error:
+            assign_project_crew_passenger(
+                actor=self.owner,
+                crew=first_crew,
+                connection=self.second_driver,
+                scope=PASSENGER_SCOPE_SELECTED,
+                selected_dates=[work_date],
+            )
+        self.assertEqual(self._error_code(error.exception), "worker_drives_other_crew")
+        self.assertFalse(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=first_crew,
+                connection=self.second_driver,
+            ).exists()
+        )
+
+    def test_permanent_driver_replacement_swaps_roles_and_keeps_vehicle(self):
+        crew = self._crew()
+        dates = [date(2026, 8, 11), date(2026, 8, 12)]
+        self._publish(crew, dates)
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.second_driver,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=dates[0],
+        )
+
+        replacement = replace_project_crew_driver(
+            actor=self.owner,
+            crew=crew,
+            new_driver_connection=self.second_driver,
+            effective_on=dates[1],
+        )
+
+        self.assertEqual(replacement.driver_connection, self.second_driver)
+        self.assertEqual(replacement.vehicle, self.vehicle)
+        self.assertEqual(
+            ProjectCrewResourceAssignment.objects.get(crew=crew, ends_on__isnull=False).ends_on,
+            dates[0],
+        )
+        day_two = crew.calendar_shifts.get(work_date=dates[1])
+        self.assertTrue(
+            day_two.members.filter(
+                connection=self.second_driver,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+                vehicle=self.vehicle,
+            ).exists()
+        )
+        self.assertTrue(
+            day_two.members.filter(
+                connection=self.driver,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).exists()
+        )
+        day_one = crew.calendar_shifts.get(work_date=dates[0])
+        self.assertTrue(
+            day_one.members.filter(
+                connection=self.driver,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+            ).exists()
+        )
+
+    def test_replacement_releases_previous_vehicle_and_leaves_other_crew_without_driver(self):
+        target_crew = self._crew()
+        previous_crew = self._crew(
+            driver=self.second_driver,
+            vehicle=self.second_vehicle,
+            name="Previous crew",
+        )
+        replacement_date = date(2026, 8, 12)
+        self._publish(target_crew, [replacement_date])
+        self._publish(previous_crew, [date(2026, 8, 13)])
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=target_crew,
+            connection=self.second_driver,
+            scope=PASSENGER_SCOPE_SELECTED,
+            selected_dates=[replacement_date],
+        )
+
+        replacement = replace_project_crew_driver(
+            actor=self.owner,
+            crew=target_crew,
+            new_driver_connection=self.second_driver,
+            effective_on=replacement_date,
+        )
+
+        self.assertEqual(replacement.vehicle, self.vehicle)
+        self.assertFalse(
+            ProjectCrewResourceAssignment.objects.filter(
+                crew=previous_crew,
+                ends_on__isnull=True,
+            ).exists()
+        )
+        self.assertFalse(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=previous_crew,
+                shift__work_date=date(2026, 8, 13),
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+            ).exists()
+        )
+        self.assertFalse(
+            ProjectCrewResourceAssignment.objects.filter(
+                vehicle=self.second_vehicle,
+                ends_on__isnull=True,
+            ).exists()
+        )
+
+    def test_capacity_failure_rolls_back_future_roster(self):
+        small_vehicle = self._vehicle("SERVICE-SMALL", seats=2)
+        crew = self._crew(vehicle=small_vehicle)
+        self._publish(crew, [date(2026, 8, 11)])
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=date(2026, 8, 11),
+        )
+        with self.assertRaises(ValidationError) as error:
+            assign_project_crew_passenger(
+                actor=self.owner,
+                crew=crew,
+                connection=self.other_passenger,
+                scope=PASSENGER_SCOPE_FUTURE,
+                effective_on=date(2026, 8, 11),
+            )
+        self.assertEqual(self._error_code(error.exception), "crew_capacity_exceeded")
+        self.assertFalse(
+            ProjectCrewPassenger.objects.filter(
+                crew=crew,
+                connection=self.other_passenger,
+            ).exists()
+        )
