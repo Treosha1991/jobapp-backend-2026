@@ -232,6 +232,44 @@ class ProjectFirstWorkspaceTests(TestCase):
             ProjectCrewShift.STATE_CANCELLED,
         )
 
+    def test_passenger_picker_excludes_current_driver_and_existing_passengers(self):
+        crew = self._create_crew()
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "shifts_publish",
+                "crew_id": str(crew.public_id),
+                "work_dates": ["2026-08-12"],
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:45",
+                "break_minutes": "0",
+            },
+        )
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "passenger_add",
+                "crew_id": str(crew.public_id),
+                "connection_id": str(self.passenger.public_id),
+                "scope": "future",
+                "effective_on": "2026-08-11",
+            },
+        )
+
+        response = self.client.get(self._detail_url())
+        rendered_crew = response.context["crews"][0]
+        available_ids = {
+            connection.id for connection in rendered_crew.available_passengers
+        }
+
+        self.assertNotIn(self.driver.id, available_ids)
+        self.assertNotIn(self.passenger.id, available_ids)
+        self.assertIn(self.second_driver.id, available_ids)
+        self.assertContains(response, response.context["pf"]["create_crew"])
+        self.assertNotIn("first", response.context["pf"]["create_crew"].lower())
+
     def test_validation_message_is_shown_instead_of_generic_error(self):
         crew = self._create_crew()
         response = self.client.post(

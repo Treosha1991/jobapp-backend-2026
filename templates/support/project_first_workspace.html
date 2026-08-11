@@ -117,7 +117,7 @@
               {% if crew.published_shifts %}
                 <form method="post" style="margin-top:10px">
                   {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="passenger_add"><input type="hidden" name="crew_id" value="{{ crew.public_id }}">
-                  <select class="jh-input" name="connection_id" required><option value="">{{ pf.add_passenger }}</option>{% for worker in connections %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% endfor %}</select>
+                  <select class="jh-input" name="connection_id" required><option value="">{{ pf.add_passenger }}</option>{% for worker in crew.available_passengers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% endfor %}</select>
                   <select class="jh-input" name="scope" data-scope-select><option value="future">{{ pf.future }}</option><option value="selected">{{ pf.selected }}</option></select>
                   <select class="jh-input pf-select-days" name="work_dates" multiple>
                     {% for shift in crew.published_shifts %}<option value="{{ shift.work_date|date:'Y-m-d' }}">{{ shift.work_date|date:"d.m.Y" }}</option>{% endfor %}

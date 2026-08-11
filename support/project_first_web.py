@@ -57,7 +57,7 @@ COPY = {
         "crews": "Экипажи",
         "crew": "Экипаж",
         "no_crews": "У проекта пока нет экипажей.",
-        "create_crew": "Добавить первый экипаж",
+        "create_crew": "Добавить экипаж",
         "name": "Название экипажа",
         "driver": "Водитель",
         "vehicle": "Автомобиль",
@@ -97,7 +97,7 @@ COPY = {
         "title": "Projects and crews",
         "subtitle": "Manage work, transport and crew composition from the project page.",
         "projects": "Projects", "open": "Open", "back": "All projects", "crews": "Crews", "crew": "Crew",
-        "no_crews": "This project has no crews yet.", "create_crew": "Add the first crew", "name": "Crew name",
+        "no_crews": "This project has no crews yet.", "create_crew": "Add crew", "name": "Crew name",
         "driver": "Driver", "vehicle": "Vehicle", "start_date": "Start date", "create": "Create crew",
         "schedule": "Crew schedule", "dates": "Dates", "shift_start": "Start", "shift_end": "End",
         "break": "Break, minutes", "publish": "Publish selected days", "release": "Release selected days",
@@ -115,7 +115,7 @@ COPY = {
         "preview": "Nowy panel · tryb testowy", "title": "Projekty i ekipy",
         "subtitle": "Zarządzaj pracą, transportem i składem ekipy na stronie projektu.",
         "projects": "Projekty", "open": "Otwórz", "back": "Wszystkie projekty", "crews": "Ekipy", "crew": "Ekipa",
-        "no_crews": "Ten projekt nie ma jeszcze ekip.", "create_crew": "Dodaj pierwszą ekipę", "name": "Nazwa ekipy",
+        "no_crews": "Ten projekt nie ma jeszcze ekip.", "create_crew": "Dodaj ekipę", "name": "Nazwa ekipy",
         "driver": "Kierowca", "vehicle": "Samochód", "start_date": "Data rozpoczęcia", "create": "Utwórz ekipę",
         "schedule": "Grafik ekipy", "dates": "Daty", "shift_start": "Początek", "shift_end": "Koniec",
         "break": "Przerwa, minuty", "publish": "Opublikuj wybrane dni", "release": "Zwolnij wybrane dni",
@@ -133,7 +133,7 @@ COPY = {
         "preview": "Новий кабінет · тестовий режим", "title": "Проєкти та екіпажі",
         "subtitle": "Керуйте роботою, транспортом і складом екіпажів на сторінці проєкту.",
         "projects": "Проєкти", "open": "Відкрити", "back": "Усі проєкти", "crews": "Екіпажі", "crew": "Екіпаж",
-        "no_crews": "У проєкту ще немає екіпажів.", "create_crew": "Додати перший екіпаж", "name": "Назва екіпажу",
+        "no_crews": "У проєкту ще немає екіпажів.", "create_crew": "Додати екіпаж", "name": "Назва екіпажу",
         "driver": "Водій", "vehicle": "Автомобіль", "start_date": "Дата початку", "create": "Створити екіпаж",
         "schedule": "Графік екіпажу", "dates": "Дати", "shift_start": "Початок", "shift_end": "Кінець",
         "break": "Перерва, хвилин", "publish": "Опублікувати вибрані дні", "release": "Звільнити вибрані дні",
@@ -282,6 +282,18 @@ def _project_context(request, organization, project):
         crew.open_passengers = list(crew.passenger_assignments.all())
         for passenger in crew.open_passengers:
             passenger.display_name = _display_name(passenger.connection)
+        unavailable_passenger_ids = {
+            passenger.connection_id for passenger in crew.open_passengers
+        }
+        if crew.current_resource:
+            unavailable_passenger_ids.add(
+                crew.current_resource.driver_connection_id
+            )
+        crew.available_passengers = [
+            connection
+            for connection in connections
+            if connection.id not in unavailable_passenger_ids
+        ]
         crew.published_shifts = list(crew.calendar_shifts.all())
         crew.occupied = 1 + len(crew.open_passengers)
         crew.passenger_driver_options = [
