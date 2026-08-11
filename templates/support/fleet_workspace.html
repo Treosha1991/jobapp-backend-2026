@@ -89,6 +89,7 @@
             <p>{% if vehicle.current_assignment %}{{ employer_t.support_fleet_current_driver }}: {{ vehicle.current_assignment.driver_connection.candidate.get_full_name|default:vehicle.current_assignment.driver_connection.candidate.username }}{% else %}{{ employer_t.support_fleet_no_driver }}{% endif %}</p>
           </div>
 
+          {# Legacy drafts remain removable; this page no longer creates new drafts. #}
           {% for item in vehicle.assignments_for_fleet %}{% if item.state == 'draft' %}
             <article class="fleet-assignment">
               <div class="fleet-assignment-head"><h3>{{ item.driver_connection.candidate.get_full_name|default:item.driver_connection.candidate.username }}</h3><span class="jh-status warning">{{ item.get_state_display }}</span></div>
@@ -110,11 +111,11 @@
           {% endif %}{% endfor %}
 
           <section class="fleet-new-assignment">
-            <h3>{{ employer_t.support_fleet_new_draft }}</h3>
-            <form method="post" class="fleet-form">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_draft_create"><input type="hidden" name="vehicle_id" value="{{ vehicle.public_id }}">
+            <h3>{{ employer_t.support_fleet_assign_driver }}</h3>
+            <form method="post" class="fleet-form" onsubmit="return confirm('{{ employer_t.support_fleet_publish_warning }}')">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_assign"><input type="hidden" name="vehicle_id" value="{{ vehicle.public_id }}">
               <label class="jh-field wide"><span>{{ employer_t.support_fleet_assign_driver }}</span><select class="jh-input" name="driver_connection_id" required>{% for worker in eligible_drivers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% empty %}<option value="" disabled>{{ employer_t.support_fleet_license_only }}</option>{% endfor %}</select><small>{{ employer_t.support_fleet_license_only }}</small></label>
               <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="date" name="starts_on" data-default-current required></label>
-              <div class="jh-actions wide"><button class="jh-btn primary" type="submit"{% if not eligible_drivers %} disabled{% endif %}>{{ employer_t.support_fleet_create_new_draft }}</button></div>
+              <div class="jh-actions wide"><button class="jh-btn primary" type="submit"{% if not eligible_drivers %} disabled{% endif %}>{{ employer_t.support_fleet_assign_driver }}</button></div>
             </form>
           </section>
         </div>

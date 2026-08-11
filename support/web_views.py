@@ -2100,7 +2100,7 @@ def fleet_workspace(request):
     )
     organization = snapshot["organization"]
     if request.method == "POST":
-        action = (request.POST.get("action") or "driver_vehicle_draft_create").strip()
+        action = (request.POST.get("action") or "driver_vehicle_assign").strip()
         redirect_vehicle_id = request.POST.get("vehicle_id", "")
         try:
             if action == "vehicle_create":
@@ -2148,7 +2148,39 @@ def fleet_workspace(request):
                 eligible_ids = {item.id for item in snapshot["eligible_drivers"]}
                 if driver.id not in eligible_ids:
                     raise ValueError("driver_license_not_verified")
-                if action == "driver_vehicle_draft_edit":
+                if action == "driver_vehicle_assign":
+                    # The fleet screen is an operational control: selecting a
+                    # driver must become active immediately.  Keep creation and
+                    # publication in one transaction so a failed publication
+                    # cannot leave another invisible draft behind.
+                    with transaction.atomic():
+                        for stale_draft in list(
+                            DriverVehicleAssignment.objects.select_for_update().filter(
+                                organization=organization,
+                                vehicle=vehicle,
+                                state=DriverVehicleAssignment.STATE_DRAFT,
+                            )
+                        ):
+                            delete_driver_vehicle_assignment_draft(
+                                actor=request.user,
+                                assignment=stale_draft,
+                            )
+                        assignment = create_driver_vehicle_assignment(
+                            actor=request.user,
+                            organization=organization,
+                            driver_connection=driver,
+                            vehicle=vehicle,
+                            **data,
+                        )
+                        publish_driver_vehicle_assignment(
+                            actor=request.user,
+                            assignment=assignment,
+                            excluded_passenger_public_ids=request.POST.getlist(
+                                "exclude_passenger_ids"
+                            ),
+                        )
+                    success_key = "support_transport_driver_vehicle_published"
+                elif action == "driver_vehicle_draft_edit":
                     assignment = get_object_or_404(
                         DriverVehicleAssignment,
                         organization=organization,
@@ -2181,10 +2213,10 @@ def fleet_workspace(request):
                 else "support_fleet_delete_error"
                 if action == "driver_vehicle_draft_delete"
                 else "support_fleet_capacity_error"
-                if action == "driver_vehicle_draft_publish"
+                if action in {"driver_vehicle_draft_publish", "driver_vehicle_assign"}
                 and "driver_crew_capacity_exceeded" in detail
                 else "support_fleet_publish_error"
-                if action == "driver_vehicle_draft_publish"
+                if action in {"driver_vehicle_draft_publish", "driver_vehicle_assign"}
                 else "support_fleet_edit_error"
                 if action == "driver_vehicle_draft_edit"
                 else "support_fleet_operation_error"

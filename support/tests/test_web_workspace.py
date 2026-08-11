@@ -580,6 +580,58 @@ class SupportWorkspaceWebTests(TestCase):
         )
         self.assertEqual(vehicle.seat_capacity, 9)
 
+    def test_fleet_assigns_driver_immediately_without_leaving_a_draft(self):
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Instant assignment van",
+            registration_identifier="INSTANT-1",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        self.worker_connection.has_driving_license = True
+        self.worker_connection.save(update_fields=["has_driving_license", "updated_at"])
+        stale_draft = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            vehicle=vehicle,
+            driver_connection=self.worker_connection,
+            starts_on=date.today() - timedelta(days=1),
+            state=DriverVehicleAssignment.STATE_DRAFT,
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        fleet_url = (
+            f"/employer/support/fleet/?organization={self.organization.public_id}"
+        )
+
+        response = self.client.post(
+            fleet_url,
+            {
+                "action": "driver_vehicle_assign",
+                "vehicle_id": str(vehicle.public_id),
+                "driver_connection_id": str(self.worker_connection.public_id),
+                "starts_on": date.today().isoformat(),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(DriverVehicleAssignment.objects.filter(pk=stale_draft.pk).exists())
+        assignment = DriverVehicleAssignment.objects.get(
+            organization=self.organization,
+            vehicle=vehicle,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+        )
+        self.assertEqual(assignment.driver_connection_id, self.worker_connection.id)
+        self.assertFalse(
+            DriverVehicleAssignment.objects.filter(
+                organization=self.organization,
+                vehicle=vehicle,
+                state=DriverVehicleAssignment.STATE_DRAFT,
+            ).exists()
+        )
+        self.assertContains(response, "The vehicle was assigned to the driver")
+        self.assertNotContains(response, 'value="driver_vehicle_draft_create"')
+
     def test_fleet_marks_driverless_vehicle_without_counting_previous_drivers_crew(self):
         vehicle = Vehicle.objects.create(
             organization=self.organization,
