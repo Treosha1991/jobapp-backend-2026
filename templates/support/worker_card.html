@@ -652,7 +652,7 @@
               <details class="worker-compact-action"><summary class="jh-btn primary">{{ employer_t.support_transport_add_passenger }}</summary><form class="worker-form" method="post">
                 {% csrf_token %}<input type="hidden" name="action" value="transport_schedule_passenger_add"><input type="hidden" name="driver_connection_id" value="{{ transport_driver_connection.public_id }}"><input type="hidden" name="schedule_template_id" value="{{ selected_transport_template.public_id }}"><input type="hidden" name="return_tab" value="transport"><input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}"><span data-crew-date-inputs></span>
                 <div class="worker-form-grid"><label class="jh-field"><span>{{ employer_t.support_workspace_workers }}</span><select class="jh-input" name="passenger_connection_id" required>{% for item in transport_passenger_candidates %}<option value="{{ item.public_id }}">{{ item.transport_option_label }}</option>{% endfor %}</select></label></div>
-                <div class="jh-actions"><button class="jh-btn primary" type="submit" data-requires-selected-dates disabled>{{ employer_t.support_transport_add_passenger }}</button></div>
+                <div class="jh-actions"><button class="jh-btn primary" type="submit" data-passenger-add-submit>{{ employer_t.support_transport_add_passenger }}</button></div>
               </form></details>
             {% elif not transport_free_seats %}<div class="worker-warning">{{ employer_t.support_transport_crew_full }}</div>
             {% endif %}

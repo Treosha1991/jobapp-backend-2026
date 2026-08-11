@@ -2184,6 +2184,39 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(card, "Morning crew")
         self.assertContains(card, "Ihor Passenger")
         self.assertNotContains(card, "Create route draft")
+        passenger_add_button = re.search(
+            rb'<button[^>]*data-passenger-add-submit[^>]*>',
+            card.content,
+        )
+        self.assertIsNotNone(passenger_add_button)
+        self.assertNotIn(b"disabled", passenger_add_button.group(0))
+        passenger_added_from_worker = self.client.post(
+            card_url,
+            {
+                "action": "transport_schedule_passenger_add",
+                "driver_connection_id": str(self.worker_connection.public_id),
+                "passenger_connection_id": str(passenger_connection.public_id),
+                "schedule_template_id": str(template.public_id),
+                "return_tab": "transport",
+                "return_transport_crew": (
+                    f"{driver_assignment.public_id}.{template.public_id}"
+                ),
+            },
+            follow=True,
+        )
+        self.assertEqual(passenger_added_from_worker.status_code, 200)
+        self.assertContains(passenger_added_from_worker, "Passenger added")
+        self.assertContains(
+            passenger_added_from_worker,
+            'class="worker-passenger-row"',
+        )
+        self.assertTrue(
+            TransportPassengerAssignment.objects.filter(
+                route__driver_vehicle_assignment=driver_assignment,
+                route__schedule_template=template,
+                connection=passenger_connection,
+            ).exists()
+        )
         project_url = (
             f"/employer/support/projects/{project.public_id}/"
             f"?organization={self.organization.public_id}"
