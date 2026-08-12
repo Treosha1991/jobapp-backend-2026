@@ -141,6 +141,17 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertContains(response, "Preview project")
         self.assertTemplateUsed(response, "support/project_first_workspace.html")
 
+    def test_optional_schedule_dates_remain_empty_until_selected(self):
+        self._create_crew()
+
+        response = self.client.get(self._detail_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.content.count(b'name="work_dates" data-preserve-empty'),
+            3,
+        )
+
     @override_settings(SUPPORT_PROJECT_FIRST_ENABLED=False)
     def test_preview_returns_not_found_when_second_switch_is_off(self):
         response = self.client.get(self._list_url())

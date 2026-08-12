@@ -230,7 +230,11 @@
       };
       const setCurrentDefaults = () => {
         document.querySelectorAll('input[type="date"], input[type="time"], input[type="datetime-local"]').forEach((field) => {
-          if (!field.value && ["date", "time", "datetime-local"].includes(field.type)) {
+          if (
+            !field.value
+            && !field.hasAttribute("data-preserve-empty")
+            && ["date", "time", "datetime-local"].includes(field.type)
+          ) {
             field.value = currentValue(field.type);
           }
         });

@@ -92,8 +92,23 @@ No staging data has been reset by adding this command. Manual preview testing
 and an operator-approved dry-run report are required before cutover. The legacy
 workspace remains the default until that separate decision.
 
-## Next stage
+## Stage 5: staging validation
 
-Enable only `SUPPORT_PROJECT_FIRST_ENABLED=1` on staging, test the isolated
-project workspace visually, review the dry-run report, and then decide whether
-to perform the one-time reset and switch the employer's default navigation.
+`SUPPORT_PROJECT_FIRST_ENABLED=1` is enabled only on staging. The isolated
+workspace has been validated with a QA crew, four published calendar days and
+a passenger without changing the legacy workspace. Russian, English, Polish
+and Ukrainian were checked for replacement-character regressions. Automated
+web, service and reset tests remain green.
+
+## Stage 6: controlled cutover (not started)
+
+Before changing the default employer navigation:
+
+1. review the organization-specific reset command in dry-run mode;
+2. obtain explicit owner approval for that exact report;
+3. temporarily enable `SUPPORT_PROJECT_FIRST_RESET_ALLOWED`;
+4. apply the one-time reset with the exact confirmation token;
+5. verify preserved workers, housing, vehicles and factual time entries;
+6. switch the employer's project navigation to the project-first workspace.
+
+The legacy workspace remains the default until all six cutover checks pass.

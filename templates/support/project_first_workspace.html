@@ -76,9 +76,9 @@
                 {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="shifts_publish"><input type="hidden" name="crew_id" value="{{ crew.public_id }}">
                 <div class="pf-dates">
                   <input class="jh-input" type="date" name="work_dates" value="{{ today|date:'Y-m-d' }}">
-                  <input class="jh-input" type="date" name="work_dates">
-                  <input class="jh-input" type="date" name="work_dates">
-                  <input class="jh-input" type="date" name="work_dates">
+                  <input class="jh-input" type="date" name="work_dates" data-preserve-empty>
+                  <input class="jh-input" type="date" name="work_dates" data-preserve-empty>
+                  <input class="jh-input" type="date" name="work_dates" data-preserve-empty>
                 </div>
                 <div class="pf-row three">
                   <label class="pf-field"><span>{{ pf.shift_start }}</span><input class="jh-input" type="time" name="starts_at_time" value="06:00" required></label>
