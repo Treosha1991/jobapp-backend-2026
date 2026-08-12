@@ -57,8 +57,8 @@
               <td><strong>{{ vehicle.internal_name }}</strong></td>
               <td>{{ vehicle.registration_identifier }}</td>
               <td>{{ vehicle.occupancy_label }}</td>
-              <td>{% if vehicle.current_assignment %}{{ vehicle.current_assignment.driver_connection.candidate.get_full_name|default:vehicle.current_assignment.driver_connection.candidate.username }}<br><small class="jh-muted">{{ vehicle.current_assignment.get_state_display }}</small>{% elif vehicle.driver_absent %}<span class="jh-status warning">{{ employer_t.support_fleet_driver_absent }}</span>{% else %}<span class="jh-muted">{{ employer_t.support_fleet_no_driver }}</span>{% endif %}</td>
-              <td class="fleet-route">{% if vehicle.current_route %}<strong>{{ vehicle.current_route.fleet_project_name }}</strong>{% if vehicle.current_route.fleet_address_label %}<small>{{ vehicle.current_route.fleet_address_label }}</small>{% endif %}{% else %}<span class="jh-muted">{{ employer_t.support_fleet_no_route }}</span>{% endif %}</td>
+              <td>{% if vehicle.current_driver_connection %}{{ vehicle.current_driver_connection.candidate.get_full_name|default:vehicle.current_driver_connection.candidate.username }}<br><small class="jh-muted">{{ vehicle.current_driver_state_label }}</small>{% elif vehicle.driver_absent %}<span class="jh-status warning">{{ employer_t.support_fleet_driver_absent }}</span>{% else %}<span class="jh-muted">{{ employer_t.support_fleet_no_driver }}</span>{% endif %}</td>
+              <td class="fleet-route">{% if vehicle.fleet_project_name %}<strong>{{ vehicle.fleet_project_name }}</strong>{% if vehicle.fleet_address_label %}<small>{{ vehicle.fleet_address_label }}</small>{% endif %}{% else %}<span class="jh-muted">{{ employer_t.support_fleet_no_route }}</span>{% endif %}</td>
               <td><div class="fleet-row-actions"><button class="jh-btn primary" type="button" data-fleet-dialog-target="fleet-edit-{{ vehicle.public_id }}">{{ employer_t.support_project_edit }}</button><button class="jh-btn" type="button" data-fleet-dialog-target="fleet-history-{{ vehicle.public_id }}">{{ employer_t.support_worker_history }}</button></div></td>
             </tr>
           {% empty %}<tr><td colspan="6" class="jh-empty">{{ employer_t.support_registry_empty }}</td></tr>{% endfor %}
@@ -86,8 +86,16 @@
           <div class="fleet-current">
             <strong>{{ vehicle.internal_name }} · {{ vehicle.registration_identifier }}</strong>
             <p>{{ employer_t.support_registry_capacity }}: {{ vehicle.seat_capacity }} · {{ employer_t.support_fleet_free_seats }}: {{ vehicle.occupancy_label }}</p>
-            <p>{% if vehicle.current_assignment %}{{ employer_t.support_fleet_current_driver }}: {{ vehicle.current_assignment.driver_connection.candidate.get_full_name|default:vehicle.current_assignment.driver_connection.candidate.username }}{% else %}{{ employer_t.support_fleet_no_driver }}{% endif %}</p>
+            <p>{% if vehicle.current_driver_connection %}{{ employer_t.support_fleet_current_driver }}: {{ vehicle.current_driver_connection.candidate.get_full_name|default:vehicle.current_driver_connection.candidate.username }}{% else %}{{ employer_t.support_fleet_no_driver }}{% endif %}</p>
           </div>
+
+          {% if vehicle.current_project_resource %}
+            <div class="fleet-current">
+              <strong>{{ employer_t.support_fleet_managed_by_project }}</strong>
+              <p>{{ vehicle.fleet_project_name }}{% if vehicle.fleet_address_label %} · {{ vehicle.fleet_address_label }}{% endif %}</p>
+              <small class="jh-muted">{{ employer_t.support_fleet_managed_by_project_hint }}</small>
+            </div>
+          {% endif %}
 
           {# Legacy drafts remain removable; this page no longer creates new drafts. #}
           {% for item in vehicle.assignments_for_fleet %}{% if item.state == 'draft' %}
@@ -110,14 +118,14 @@
             </article>
           {% endif %}{% endfor %}
 
-          <section class="fleet-new-assignment">
+          {% if not vehicle.current_project_resource %}<section class="fleet-new-assignment">
             <h3>{{ employer_t.support_fleet_assign_driver }}</h3>
             <form method="post" class="fleet-form" onsubmit="return confirm('{{ employer_t.support_fleet_publish_warning }}')">{% csrf_token %}<input type="hidden" name="action" value="driver_vehicle_assign"><input type="hidden" name="vehicle_id" value="{{ vehicle.public_id }}">
               <label class="jh-field wide"><span>{{ employer_t.support_fleet_assign_driver }}</span><select class="jh-input" name="driver_connection_id" required>{% for worker in eligible_drivers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% empty %}<option value="" disabled>{{ employer_t.support_fleet_license_only }}</option>{% endfor %}</select><small>{{ employer_t.support_fleet_license_only }}</small></label>
               <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="date" name="starts_on" data-default-current required></label>
               <div class="jh-actions wide"><button class="jh-btn primary" type="submit"{% if not eligible_drivers %} disabled{% endif %}>{{ employer_t.support_fleet_assign_driver }}</button></div>
             </form>
-          </section>
+          </section>{% endif %}
         </div>
       </dialog>
 
@@ -126,13 +134,20 @@
           <div class="fleet-modal-head"><h2 id="fleet-history-title-{{ vehicle.public_id }}">{{ employer_t.support_fleet_history }}</h2><button class="jh-btn fleet-modal-close" type="button" data-fleet-modal-close aria-label="{{ employer_t.support_modal_close }}" title="{{ employer_t.support_modal_close }}">×</button></div>
           <div class="fleet-current"><strong>{{ vehicle.internal_name }} · {{ vehicle.registration_identifier }}</strong><p>{{ employer_t.support_registry_capacity }}: {{ vehicle.seat_capacity }}</p></div>
           <ul class="fleet-history-list">
+            {% for item in vehicle.project_resources_for_fleet %}
+              <li class="fleet-assignment">
+                <div class="fleet-assignment-head"><h3>{{ item.driver_connection.candidate.get_full_name|default:item.driver_connection.candidate.username }}</h3><span class="jh-status success">{{ employer_t.support_fleet_project_assignment }}</span></div>
+                <p>{{ item.starts_on|date:"d.m.Y" }}{% if item.ends_on %} — {{ item.ends_on|date:"d.m.Y" }}{% endif %}</p>
+                <div class="fleet-history-route"><strong>{{ item.crew.project.worker_visible_name|default:item.crew.project.internal_name }}</strong></div>
+              </li>
+            {% endfor %}
             {% for item in vehicle.assignments_for_fleet %}
               <li class="fleet-assignment">
                 <div class="fleet-assignment-head"><h3>{{ item.driver_connection.candidate.get_full_name|default:item.driver_connection.candidate.username }}</h3><span class="jh-status {% if item.state == 'published' %}success{% elif item.state == 'draft' %}warning{% endif %}">{{ item.get_state_display }}</span></div>
                 <p>{{ item.starts_on|date:"d.m.Y" }}{% if item.state == 'cancelled' and item.cancelled_at %} · {{ employer_t.support_fleet_replaced_on }}: {{ item.cancelled_at|date:"d.m.Y" }}{% endif %}</p>
                 {% for route in item.routes.all %}{% if route.state != 'cancelled' %}<div class="fleet-history-route"><strong>{{ route.fleet_project_name }}</strong>{% if route.fleet_address_label %}<br><small class="jh-muted">{{ route.fleet_address_label }}</small>{% endif %}</div>{% endif %}{% endfor %}
               </li>
-            {% empty %}<li class="jh-empty">{{ employer_t.support_fleet_no_driver }}</li>{% endfor %}
+            {% empty %}{% if not vehicle.project_resources_for_fleet %}<li class="jh-empty">{{ employer_t.support_fleet_no_driver }}</li>{% endif %}{% endfor %}
           </ul>
         </div>
       </dialog>

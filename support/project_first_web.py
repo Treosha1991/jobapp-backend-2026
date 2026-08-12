@@ -24,6 +24,7 @@ from jobs.web_i18n import get_lang
 
 from .feature_flags import is_project_first_workspace_enabled
 from .models import (
+    DriverVehicleAssignment,
     ProjectCrew,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
@@ -439,6 +440,19 @@ def _project_context(request, organization, project, *, selected_month):
             crew__organization=organization,
             ends_on__isnull=True,
         ).values_list("driver_connection_id", flat=True)
+    )
+    legacy_resources = DriverVehicleAssignment.objects.filter(
+        organization=organization,
+        state__in=(
+            DriverVehicleAssignment.STATE_DRAFT,
+            DriverVehicleAssignment.STATE_PUBLISHED,
+        ),
+    ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+    used_vehicle_ids.update(
+        legacy_resources.values_list("vehicle_id", flat=True)
+    )
+    used_driver_ids.update(
+        legacy_resources.values_list("driver_connection_id", flat=True)
     )
     for crew in crews:
         crew.current_resource = next(

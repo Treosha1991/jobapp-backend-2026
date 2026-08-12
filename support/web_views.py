@@ -25,6 +25,7 @@ from .models import (
     HousingRoom,
     HousingSite,
     OrganizationMembership,
+    ProjectCrewResourceAssignment,
     ProjectScheduleTemplate,
     RouteStop,
     ScheduledWorkShift,
@@ -2182,6 +2183,20 @@ def fleet_workspace(request):
         action = (request.POST.get("action") or "driver_vehicle_assign").strip()
         redirect_vehicle_id = request.POST.get("vehicle_id", "")
         try:
+            if action in {
+                "driver_vehicle_assign",
+                "driver_vehicle_draft_create",
+                "driver_vehicle_draft_edit",
+                "driver_vehicle_draft_publish",
+            } and ProjectCrewResourceAssignment.objects.filter(
+                crew__organization=organization,
+                crew__state="active",
+                vehicle__public_id=request.POST.get("vehicle_id"),
+                starts_on__lte=timezone.localdate(),
+            ).filter(
+                Q(ends_on__isnull=True) | Q(ends_on__gte=timezone.localdate())
+            ).exists():
+                raise ValueError("vehicle_managed_by_project_crew")
             if action == "vehicle_create":
                 vehicle = create_vehicle(
                     actor=request.user,
@@ -2289,6 +2304,8 @@ def fleet_workspace(request):
             message_key = (
                 "support_registry_operation_error"
                 if action == "vehicle_create"
+                else "support_fleet_managed_by_project_error"
+                if "vehicle_managed_by_project_crew" in detail
                 else "support_fleet_delete_error"
                 if action == "driver_vehicle_draft_delete"
                 else "support_fleet_capacity_error"

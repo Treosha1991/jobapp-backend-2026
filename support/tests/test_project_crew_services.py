@@ -7,6 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from support.models import (
     AuditEvent,
+    DriverVehicleAssignment,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
     ProjectCrewShiftMember,
@@ -209,6 +210,25 @@ class ProjectCrewServiceTests(TestCase):
         with self.assertRaises(ValidationError) as error:
             self._crew(driver=self.passenger)
         self.assertEqual(self._error_code(error.exception), "driver_licence_not_confirmed")
+        self.assertEqual(self.project.project_crews.count(), 0)
+
+    def test_create_crew_rejects_vehicle_still_owned_by_legacy_fleet(self):
+        DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.second_driver,
+            vehicle=self.vehicle,
+            starts_on=date(2026, 8, 1),
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+
+        with self.assertRaises(ValidationError) as error:
+            self._crew()
+
+        self.assertEqual(
+            self._error_code(error.exception),
+            "legacy_driver_or_vehicle_already_assigned",
+        )
         self.assertEqual(self.project.project_crews.count(), 0)
 
     def test_future_passenger_roster_populates_existing_and_new_days(self):

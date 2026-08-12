@@ -16,6 +16,8 @@ from support.models import (
     DriverVehicleAssignment,
     NotificationOutbox,
     OrganizationMembership,
+    ProjectCrew,
+    ProjectCrewResourceAssignment,
     ProjectScheduleTemplate,
     RouteStop,
     ScheduledWorkShift,
@@ -549,6 +551,78 @@ class SupportWorkspaceWebTests(TestCase):
             f'data-fleet-dialog-target="fleet-history-{vehicle.public_id}"',
         )
         self.assertNotContains(response, "fleet-selected")
+
+    def test_fleet_uses_project_crew_resource_as_current_vehicle_assignment(self):
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Project-first van",
+            registration_identifier="CREW-001",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        self.worker_connection.has_driving_license = True
+        self.worker_connection.save(update_fields=["has_driving_license", "updated_at"])
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Project-first worksite",
+            country_code="NL",
+            city="Lelystad",
+            street="Crewstraat",
+            building="8",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Project-first internal",
+            worker_visible_name="Project-first client",
+            starts_on=date.today(),
+            created_by=self.owner,
+        )
+        crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=project,
+            internal_name="Crew A",
+            created_by=self.owner,
+        )
+        ProjectCrewResourceAssignment.objects.create(
+            crew=crew,
+            driver_connection=self.worker_connection,
+            vehicle=vehicle,
+            starts_on=date.today(),
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        fleet_url = (
+            f"/employer/support/fleet/?organization={self.organization.public_id}"
+        )
+
+        response = self.client.get(fleet_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "workspace-active-worker")
+        self.assertContains(response, "Project-first client")
+        self.assertContains(response, "Lelystad, Crewstraat 8")
+        self.assertContains(response, "The vehicle is assigned to a project crew")
+        self.assertContains(response, "3/4")
+
+        rejected = self.client.post(
+            fleet_url,
+            {
+                "action": "driver_vehicle_assign",
+                "vehicle_id": str(vehicle.public_id),
+                "driver_connection_id": str(self.worker_connection.public_id),
+                "starts_on": date.today().isoformat(),
+            },
+            follow=True,
+        )
+        self.assertContains(
+            rejected,
+            "The vehicle is already assigned to a project crew",
+        )
+        self.assertFalse(
+            DriverVehicleAssignment.objects.filter(vehicle=vehicle).exists()
+        )
 
     def test_owner_can_add_vehicle_from_fleet_workspace(self):
         self.client.force_login(self.owner)

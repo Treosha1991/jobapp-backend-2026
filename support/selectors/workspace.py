@@ -23,6 +23,9 @@ from support.models import (
     HousingSite,
     MembershipInvitation,
     OrganizationMembership,
+    ProjectCrewResourceAssignment,
+    ProjectCrewShift,
+    ProjectCrewShiftMember,
     ProjectScheduleTemplate,
     RouteStop,
     ScheduledWorkShift,
@@ -2328,6 +2331,50 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
     eligible_drivers = [item for item in workers if item.has_verified_driving_license]
 
     today = timezone.localdate()
+    project_resources = list(
+        ProjectCrewResourceAssignment.objects.filter(
+            crew__organization=organization,
+            crew__state="active",
+        )
+        .select_related(
+            "crew__project__worksite",
+            "driver_connection__candidate",
+            "vehicle",
+        )
+        .order_by("-starts_on", "-id")
+    )
+    project_resources_by_vehicle_id = {}
+    for resource in project_resources:
+        project_resources_by_vehicle_id.setdefault(resource.vehicle_id, []).append(resource)
+
+    current_project_resources = {
+        vehicle_id: next(
+            (
+                resource
+                for resource in resources
+                if resource.starts_on <= today
+                and (resource.ends_on is None or resource.ends_on >= today)
+            ),
+            None,
+        )
+        for vehicle_id, resources in project_resources_by_vehicle_id.items()
+    }
+    active_project_resource_ids = {
+        resource.id
+        for resource in current_project_resources.values()
+        if resource is not None
+    }
+    today_shifts_by_crew_id = {
+        shift.crew_id: shift
+        for shift in ProjectCrewShift.objects.filter(
+            crew__organization=organization,
+            crew__resource_assignments__id__in=active_project_resource_ids,
+            work_date=today,
+            state=ProjectCrewShift.STATE_PUBLISHED,
+        )
+        .prefetch_related("members")
+        .distinct()
+    }
     vehicles = list(
         Vehicle.objects.filter(organization=organization)
         .prefetch_related(
@@ -2391,6 +2438,9 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
     for vehicle in vehicles:
         assignments = assignments_by_vehicle_id[vehicle.id]
         vehicle.assignments_for_fleet = assignments
+        vehicle.project_resources_for_fleet = project_resources_by_vehicle_id.get(
+            vehicle.id, []
+        )
         for assignment in assignments:
             for route in assignment.routes.all():
                 prepare_route_for_fleet(route)
@@ -2443,6 +2493,48 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
         ]
         active.sort(key=lambda item: (item.state == DriverVehicleAssignment.STATE_PUBLISHED, item.starts_on), reverse=True)
         vehicle.current_assignment = active[0] if active else None
+        vehicle.current_project_resource = current_project_resources.get(vehicle.id)
+        # Project crews are the canonical operational assignment. Legacy
+        # assignments remain visible only as migration history/fallback.
+        if vehicle.current_project_resource is not None:
+            vehicle.current_driver_connection = (
+                vehicle.current_project_resource.driver_connection
+            )
+            vehicle.current_driver_state_label = "Published"
+            project = vehicle.current_project_resource.crew.project
+            worksite = project.worksite
+            vehicle.fleet_project_name = (
+                project.worker_visible_name or project.internal_name
+            )
+            vehicle.fleet_address_label = ", ".join(
+                item
+                for item in (
+                    worksite.city,
+                    " ".join(
+                        item
+                        for item in (worksite.street, worksite.building)
+                        if item
+                    ),
+                )
+                if item
+            )
+            vehicle.fleet_project_public_id = project.public_id
+        elif vehicle.current_assignment is not None:
+            vehicle.current_driver_connection = (
+                vehicle.current_assignment.driver_connection
+            )
+            vehicle.current_driver_state_label = (
+                vehicle.current_assignment.get_state_display()
+            )
+            vehicle.fleet_project_name = ""
+            vehicle.fleet_address_label = ""
+            vehicle.fleet_project_public_id = None
+        else:
+            vehicle.current_driver_connection = None
+            vehicle.current_driver_state_label = ""
+            vehicle.fleet_project_name = ""
+            vehicle.fleet_address_label = ""
+            vehicle.fleet_project_public_id = None
         routes = []
         if vehicle.current_assignment is not None:
             routes = [
@@ -2461,17 +2553,37 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
             reverse=True,
         )
         vehicle.current_route = routes[0] if routes else None
+        if vehicle.current_project_resource is None and vehicle.current_route is not None:
+            vehicle.fleet_project_name = vehicle.current_route.fleet_project_name
+            vehicle.fleet_address_label = vehicle.current_route.fleet_address_label
         vehicle.driver_absent = vehicle.current_assignment is None and any(
             item.state == DriverVehicleAssignment.STATE_CANCELLED
             and item.starts_on <= today
             for item in assignments
         )
-        passenger_count = (
-            vehicle.current_route.passenger_assignments.count()
-            if vehicle.current_route is not None
-            else 0
+        if vehicle.current_project_resource is not None:
+            today_shift = today_shifts_by_crew_id.get(
+                vehicle.current_project_resource.crew_id
+            )
+            passenger_count = (
+                today_shift.members.filter(
+                    role=ProjectCrewShiftMember.ROLE_PASSENGER
+                ).count()
+                if today_shift is not None
+                else 0
+            )
+        else:
+            passenger_count = (
+                vehicle.current_route.passenger_assignments.count()
+                if vehicle.current_route is not None
+                else 0
+            )
+        vehicle.free_seat_count = max(
+            0,
+            vehicle.seat_capacity
+            - (1 if vehicle.current_driver_connection is not None else 0)
+            - passenger_count,
         )
-        vehicle.free_seat_count = max(0, vehicle.seat_capacity - (1 if vehicle.current_assignment else 0) - passenger_count)
         vehicle.occupancy_label = f"{vehicle.free_seat_count}/{vehicle.seat_capacity}"
 
     selected_vehicle = next(

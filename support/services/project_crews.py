@@ -12,6 +12,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from support.models import (
+    DriverVehicleAssignment,
     ProjectCrew,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
@@ -337,6 +338,23 @@ def create_project_crew(
         )
     if vehicle.organization_id != organization.id or not vehicle.is_active:
         _operation_error("vehicle_not_available", "The selected vehicle is not available in this organization.")
+    today = timezone.localdate()
+    legacy_conflict = DriverVehicleAssignment.objects.select_for_update().filter(
+        organization=organization,
+        state__in=(
+            DriverVehicleAssignment.STATE_DRAFT,
+            DriverVehicleAssignment.STATE_PUBLISHED,
+        ),
+    ).filter(
+        Q(vehicle=vehicle) | Q(driver_connection=driver_connection)
+    ).filter(
+        Q(ends_on__isnull=True) | Q(ends_on__gte=starts_on or today)
+    ).exists()
+    if legacy_conflict:
+        _operation_error(
+            "legacy_driver_or_vehicle_already_assigned",
+            "The selected driver or vehicle is still assigned in the previous fleet workflow.",
+        )
 
     crew = ProjectCrew(
         organization=organization,
