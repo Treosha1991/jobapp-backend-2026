@@ -407,7 +407,14 @@ def _project_context(request, organization, project, *, selected_month):
             Prefetch(
                 "calendar_shifts",
                 queryset=ProjectCrewShift.objects.filter(state=ProjectCrewShift.STATE_PUBLISHED)
-                .prefetch_related("members")
+                .prefetch_related(
+                    Prefetch(
+                        "members",
+                        queryset=ProjectCrewShiftMember.objects.select_related(
+                            "connection__candidate",
+                        ).order_by("role", "connection__candidate__first_name", "id"),
+                    )
+                )
                 .order_by("work_date"),
             ),
         )
@@ -436,11 +443,50 @@ def _project_context(request, organization, project, *, selected_month):
         if crew.current_resource:
             crew.current_resource.driver_name = _display_name(crew.current_resource.driver_connection)
         crew.open_passengers = list(crew.passenger_assignments.all())
-        for passenger in crew.open_passengers:
-            passenger.display_name = _display_name(passenger.connection)
-        unavailable_passenger_ids = {
-            passenger.connection_id for passenger in crew.open_passengers
+        roster_by_connection = {
+            passenger.connection_id: passenger for passenger in crew.open_passengers
         }
+        member_dates = {}
+        member_connections = {}
+        for shift in crew.calendar_shifts.all():
+            for member in shift.members.all():
+                if member.role != ProjectCrewShiftMember.ROLE_PASSENGER:
+                    continue
+                member_connections[member.connection_id] = member.connection
+                member_dates.setdefault(member.connection_id, []).append(shift.work_date)
+        crew.display_passengers = []
+        for connection_id in sorted(
+            set(roster_by_connection) | set(member_connections),
+            key=lambda item: _display_name(
+                roster_by_connection[item].connection
+                if item in roster_by_connection
+                else member_connections[item]
+            ),
+        ):
+            connection = (
+                roster_by_connection[connection_id].connection
+                if connection_id in roster_by_connection
+                else member_connections[connection_id]
+            )
+            dates = sorted(set(member_dates.get(connection_id, [])))
+            crew.display_passengers.append(
+                {
+                    "connection": connection,
+                    "display_name": _display_name(connection),
+                    "scope": (
+                        PASSENGER_SCOPE_FUTURE
+                        if connection_id in roster_by_connection
+                        else PASSENGER_SCOPE_SELECTED
+                    ),
+                    "work_dates": dates,
+                    "dates_label": ", ".join(item.strftime("%d.%m") for item in dates),
+                }
+            )
+        # A passenger assigned only to particular calendar days must remain in
+        # the picker so the employer can add the same person to other selected
+        # days later. Only the permanent/future roster and the current driver
+        # are unavailable here.
+        unavailable_passenger_ids = set(roster_by_connection)
         if crew.current_resource:
             unavailable_passenger_ids.add(
                 crew.current_resource.driver_connection_id
@@ -461,9 +507,13 @@ def _project_context(request, organization, project, *, selected_month):
             if crew.month_shifts
             else (crew.published_shifts[0] if crew.published_shifts else None)
         )
-        crew.occupied = 1 + len(crew.open_passengers)
+        crew.occupied = 1 + max(
+            (shift.members.filter(role=ProjectCrewShiftMember.ROLE_PASSENGER).count()
+             for shift in crew.calendar_shifts.all()),
+            default=len(crew.open_passengers),
+        )
         crew.passenger_driver_options = [
-            item for item in crew.open_passengers if item.connection.has_driving_license
+            item for item in crew.display_passengers if item["connection"].has_driving_license
         ]
 
     available_drivers = [

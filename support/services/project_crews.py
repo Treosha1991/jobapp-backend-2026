@@ -17,6 +17,7 @@ from support.models import (
     ProjectCrewResourceAssignment,
     ProjectCrewShift,
     ProjectCrewShiftMember,
+    ScheduledWorkShift,
     SupportConnection,
     Vehicle,
     WorkProject,
@@ -152,6 +153,42 @@ def _ensure_shift_capacity(*, shift, additional_members=0):
         )
 
 
+def _sync_member_worker_calendar(*, member, actor):
+    """Mirror one project-first crew-day member into the worker calendar."""
+
+    shift = member.shift
+    scheduled_state = (
+        ScheduledWorkShift.STATE_PUBLISHED
+        if shift.state == ProjectCrewShift.STATE_PUBLISHED
+        else ScheduledWorkShift.STATE_CANCELLED
+    )
+    published_at = timezone.now() if scheduled_state == ScheduledWorkShift.STATE_PUBLISHED else None
+    cancelled_at = timezone.now() if scheduled_state == ScheduledWorkShift.STATE_CANCELLED else None
+    calendar_shift, _ = ScheduledWorkShift.objects.update_or_create(
+        project_crew_member=member,
+        defaults={
+            "organization": shift.crew.organization,
+            "connection": member.connection,
+            "work_date": shift.work_date,
+            "starts_at": shift.starts_at,
+            "ends_at": shift.ends_at,
+            "break_minutes": shift.break_minutes,
+            "worker_label": shift.crew.internal_name,
+            "state": scheduled_state,
+            "created_by": actor,
+            "published_by": actor if scheduled_state == ScheduledWorkShift.STATE_PUBLISHED else None,
+            "published_at": published_at,
+            "cancelled_at": cancelled_at,
+        },
+    )
+    return calendar_shift
+
+
+def _sync_shift_worker_calendars(*, shift, actor):
+    for member in shift.members.select_related("connection", "shift__crew__organization"):
+        _sync_member_worker_calendar(member=member, actor=actor)
+
+
 def _resolve_passenger_conflicts(*, connection, shift):
     conflicts = _overlapping_memberships(
         connection=connection,
@@ -187,6 +224,7 @@ def _add_passenger_to_shift(*, actor, shift, connection):
                 f"The selected worker is already the crew driver on {shift.work_date.isoformat()}.",
                 work_date=shift.work_date.isoformat(),
             )
+        _sync_member_worker_calendar(member=existing, actor=actor)
         return existing, False
     _resolve_passenger_conflicts(connection=connection, shift=shift)
     _ensure_shift_capacity(shift=shift, additional_members=1)
@@ -198,6 +236,7 @@ def _add_passenger_to_shift(*, actor, shift, connection):
     )
     member.full_clean()
     member.save()
+    _sync_member_worker_calendar(member=member, actor=actor)
     return member, True
 
 
@@ -235,6 +274,7 @@ def _sync_shift_members_for_new_shift(*, actor, shift, resource):
     )
     driver.full_clean()
     driver.save()
+    _sync_member_worker_calendar(member=driver, actor=actor)
     for roster_entry in roster:
         _add_passenger_to_shift(actor=actor, shift=shift, connection=roster_entry.connection)
 
@@ -414,6 +454,7 @@ def publish_project_crew_shifts(
                 _sync_shift_members_for_new_shift(actor=actor, shift=shift, resource=resource)
             else:
                 _validate_existing_shift_conflicts(shift=shift)
+                _sync_shift_worker_calendars(shift=shift, actor=actor)
             replaced_count += 1
         shifts.append(shift)
 
@@ -454,6 +495,7 @@ def release_project_crew_shifts(*, actor, crew, work_dates):
         shift.state = ProjectCrewShift.STATE_CANCELLED
         shift.updated_by = actor
         shift.save(update_fields=("state", "updated_by", "updated_at"))
+        _sync_shift_worker_calendars(shift=shift, actor=actor)
         changed.append(shift)
     record_audit_event(
         organization=organization,
@@ -771,6 +813,7 @@ def replace_project_crew_driver(
         )
         new_driver_member.full_clean()
         new_driver_member.save()
+        _sync_member_worker_calendar(member=new_driver_member, actor=actor)
         _add_passenger_to_shift(actor=actor, shift=shift, connection=old_driver)
 
     record_audit_event(

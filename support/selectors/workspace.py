@@ -998,12 +998,19 @@ def worker_card_snapshot(
                 "work_assignment__project",
                 "schedule_template__project",
                 "crew",
+                "project_crew_member__shift__crew__project",
             ).order_by("work_date", "starts_at", "id")
         )
         for shift in scheduled_shifts:
             shift.is_preview = False
             shift.has_conflict = False
-            if shift.crew_id is not None:
+            if shift.project_crew_member_id is not None:
+                project_crew = shift.project_crew_member.shift.crew
+                shift.schedule_source_label = (
+                    project_crew.internal_name
+                    or project_crew.project.worker_visible_name
+                )
+            elif shift.crew_id is not None:
                 shift.schedule_source_label = (
                     shift.crew.internal_name
                     or shift.schedule_template.project.worker_visible_name

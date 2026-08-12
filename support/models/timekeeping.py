@@ -312,6 +312,14 @@ class ScheduledWorkShift(models.Model):
         blank=True,
         related_name="scheduled_shifts",
     )
+    project_crew_member = models.OneToOneField(
+        "support.ProjectCrewShiftMember",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="worker_calendar_shift",
+        help_text="Source crew-day membership in the project-first workspace.",
+    )
     work_date = models.DateField()
     starts_at = models.DateTimeField()
     ends_at = models.DateTimeField()
@@ -348,6 +356,7 @@ class ScheduledWorkShift(models.Model):
                 fields=("connection", "work_date"),
                 condition=Q(
                     crew__isnull=True,
+                    project_crew_member__isnull=True,
                     state__in=("draft", "published"),
                 ),
                 name="support_one_legacy_shift_day",

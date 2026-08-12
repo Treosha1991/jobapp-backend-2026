@@ -43,7 +43,9 @@ document.addEventListener('DOMContentLoaded',function(){
     var inputs=Array.prototype.slice.call(form.querySelectorAll('[data-pf-date]'));
     var actions=form.querySelector('[data-pf-actions]');
     var count=form.querySelector('[data-pf-count]');
-    function sync(){var selected=inputs.filter(function(input){return input.checked;});inputs.forEach(function(input){input.closest('[data-pf-day]')?.classList.toggle('is-selected',input.checked);});if(count)count.textContent=selected.length;if(actions)actions.hidden=selected.length===0;}
+    var crew=form.closest('[data-pf-crew]');
+    function syncPassengerForms(selected){crew?.querySelectorAll('[data-pf-passenger-form]').forEach(function(passengerForm){var target=passengerForm.querySelector('[data-pf-passenger-dates]');var button=passengerForm.querySelector('[data-pf-passenger-submit]');if(target){target.replaceChildren();selected.forEach(function(input){var hidden=document.createElement('input');hidden.type='hidden';hidden.name='work_dates';hidden.value=input.value;target.appendChild(hidden);});}if(button)button.disabled=selected.length===0;});}
+    function sync(){var selected=inputs.filter(function(input){return input.checked;});inputs.forEach(function(input){input.closest('[data-pf-day]')?.classList.toggle('is-selected',input.checked);});if(count)count.textContent=selected.length;if(actions)actions.hidden=selected.length===0;syncPassengerForms(selected);}
     inputs.forEach(function(input){var day=input.closest('[data-pf-day]');if(!day)return;day.addEventListener('click',function(event){event.preventDefault();form.querySelectorAll('[data-pf-day]').forEach(function(item){item.classList.toggle('is-viewed',item===day);});});day.addEventListener('dblclick',function(event){event.preventDefault();window.getSelection()?.removeAllRanges();input.checked=!input.checked;sync();});});
     form.querySelector('[data-pf-clear]')?.addEventListener('click',function(){inputs.forEach(function(input){input.checked=false;});sync();});sync();
   });
@@ -80,20 +82,20 @@ document.addEventListener('DOMContentLoaded',function(){
 
     <div class="pf-crews">
       {% for crew in crews %}
-        <article class="pf-crew">
+        <article class="pf-crew" data-pf-crew>
           <div class="pf-crew-head"><div><p class="pf-kicker">{{ pf.crew }}</p><h2>{{ crew.internal_name|default:pf.crew }}</h2></div></div>
 
           <div class="pf-panels">
             <section class="pf-panel">
               {% if crew.current_resource %}<div class="pf-crew-summary"><div><small>{{ pf.driver }}</small><strong>{{ crew.current_resource.driver_name }}</strong><span>{{ crew.current_resource.vehicle.registration_identifier }} · {{ crew.current_resource.vehicle.internal_name }}</span></div><div><small>{{ pf.schedule }}</small><strong>{{ project.worker_visible_name }}</strong><span>{% if crew.schedule_example %}{{ crew.schedule_example.starts_at|time:"H:i" }}–{{ crew.schedule_example.ends_at|time:"H:i" }}{% else %}{{ pf.no_shifts }}{% endif %}</span></div><div class="pf-occupancy"><small>{{ pf.seats }}</small><strong>{{ crew.occupied }}/{{ crew.current_resource.vehicle.seat_capacity }}</strong></div></div>{% endif %}
-              <div class="pf-passenger-head"><h3>{{ pf.passengers }}</h3>{% if crew.current_resource %}<span class="pf-passenger-count">{{ crew.open_passengers|length }} / {{ crew.current_resource.vehicle.seat_capacity|add:'-1' }}</span>{% endif %}</div>
-              {% if crew.open_passengers %}
+              <div class="pf-passenger-head"><h3>{{ pf.passengers }}</h3>{% if crew.current_resource %}<span class="pf-passenger-count">{{ crew.display_passengers|length }} / {{ crew.current_resource.vehicle.seat_capacity|add:'-1' }}</span>{% endif %}</div>
+              {% if crew.display_passengers %}
                 <div class="pf-list">
-                  {% for passenger in crew.open_passengers %}
+                  {% for passenger in crew.display_passengers %}
                     <div class="pf-person">
-                      <strong>{{ passenger.display_name }}</strong>
+                      <div><strong>{{ passenger.display_name }}</strong>{% if passenger.scope == 'selected' %}<span class="pf-muted">{{ passenger.dates_label }}</span>{% endif %}</div>
                       <form method="post">
-                        {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="passenger_remove"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><input type="hidden" name="connection_id" value="{{ passenger.connection.public_id }}"><input type="hidden" name="scope" value="future"><input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">
+                        {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="passenger_remove"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><input type="hidden" name="connection_id" value="{{ passenger.connection.public_id }}"><input type="hidden" name="scope" value="{{ passenger.scope }}"><input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">{% for work_date in passenger.work_dates %}<input type="hidden" name="work_dates" value="{{ work_date|date:'Y-m-d' }}">{% endfor %}
                         <button class="jh-btn danger" type="submit">{{ pf.remove }}</button>
                       </form>
                     </div>
@@ -102,15 +104,13 @@ document.addEventListener('DOMContentLoaded',function(){
               {% else %}<div class="pf-muted">{{ pf.no_passengers }}</div>{% endif %}
 
               {% if crew.published_shifts %}
-                <form method="post" style="margin-top:10px">
+                <form method="post" style="margin-top:10px" data-pf-passenger-form>
                   {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="passenger_add"><input type="hidden" name="crew_id" value="{{ crew.public_id }}">
                   <select class="jh-input" name="connection_id" required><option value="">{{ pf.add_passenger }}</option>{% for worker in crew.available_passengers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% endfor %}</select>
-                  <select class="jh-input" name="scope" data-scope-select><option value="future">{{ pf.future }}</option><option value="selected">{{ pf.selected }}</option></select>
-                  <select class="jh-input pf-select-days" name="work_dates" multiple>
-                    {% for shift in crew.published_shifts %}<option value="{{ shift.work_date|date:'Y-m-d' }}">{{ shift.work_date|date:"d.m.Y" }}</option>{% endfor %}
-                  </select>
+                  <input type="hidden" name="scope" value="selected">
+                  <span data-pf-passenger-dates></span>
                   <input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">
-                  <button class="jh-btn primary" type="submit">{{ pf.add_passenger }}</button>
+                  <button class="jh-btn primary" type="submit" data-pf-passenger-submit disabled>{{ pf.add_passenger }}</button>
                 </form>
               {% endif %}
 

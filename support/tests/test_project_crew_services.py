@@ -10,6 +10,7 @@ from support.models import (
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
     ProjectCrewShiftMember,
+    ScheduledWorkShift,
     SupportApplication,
     SupportConnection,
     SupportVacancy,
@@ -157,6 +158,14 @@ class ProjectCrewServiceTests(TestCase):
             ).count(),
             2,
         )
+        self.assertEqual(
+            ScheduledWorkShift.objects.filter(
+                connection=self.driver,
+                project_crew_member__shift__crew=crew,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).count(),
+            2,
+        )
         self.assertTrue(
             AuditEvent.objects.filter(
                 action="project_crew.shifts_published",
@@ -175,6 +184,12 @@ class ProjectCrewServiceTests(TestCase):
         self.assertEqual(timezone.localtime(replaced.starts_at).time(), time(7, 0))
         self.assertEqual(replaced.break_minutes, 30)
         self.assertEqual(replaced.members.count(), 1)
+        synced_replacement = ScheduledWorkShift.objects.get(
+            project_crew_member__shift=replaced,
+            connection=self.driver,
+        )
+        self.assertEqual(timezone.localtime(synced_replacement.starts_at).time(), time(7, 0))
+        self.assertEqual(synced_replacement.break_minutes, 30)
 
         released = release_project_crew_shifts(
             actor=self.owner,
@@ -184,6 +199,8 @@ class ProjectCrewServiceTests(TestCase):
         self.assertEqual(len(released), 1)
         replaced.refresh_from_db()
         self.assertEqual(replaced.state, replaced.STATE_CANCELLED)
+        synced_replacement.refresh_from_db()
+        self.assertEqual(synced_replacement.state, ScheduledWorkShift.STATE_CANCELLED)
         # The composition remains as a historical snapshot, while cancelled
         # days no longer participate in schedule conflicts.
         self.assertEqual(replaced.members.count(), 1)
@@ -221,6 +238,14 @@ class ProjectCrewServiceTests(TestCase):
             ).count(),
             2,
         )
+        self.assertEqual(
+            ScheduledWorkShift.objects.filter(
+                connection=self.passenger,
+                project_crew_member__shift__crew=crew,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).count(),
+            2,
+        )
 
         remove_project_crew_passenger(
             actor=self.owner,
@@ -241,6 +266,13 @@ class ProjectCrewServiceTests(TestCase):
                 shift__crew=crew,
                 shift__work_date=date(2026, 8, 12),
                 connection=self.passenger,
+            ).exists()
+        )
+        self.assertFalse(
+            ScheduledWorkShift.objects.filter(
+                connection=self.passenger,
+                project_crew_member__shift__crew=crew,
+                work_date=date(2026, 8, 12),
             ).exists()
         )
 

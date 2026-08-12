@@ -9,6 +9,7 @@ from support.models import (
     ProjectCrew,
     ProjectCrewShift,
     ProjectCrewShiftMember,
+    ScheduledWorkShift,
     SupportApplication,
     SupportConnection,
     SupportVacancy,
@@ -300,6 +301,24 @@ class ProjectFirstWorkspaceTests(TestCase):
                 shift__work_date=date(2026, 8, 13),
                 connection=self.passenger,
             ).exists()
+        )
+        self.assertTrue(
+            ScheduledWorkShift.objects.filter(
+                connection=self.passenger,
+                project_crew_member__shift__crew=crew,
+                work_date=date(2026, 8, 12),
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).exists()
+        )
+        passenger_page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        self.assertContains(passenger_page, self.passenger.candidate.get_full_name())
+        self.assertContains(passenger_page, "12.08")
+        self.assertIn(
+            self.passenger.public_id,
+            {
+                item.public_id
+                for item in passenger_page.context["crews"][0].available_passengers
+            },
         )
 
         response = self.client.post(
