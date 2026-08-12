@@ -336,6 +336,65 @@ class ProjectFirstWorkspaceTests(TestCase):
             ProjectCrewShift.STATE_CANCELLED,
         )
 
+    def test_owner_adds_passenger_to_entire_crew_schedule_without_selected_dates(self):
+        crew = self._create_crew()
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "shifts_publish",
+                "crew_id": str(crew.public_id),
+                "work_dates": ["2026-08-12", "2026-08-13"],
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:45",
+                "break_minutes": "30",
+            },
+        )
+
+        response = self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "passenger_add",
+                "crew_id": str(crew.public_id),
+                "connection_id": str(self.passenger.public_id),
+                "scope": "future",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                connection=self.passenger,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            ScheduledWorkShift.objects.filter(
+                connection=self.passenger,
+                project_crew_member__shift__crew=crew,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).count(),
+            2,
+        )
+
+        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        copy = page.context["pf"]
+        self.assertContains(
+            page,
+            f'<option value="future">{copy["future"]}</option>',
+            html=False,
+        )
+        self.assertContains(
+            page,
+            f'<option value="selected">{copy["selected"]}</option>',
+            html=False,
+        )
+        self.assertContains(page, copy["select_dates_hint"])
+        self.assertContains(page, 'data-pf-has-shift="1"', html=False)
+
     def test_passenger_picker_excludes_current_driver_and_existing_passengers(self):
         crew = self._create_crew()
         self.client.post(

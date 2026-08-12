@@ -44,9 +44,26 @@ document.addEventListener('DOMContentLoaded',function(){
     var actions=form.querySelector('[data-pf-actions]');
     var count=form.querySelector('[data-pf-count]');
     var crew=form.closest('[data-pf-crew]');
-    function syncPassengerForms(selected){crew?.querySelectorAll('[data-pf-passenger-form]').forEach(function(passengerForm){var target=passengerForm.querySelector('[data-pf-passenger-dates]');var button=passengerForm.querySelector('[data-pf-passenger-submit]');if(target){target.replaceChildren();selected.forEach(function(input){var hidden=document.createElement('input');hidden.type='hidden';hidden.name='work_dates';hidden.value=input.value;target.appendChild(hidden);});}if(button)button.disabled=selected.length===0;});}
+    var passengerForms=crew?Array.prototype.slice.call(crew.querySelectorAll('[data-pf-passenger-form]')):[];
+    function syncPassengerForms(selected){
+      var publishedSelected=selected.filter(function(input){return input.dataset.pfHasShift==='1';});
+      passengerForms.forEach(function(passengerForm){
+        var target=passengerForm.querySelector('[data-pf-passenger-dates]');
+        var scope=passengerForm.querySelector('[data-pf-passenger-scope]');
+        var button=passengerForm.querySelector('[data-pf-passenger-submit]');
+        var hint=passengerForm.querySelector('[data-pf-passenger-hint]');
+        var selectedMode=scope&&scope.value==='selected';
+        if(target){
+          target.replaceChildren();
+          if(selectedMode){publishedSelected.forEach(function(input){var hidden=document.createElement('input');hidden.type='hidden';hidden.name='work_dates';hidden.value=input.value;target.appendChild(hidden);});}
+        }
+        if(button)button.disabled=selectedMode&&publishedSelected.length===0;
+        if(hint)hint.hidden=!(selectedMode&&publishedSelected.length===0);
+      });
+    }
     function sync(){var selected=inputs.filter(function(input){return input.checked;});inputs.forEach(function(input){input.closest('[data-pf-day]')?.classList.toggle('is-selected',input.checked);});if(count)count.textContent=selected.length;if(actions)actions.hidden=selected.length===0;syncPassengerForms(selected);}
     inputs.forEach(function(input){var day=input.closest('[data-pf-day]');if(!day)return;day.addEventListener('click',function(event){event.preventDefault();form.querySelectorAll('[data-pf-day]').forEach(function(item){item.classList.toggle('is-viewed',item===day);});});day.addEventListener('dblclick',function(event){event.preventDefault();window.getSelection()?.removeAllRanges();input.checked=!input.checked;sync();});});
+    passengerForms.forEach(function(passengerForm){passengerForm.querySelector('[data-pf-passenger-scope]')?.addEventListener('change',sync);});
     form.querySelector('[data-pf-clear]')?.addEventListener('click',function(){inputs.forEach(function(input){input.checked=false;});sync();});sync();
   });
 });
@@ -107,10 +124,11 @@ document.addEventListener('DOMContentLoaded',function(){
                 <form method="post" style="margin-top:10px" data-pf-passenger-form>
                   {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="passenger_add"><input type="hidden" name="crew_id" value="{{ crew.public_id }}">
                   <select class="jh-input" name="connection_id" required><option value="">{{ pf.add_passenger }}</option>{% for worker in crew.available_passengers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% endfor %}</select>
-                  <input type="hidden" name="scope" value="selected">
+                  <label class="pf-field"><span>{{ pf.scope }}</span><select class="jh-input" name="scope" data-pf-passenger-scope><option value="future">{{ pf.future }}</option><option value="selected">{{ pf.selected }}</option></select></label>
                   <span data-pf-passenger-dates></span>
                   <input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">
-                  <button class="jh-btn primary" type="submit" data-pf-passenger-submit disabled>{{ pf.add_passenger }}</button>
+                  <p class="pf-muted" data-pf-passenger-hint hidden>{{ pf.select_dates_hint }}</p>
+                  <button class="jh-btn primary" type="submit" data-pf-passenger-submit>{{ pf.add_passenger }}</button>
                 </form>
               {% endif %}
 
@@ -130,7 +148,7 @@ document.addEventListener('DOMContentLoaded',function(){
                 <div class="pf-calendar-shell">
                   <div class="pf-calendar-toolbar"><div class="pf-calendar-nav"><a class="jh-btn" href="{{ calendar_previous_url }}" aria-label="Previous month">←</a></div><div class="pf-calendar-toolbar-copy"><span>{{ pf.month_navigation }}</span><strong>{{ selected_month|date:"F Y" }}</strong></div><div class="pf-calendar-nav"><a class="jh-btn" href="{{ calendar_today_url }}">{{ pf.today }}</a><a class="jh-btn" href="{{ calendar_next_url }}" aria-label="Next month">→</a></div></div>
                   <div class="pf-calendar-weekdays" aria-hidden="true">{% for weekday in calendar_weekday_labels %}<span>{{ weekday }}</span>{% endfor %}</div>
-                  <div class="pf-calendar">{% for day in crew.calendar_days %}{% if day %}<label class="pf-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}" data-pf-day><input class="pf-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-pf-date><span class="pf-calendar-content"><span class="pf-calendar-number">{{ day.date|date:"j" }}</span>{% if day.shift %}<span class="pf-calendar-time">{{ day.shift.starts_at|time:"H:i" }}–{{ day.shift.ends_at|time:"H:i" }}</span>{% endif %}</span></label>{% else %}<div class="pf-calendar-empty"></div>{% endif %}{% endfor %}</div>
+                  <div class="pf-calendar">{% for day in crew.calendar_days %}{% if day %}<label class="pf-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}" data-pf-day><input class="pf-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-pf-date data-pf-has-shift="{% if day.has_published %}1{% else %}0{% endif %}"><span class="pf-calendar-content"><span class="pf-calendar-number">{{ day.date|date:"j" }}</span>{% if day.shift %}<span class="pf-calendar-time">{{ day.shift.starts_at|time:"H:i" }}–{{ day.shift.ends_at|time:"H:i" }}</span>{% endif %}</span></label>{% else %}<div class="pf-calendar-empty"></div>{% endif %}{% endfor %}</div>
                   <div class="pf-calendar-actions" data-pf-actions hidden><div class="pf-calendar-selection"><span>{{ pf.selected_days }}: <strong data-pf-count>0</strong></span><button class="jh-btn" type="button" data-pf-clear>{{ pf.clear_selection }}</button></div><div class="pf-row three"><label class="pf-field"><span>{{ pf.shift_start }}</span><input class="jh-input" type="time" name="starts_at_time" value="06:00" required></label><label class="pf-field"><span>{{ pf.shift_end }}</span><input class="jh-input" type="time" name="ends_at_time" value="14:45" required></label><label class="pf-field"><span>{{ pf.break }}</span><input class="jh-input" type="number" min="0" max="720" name="break_minutes" value="0"></label></div><div class="jh-actions"><button class="jh-btn primary" name="action" value="shifts_publish" type="submit">{{ pf.publish }}</button><button class="jh-btn danger" name="action" value="shifts_release" type="submit" formnovalidate>{{ pf.release }}</button></div></div>
                   <div class="pf-calendar-legend"><span><i></i>{{ pf.published }}</span></div>
                 </div>

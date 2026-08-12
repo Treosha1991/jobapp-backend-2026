@@ -86,8 +86,9 @@ COPY = {
         "passengers": "Пассажиры",
         "add_passenger": "Добавить пассажира",
         "scope": "Применить",
-        "future": "Ко всем будущим опубликованным дням",
+        "future": "На весь график экипажа",
         "selected": "Только к выбранным дням",
+        "select_dates_hint": "Выделите даты в календаре.",
         "remove": "Исключить",
         "replace_driver": "Сменить водителя",
         "new_driver": "Новый водитель из пассажиров",
@@ -129,7 +130,8 @@ COPY = {
         "clear_selection": "Clear selection", "month_shifts": "This month's shifts", "published": "Published",
         "break": "Break, minutes", "publish": "Publish selected days", "release": "Release selected days",
         "passengers": "Passengers", "add_passenger": "Add passenger", "scope": "Apply to",
-        "future": "All future published days", "selected": "Selected days only", "remove": "Remove",
+        "future": "Entire crew schedule", "selected": "Selected days only",
+        "select_dates_hint": "Select dates in the calendar.", "remove": "Remove",
         "replace_driver": "Replace driver", "new_driver": "New driver from passengers", "replace": "Replace",
         "no_projects": "There are no active projects yet.", "no_shifts": "There are no published days yet.",
         "no_passengers": "There are no passengers yet.", "seats": "Seats", "project_address": "Address",
@@ -158,7 +160,8 @@ COPY = {
         "clear_selection": "Wyczyść wybór", "month_shifts": "Zmiany w tym miesiącu", "published": "Opublikowano",
         "break": "Przerwa, minuty", "publish": "Opublikuj wybrane dni", "release": "Zwolnij wybrane dni",
         "passengers": "Pasażerowie", "add_passenger": "Dodaj pasażera", "scope": "Zastosuj do",
-        "future": "Wszystkich przyszłych opublikowanych dni", "selected": "Tylko wybranych dni", "remove": "Usuń",
+        "future": "Całego grafiku ekipy", "selected": "Tylko wybranych dni",
+        "select_dates_hint": "Wybierz daty w kalendarzu.", "remove": "Usuń",
         "replace_driver": "Zmień kierowcę", "new_driver": "Nowy kierowca z pasażerów", "replace": "Zmień",
         "no_projects": "Nie ma jeszcze aktywnych projektów.", "no_shifts": "Nie ma jeszcze opublikowanych dni.",
         "no_passengers": "Nie ma jeszcze pasażerów.", "seats": "Miejsca", "project_address": "Adres",
@@ -187,7 +190,8 @@ COPY = {
         "clear_selection": "Зняти вибір", "month_shifts": "Зміни цього місяця", "published": "Опубліковано",
         "break": "Перерва, хвилин", "publish": "Опублікувати вибрані дні", "release": "Звільнити вибрані дні",
         "passengers": "Пасажири", "add_passenger": "Додати пасажира", "scope": "Застосувати до",
-        "future": "Усіх майбутніх опублікованих днів", "selected": "Лише вибраних днів", "remove": "Виключити",
+        "future": "Усього графіка екіпажу", "selected": "Лише вибраних днів",
+        "select_dates_hint": "Виберіть дати в календарі.", "remove": "Виключити",
         "replace_driver": "Змінити водія", "new_driver": "Новий водій з пасажирів", "replace": "Змінити",
         "no_projects": "Активних проєктів поки немає.", "no_shifts": "Опублікованих днів поки немає.",
         "no_passengers": "Пасажирів поки немає.", "seats": "Місця", "project_address": "Адреса",
@@ -592,13 +596,24 @@ def _handle_action(request, *, organization, project, copy):
             public_id=request.POST.get("connection_id"),
         )
         scope = request.POST.get("scope") or PASSENGER_SCOPE_FUTURE
+        effective_on = parse_date(request.POST.get("effective_on") or "") or timezone.localdate()
+        if action == "passenger_add" and scope == PASSENGER_SCOPE_FUTURE:
+            # "Entire crew schedule" starts with the crew's first resource
+            # assignment, so existing published days and later days use the
+            # same passenger roster without requiring calendar selection.
+            effective_on = (
+                crew.resource_assignments.order_by("starts_on")
+                .values_list("starts_on", flat=True)
+                .first()
+                or effective_on
+            )
         kwargs = {
             "actor": request.user,
             "crew": crew,
             "connection": connection,
             "scope": scope,
             "selected_dates": _parse_dates(request),
-            "effective_on": parse_date(request.POST.get("effective_on")) or timezone.localdate(),
+            "effective_on": effective_on,
         }
         if action == "passenger_add":
             assign_project_crew_passenger(**kwargs)
