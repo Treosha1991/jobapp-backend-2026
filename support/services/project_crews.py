@@ -393,6 +393,13 @@ def project_crew_substitute_driver_candidates(
     """
 
     dates = _normalize_dates(work_dates)
+    past_dates = [work_date for work_date in dates if work_date < timezone.localdate()]
+    if past_dates:
+        _operation_error(
+            "substitution_date_in_past",
+            "A substitute driver cannot be assigned to a past crew day.",
+            work_dates=[item.isoformat() for item in past_dates],
+        )
     resources_by_date = {
         work_date: _resource_for_date(crew=crew, work_date=work_date)
         for work_date in dates
@@ -530,6 +537,45 @@ def _restore_replaced_substitute_membership(*, substitution, actor):
         member.delete()
 
 
+def _close_active_substitutions(
+    *,
+    crew,
+    work_dates,
+    actor,
+    state,
+    substitute_connection=None,
+):
+    dates = sorted(set(work_dates))
+    if not dates:
+        return []
+    queryset = (
+        ProjectCrewDriverSubstitution.objects.select_for_update()
+        .select_related("substitute_driver_connection", "crew")
+        .filter(
+            crew=crew,
+            work_date__in=dates,
+            state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+        )
+    )
+    if substitute_connection is not None:
+        queryset = queryset.filter(
+            substitute_driver_connection=substitute_connection,
+        )
+    closed = list(queryset.order_by("work_date", "id"))
+    ended_at = timezone.now()
+    for substitution in closed:
+        _restore_replaced_substitute_membership(
+            substitution=substitution,
+            actor=actor,
+        )
+        substitution.state = state
+        substitution.ended_by = actor
+        substitution.ended_at = ended_at
+        substitution.full_clean()
+        substitution.save(update_fields=("state", "ended_by", "ended_at"))
+    return closed
+
+
 @transaction.atomic
 def assign_project_crew_substitute_driver(
     *,
@@ -586,24 +632,16 @@ def assign_project_crew_substitute_driver(
             work_dates=[item.isoformat() for item in missing_dates],
         )
 
-    now = timezone.now()
-    active_substitutions = list(
-        ProjectCrewDriverSubstitution.objects.select_for_update()
-        .select_related("substitute_driver_connection", "crew")
-        .filter(
+    active_substitutions = _close_active_substitutions(
+        crew=crew,
+        work_dates=ProjectCrewDriverSubstitution.objects.filter(
             crew=crew,
             state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
             work_date__gte=timezone.localdate(),
-        )
-        .order_by("work_date", "id")
+        ).values_list("work_date", flat=True),
+        actor=actor,
+        state=ProjectCrewDriverSubstitution.STATE_REPLACED,
     )
-    for previous in active_substitutions:
-        _restore_replaced_substitute_membership(substitution=previous, actor=actor)
-        previous.state = ProjectCrewDriverSubstitution.STATE_REPLACED
-        previous.ended_by = actor
-        previous.ended_at = now
-        previous.full_clean()
-        previous.save(update_fields=("state", "ended_by", "ended_at"))
 
     created = []
     for work_date in dates:
@@ -896,6 +934,12 @@ def release_project_crew_shifts(*, actor, crew, work_dates):
         .filter(crew=crew, work_date__in=dates)
         .order_by("work_date")
     )
+    _close_active_substitutions(
+        crew=crew,
+        work_dates=[shift.work_date for shift in shifts],
+        actor=actor,
+        state=ProjectCrewDriverSubstitution.STATE_CANCELLED,
+    )
     changed = []
     for shift in shifts:
         if shift.state == ProjectCrewShift.STATE_CANCELLED:
@@ -1072,6 +1116,13 @@ def remove_project_crew_passenger(
             connection=connection,
             work_date__in=dates,
         ).delete()
+    _close_active_substitutions(
+        crew=crew,
+        work_dates=dates,
+        actor=actor,
+        state=ProjectCrewDriverSubstitution.STATE_CANCELLED,
+        substitute_connection=connection,
+    )
     removed_count, _ = ProjectCrewShiftMember.objects.filter(
         shift__in=shifts,
         connection=connection,
@@ -1141,6 +1192,13 @@ def release_project_crew_member_days(*, actor, connection, work_dates):
             defaults={"created_by": actor},
         )
         absence.full_clean()
+        _close_active_substitutions(
+            crew=membership.shift.crew,
+            work_dates=[membership.shift.work_date],
+            actor=actor,
+            state=ProjectCrewDriverSubstitution.STATE_CANCELLED,
+            substitute_connection=connection,
+        )
     ProjectCrewShiftMember.objects.filter(
         pk__in=[item.pk for item in memberships]
     ).delete()
@@ -1190,11 +1248,21 @@ def mark_worker_schedule_days_off(*, actor, connection, work_dates):
     ).delete()
 
     memberships = list(
-        ProjectCrewShiftMember.objects.select_for_update().filter(
+        ProjectCrewShiftMember.objects.select_for_update().select_related(
+            "shift__crew"
+        ).filter(
             connection=connection,
             shift__work_date__in=dates,
         )
     )
+    for membership in memberships:
+        _close_active_substitutions(
+            crew=membership.shift.crew,
+            work_dates=[membership.shift.work_date],
+            actor=actor,
+            state=ProjectCrewDriverSubstitution.STATE_CANCELLED,
+            substitute_connection=connection,
+        )
     if memberships:
         ProjectCrewShiftMember.objects.filter(
             pk__in=[item.pk for item in memberships]
@@ -1254,6 +1322,18 @@ def replace_project_crew_driver(
         )
     if current.driver_connection_id == new_driver.id:
         return current
+
+    future_substitution_dates = ProjectCrewDriverSubstitution.objects.filter(
+        crew=crew,
+        state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+        work_date__gte=effective_on,
+    ).values_list("work_date", flat=True)
+    _close_active_substitutions(
+        crew=crew,
+        work_dates=future_substitution_dates,
+        actor=actor,
+        state=ProjectCrewDriverSubstitution.STATE_CANCELLED,
+    )
 
     is_passenger = ProjectCrewPassenger.objects.filter(
         crew=crew,
