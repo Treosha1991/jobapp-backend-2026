@@ -285,6 +285,17 @@ class ProjectFirstResetCommandTests(TestCase):
             f"RESET-{self.organization.public_id}",
         )
 
+        destructive_plan = build_project_first_reset_plan(
+            self.organization,
+            include_work_time=True,
+        )
+        self.assertEqual(destructive_plan["delete_counts"]["work_time_entries"], 1)
+        self.assertNotIn("work_time_entries", destructive_plan["preserve_counts"])
+        self.assertEqual(
+            destructive_plan["confirmation"],
+            f"RESET-{self.organization.public_id}-WITH-WORK-TIME",
+        )
+
     def test_apply_requires_server_side_guard_and_exact_confirmation(self):
         confirmation = f"RESET-{self.organization.public_id}"
         with self.assertRaisesMessage(
@@ -336,3 +347,18 @@ class ProjectFirstResetCommandTests(TestCase):
                 action="project_first.staging_reset",
             ).exists()
         )
+
+    @override_settings(SUPPORT_PROJECT_FIRST_RESET_ALLOWED=True)
+    def test_apply_can_explicitly_delete_factual_work_time(self):
+        output = self._command(
+            apply=True,
+            include_work_time=True,
+            confirm=f"RESET-{self.organization.public_id}-WITH-WORK-TIME",
+            actor_email=self.operator.email,
+        )
+
+        self.assertIn("RESET COMPLETE", output)
+        self.assertEqual(WorkTimeEntry.objects.count(), 0)
+        self.assertEqual(SupportConnection.objects.count(), 1)
+        self.assertEqual(HousingAssignment.objects.count(), 1)
+        self.assertEqual(Vehicle.objects.count(), 2)

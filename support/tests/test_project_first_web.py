@@ -155,9 +155,42 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertTemplateUsed(response, "support/project_first_reset_plan.html")
         self.assertContains(response, "Staging reset preview")
         self.assertContains(response, "Projects")
-        self.assertContains(response, f"RESET-{self.organization.public_id}")
+        self.assertContains(response, f"RESET-{self.organization.public_id}-WITH-WORK-TIME")
         self.assertEqual(WorkProject.objects.filter(organization=self.organization).count(), 1)
         self.assertEqual(Vehicle.objects.filter(organization=self.organization).count(), 1)
+
+    def test_reset_plan_post_is_blocked_without_server_guard(self):
+        self.owner.is_staff = True
+        self.owner.save(update_fields=["is_staff"])
+
+        response = self.client.post(
+            self._reset_plan_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "confirmation": f"RESET-{self.organization.public_id}-WITH-WORK-TIME",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(WorkProject.objects.filter(organization=self.organization).count(), 1)
+
+    @override_settings(SUPPORT_PROJECT_FIRST_RESET_ALLOWED=True)
+    def test_owner_staff_can_apply_exact_confirmed_reset(self):
+        self.owner.is_staff = True
+        self.owner.save(update_fields=["is_staff"])
+
+        response = self.client.post(
+            self._reset_plan_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "confirmation": f"RESET-{self.organization.public_id}-WITH-WORK-TIME",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(WorkProject.objects.filter(organization=self.organization).count(), 0)
+        self.assertEqual(Vehicle.objects.filter(organization=self.organization).count(), 1)
+        self.assertEqual(SupportConnection.objects.filter(organization=self.organization).count(), 3)
 
     def test_optional_schedule_dates_remain_empty_until_selected(self):
         self._create_crew()

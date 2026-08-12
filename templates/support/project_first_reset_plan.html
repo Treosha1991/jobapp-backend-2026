@@ -40,5 +40,13 @@
     </section>
   </div>
   <div class="reset-confirm">{{ pf.confirmation_phrase }}<code>{{ confirmation }}</code></div>
+  {% if can_apply_reset %}
+    <form method="post" style="margin-top:14px" onsubmit="return confirm('{{ pf.apply_reset|escapejs }}?');">
+      {% csrf_token %}
+      <input type="hidden" name="organization" value="{{ organization.public_id }}">
+      <input type="hidden" name="confirmation" value="{{ confirmation }}">
+      <button class="jh-btn danger" type="submit">{{ pf.apply_reset }}</button>
+    </form>
+  {% endif %}
 </section>
 {% endblock %}

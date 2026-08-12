@@ -9,6 +9,7 @@ from calendar import monthrange
 from datetime import date
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Prefetch, Q
@@ -44,7 +45,11 @@ from .services.project_crews import (
     remove_project_crew_passenger,
     replace_project_crew_driver,
 )
-from .services.project_first_reset import build_project_first_reset_plan
+from .services.project_first_reset import (
+    ProjectFirstResetError,
+    build_project_first_reset_plan,
+    execute_project_first_reset,
+)
 
 
 COPY = {
@@ -99,6 +104,10 @@ COPY = {
         "preserve_group": "Будет сохранено",
         "confirmation_phrase": "Фраза подтверждения",
         "report_updated": "Отчёт рассчитан по текущему состоянию базы данных.",
+        "apply_reset": "Выполнить подтверждённую очистку",
+        "reset_complete": "Очистка завершена. Работники, жильё и автопарк сохранены.",
+        "reset_guard_disabled": "Серверная защита очистки выключена.",
+        "reset_confirmation_invalid": "Фраза подтверждения не совпадает.",
     },
     "en": {
         "preview": "New workspace · preview",
@@ -123,6 +132,9 @@ COPY = {
         "delete_group": "Will be deleted", "preserve_group": "Will be preserved",
         "confirmation_phrase": "Confirmation phrase",
         "report_updated": "The report was calculated from the current database state.",
+        "apply_reset": "Apply confirmed reset", "reset_complete": "Reset complete. Workers, housing and fleet were preserved.",
+        "reset_guard_disabled": "The server-side reset guard is disabled.",
+        "reset_confirmation_invalid": "The confirmation phrase does not match.",
     },
     "pl": {
         "preview": "Nowy panel · tryb testowy", "title": "Projekty i ekipy",
@@ -146,6 +158,9 @@ COPY = {
         "delete_group": "Zostanie usunięte", "preserve_group": "Zostanie zachowane",
         "confirmation_phrase": "Fraza potwierdzająca",
         "report_updated": "Raport obliczono na podstawie bieżącego stanu bazy danych.",
+        "apply_reset": "Wykonaj potwierdzone czyszczenie", "reset_complete": "Czyszczenie zakończone. Pracownicy, mieszkania i flota zostały zachowane.",
+        "reset_guard_disabled": "Serwerowa blokada czyszczenia jest wyłączona.",
+        "reset_confirmation_invalid": "Fraza potwierdzająca nie pasuje.",
     },
     "uk": {
         "preview": "Новий кабінет · тестовий режим", "title": "Проєкти та екіпажі",
@@ -169,6 +184,9 @@ COPY = {
         "delete_group": "Буде видалено", "preserve_group": "Буде збережено",
         "confirmation_phrase": "Фраза підтвердження",
         "report_updated": "Звіт розраховано за поточним станом бази даних.",
+        "apply_reset": "Виконати підтверджене очищення", "reset_complete": "Очищення завершено. Працівники, житло й автопарк збережено.",
+        "reset_guard_disabled": "Серверний захист очищення вимкнено.",
+        "reset_confirmation_invalid": "Фраза підтвердження не збігається.",
     },
 }
 
@@ -554,7 +572,33 @@ def project_first_reset_plan(request):
     copy = _copy(request)
     lang = get_lang(request)
     object_copy = RESET_OBJECT_COPY.get(lang, RESET_OBJECT_COPY["ru"])
-    plan = build_project_first_reset_plan(organization)
+    include_work_time = True
+    plan = build_project_first_reset_plan(
+        organization,
+        include_work_time=include_work_time,
+    )
+    if request.method == "POST":
+        if not membership.is_owner or not request.user.is_staff:
+            raise Http404("project_first_reset_not_available")
+        if not getattr(settings, "SUPPORT_PROJECT_FIRST_RESET_ALLOWED", False):
+            messages.error(request, copy["reset_guard_disabled"])
+        elif request.POST.get("confirmation", "") != plan["confirmation"]:
+            messages.error(request, copy["reset_confirmation_invalid"])
+        else:
+            try:
+                execute_project_first_reset(
+                    organization=organization,
+                    actor=request.user,
+                    include_work_time=include_work_time,
+                )
+            except ProjectFirstResetError as error:
+                messages.error(request, str(error))
+            else:
+                messages.success(request, copy["reset_complete"])
+        return redirect(
+            f"{reverse('support:project-first-reset-plan')}?"
+            f"{urlencode({'organization': organization.public_id})}"
+        )
     context = {
         "pf": copy,
         "organization": organization,
@@ -570,6 +614,11 @@ def project_first_reset_plan(request):
             for key, count in plan["preserve_counts"].items()
         ],
         "confirmation": plan["confirmation"],
+        "can_apply_reset": (
+            membership.is_owner
+            and request.user.is_staff
+            and getattr(settings, "SUPPORT_PROJECT_FIRST_RESET_ALLOWED", False)
+        ),
         "project_list_url": _workspace_url(organization),
     }
     return render(request, "support/project_first_reset_plan.html", context)

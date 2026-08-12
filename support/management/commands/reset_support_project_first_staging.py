@@ -1,14 +1,11 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
 
 from support.models import SupportOrganization
-from support.services.audit import record_audit_event
 from support.services.project_first_reset import (
     build_project_first_reset_plan,
-    preserved_counts,
-    reset_target_querysets,
+    execute_project_first_reset,
 )
 
 
@@ -20,6 +17,11 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser):
+        parser.add_argument(
+            "--include-work-time",
+            action="store_true",
+            help="Also delete factual work-time entries for this staging organization.",
+        )
         parser.add_argument(
             "--organization",
             required=True,
@@ -49,8 +51,11 @@ class Command(BaseCommand):
             raise CommandError("support_organization_not_found")
 
         actor = self._resolve_actor(options["actor_email"])
-        plan = build_project_first_reset_plan(organization)
-        targets = reset_target_querysets(organization)
+        include_work_time = options["include_work_time"]
+        plan = build_project_first_reset_plan(
+            organization,
+            include_work_time=include_work_time,
+        )
         preserved = plan["preserve_counts"]
         target_counts = plan["delete_counts"]
 
@@ -76,44 +81,17 @@ class Command(BaseCommand):
         if not getattr(settings, "SUPPORT_PROJECT_FIRST_RESET_ALLOWED", False):
             raise CommandError("support_project_first_reset_not_allowed")
 
-        expected_confirmation = f"RESET-{organization.public_id}"
+        expected_confirmation = plan["confirmation"]
         if options["confirm"] != expected_confirmation:
             raise CommandError(
                 "confirmation_mismatch: expected " + expected_confirmation
             )
 
-        with transaction.atomic():
-            # Ordered from the most dependent operational records toward the
-            # project/worksite roots.  Vehicle and housing registries are never
-            # included in this list.
-            for queryset in targets.values():
-                queryset.delete()
-
-            after = preserved_counts(organization)
-            if after != preserved:
-                raise CommandError("preserved_data_count_changed; transaction_rolled_back")
-
-            remaining = {
-                label: queryset.count()
-                for label, queryset in reset_target_querysets(organization).items()
-                if queryset.exists()
-            }
-            if remaining:
-                raise CommandError(
-                    "reset_targets_remain; transaction_rolled_back: "
-                    + ", ".join(f"{key}={value}" for key, value in remaining.items())
-                )
-
-            record_audit_event(
-                organization=organization,
-                actor=actor,
-                action="project_first.staging_reset",
-                target=organization,
-                details={
-                    "deleted_counts": dict(target_counts),
-                    "preserved_counts": dict(preserved),
-                },
-            )
+        execute_project_first_reset(
+            organization=organization,
+            actor=actor,
+            include_work_time=include_work_time,
+        )
 
         self.stdout.write(
             self.style.SUCCESS(
