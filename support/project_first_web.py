@@ -32,6 +32,7 @@ from .models import (
     ProjectCrewShiftMember,
     SupportConnection,
     Vehicle,
+    WorkerScheduleDayOff,
     WorkProject,
 )
 from .permissions import has_unrestricted_worker_access, worker_connection_queryset_for
@@ -91,6 +92,7 @@ COPY = {
         "selected": "Только к выбранным дням",
         "select_dates_hint": "Выделите даты в календаре.",
         "absent_dates": "Отсутствует",
+        "day_off": "Выходной",
         "remove": "Исключить",
         "replace_driver": "Сменить водителя",
         "new_driver": "Новый водитель из пассажиров",
@@ -135,6 +137,7 @@ COPY = {
         "future": "Entire crew schedule", "selected": "Selected days only",
         "select_dates_hint": "Select dates in the calendar.", "remove": "Remove",
         "absent_dates": "Absent",
+        "day_off": "Day off",
         "replace_driver": "Replace driver", "new_driver": "New driver from passengers", "replace": "Replace",
         "no_projects": "There are no active projects yet.", "no_shifts": "There are no published days yet.",
         "no_passengers": "There are no passengers yet.", "seats": "Seats", "project_address": "Address",
@@ -166,6 +169,7 @@ COPY = {
         "future": "Całego grafiku ekipy", "selected": "Tylko wybranych dni",
         "select_dates_hint": "Wybierz daty w kalendarzu.", "remove": "Usuń",
         "absent_dates": "Nieobecny/a",
+        "day_off": "Dzień wolny",
         "replace_driver": "Zmień kierowcę", "new_driver": "Nowy kierowca z pasażerów", "replace": "Zmień",
         "no_projects": "Nie ma jeszcze aktywnych projektów.", "no_shifts": "Nie ma jeszcze opublikowanych dni.",
         "no_passengers": "Nie ma jeszcze pasażerów.", "seats": "Miejsca", "project_address": "Adres",
@@ -197,6 +201,7 @@ COPY = {
         "future": "Усього графіка екіпажу", "selected": "Лише вибраних днів",
         "select_dates_hint": "Виберіть дати в календарі.", "remove": "Виключити",
         "absent_dates": "Відсутній/я",
+        "day_off": "Вихідний",
         "replace_driver": "Змінити водія", "new_driver": "Новий водій з пасажирів", "replace": "Змінити",
         "no_projects": "Активних проєктів поки немає.", "no_shifts": "Опублікованих днів поки немає.",
         "no_passengers": "Пасажирів поки немає.", "seats": "Місця", "project_address": "Адреса",
@@ -454,6 +459,19 @@ def _project_context(request, organization, project, *, selected_month):
     used_driver_ids.update(
         legacy_resources.values_list("driver_connection_id", flat=True)
     )
+    crew_shift_dates = {
+        shift.work_date
+        for crew in crews
+        for shift in crew.calendar_shifts.all()
+    }
+    days_off_by_connection = {}
+    if crew_shift_dates:
+        for connection_id, work_date in WorkerScheduleDayOff.objects.filter(
+            organization=organization,
+            connection__in=connections,
+            work_date__in=crew_shift_dates,
+        ).values_list("connection_id", "work_date"):
+            days_off_by_connection.setdefault(connection_id, set()).add(work_date)
     for crew in crews:
         crew.current_resource = next(
             (
@@ -464,6 +482,16 @@ def _project_context(request, organization, project, *, selected_month):
         )
         if crew.current_resource:
             crew.current_resource.driver_name = _display_name(crew.current_resource.driver_connection)
+            driver_days_off = sorted(
+                days_off_by_connection.get(
+                    crew.current_resource.driver_connection_id,
+                    set(),
+                )
+                & {shift.work_date for shift in crew.calendar_shifts.all()}
+            )
+            crew.current_resource.day_off_dates_label = ", ".join(
+                item.strftime("%d.%m") for item in driver_days_off
+            )
         crew.open_passengers = list(crew.passenger_assignments.all())
         roster_by_connection = {
             passenger.connection_id: passenger for passenger in crew.open_passengers
@@ -491,6 +519,10 @@ def _project_context(request, organization, project, *, selected_month):
                 else member_connections[connection_id]
             )
             dates = sorted(set(member_dates.get(connection_id, [])))
+            day_off_dates = sorted(
+                days_off_by_connection.get(connection_id, set())
+                & {shift.work_date for shift in crew.calendar_shifts.all()}
+            )
             excluded_dates = []
             roster_entry = roster_by_connection.get(connection_id)
             if roster_entry is not None:
@@ -504,6 +536,7 @@ def _project_context(request, organization, project, *, selected_month):
                         or shift.work_date <= roster_entry.ends_on
                     )
                     and shift.work_date not in assigned_dates
+                    and shift.work_date not in day_off_dates
                 ]
             crew.display_passengers.append(
                 {
@@ -519,6 +552,10 @@ def _project_context(request, organization, project, *, selected_month):
                     "excluded_dates": excluded_dates,
                     "excluded_dates_label": ", ".join(
                         item.strftime("%d.%m") for item in excluded_dates
+                    ),
+                    "day_off_dates": day_off_dates,
+                    "day_off_dates_label": ", ".join(
+                        item.strftime("%d.%m") for item in day_off_dates
                     ),
                 }
             )

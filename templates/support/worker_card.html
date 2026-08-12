@@ -53,6 +53,7 @@
   .worker-calendar-day.has-conflict { border-color:rgba(255,107,107,.95); background:rgba(255,107,107,.10); }
   .worker-calendar-day.has-crew-override::after { content:"↺"; position:absolute; right:5px; bottom:4px; color:#6ec7ff; font-size:11px; font-weight:900; }
   .worker-calendar-day.has-no-driver::before { content:""; position:absolute; right:5px; top:5px; width:7px; height:7px; border-radius:50%; background:#ff6b6b; box-shadow:0 0 0 2px rgba(255,107,107,.18),0 0 8px rgba(255,107,107,.8); }
+  .worker-calendar-day.has-day-off { border-color:rgba(141,126,255,.9); background:rgba(141,126,255,.14); }
   .worker-calendar-day.has-other-template:not(.is-selected-template) { opacity:.48; filter:saturate(.55); }
   .worker-calendar-day.is-selected-template { border-color:#62f59b; background:rgba(24,223,103,.17); box-shadow:inset 0 0 0 2px rgba(24,223,103,.72),0 0 18px rgba(24,223,103,.12); }
   .worker-calendar-day.is-selected { border-color:#6ec7ff; background:rgba(110,199,255,.17); box-shadow:inset 0 0 0 2px rgba(110,199,255,.95); transform:translateY(-1px); }
@@ -79,6 +80,7 @@
   .worker-calendar-legend .published { border-color:var(--green); background:rgba(24,223,103,.16); }
   .worker-calendar-legend .draft { border-color:#ffb047; background:rgba(255,176,71,.16); }
   .worker-calendar-legend .conflict { border-color:#ff6b6b; background:rgba(255,107,107,.16); }
+  .worker-calendar-legend .day-off { border-color:#8d7eff; background:rgba(141,126,255,.18); }
   .worker-schedule-details { margin-top:13px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.18); }
   .worker-schedule-details > summary { padding:11px 13px; cursor:pointer; color:#ccecff; font-size:12px; font-weight:900; }
   .worker-schedule-details-content { padding:0 12px 12px; }
@@ -524,9 +526,9 @@
             <div class="worker-calendar">
               {% for day in calendar_days %}
                 {% if day %}
-                  {% if can_operate %}<label data-calendar-day data-calendar-date="{{ day.date|date:'Y-m-d' }}" data-calendar-crew-url="{{ day.transport_url|default:'' }}" class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
+                  {% if can_operate %}<label data-calendar-day data-calendar-date="{{ day.date|date:'Y-m-d' }}" data-calendar-crew-url="{{ day.transport_url|default:'' }}" class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.has_day_off %} has-day-off{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.has_day_off %} has-day-off{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
                     <span class="worker-calendar-number">{{ day.date|date:"j" }}{% if day.has_conflict %}<span class="worker-calendar-conflict-mark">!</span>{% endif %}</span>
-                    {% if day.display_shift %}<span class="worker-calendar-time{% if day.display_shift.state == 'draft' %} is-preview{% endif %}">{{ day.display_shift.starts_at|time:"H:i" }}–{{ day.display_shift.ends_at|time:"H:i" }}</span>{% endif %}
+                    {% if day.has_day_off %}<span class="worker-calendar-time">{{ employer_t.support_worker_schedule_day_off }}</span>{% elif day.display_shift %}<span class="worker-calendar-time{% if day.display_shift.state == 'draft' %} is-preview{% endif %}">{{ day.display_shift.starts_at|time:"H:i" }}–{{ day.display_shift.ends_at|time:"H:i" }}</span>{% endif %}
                   </span>{% if can_operate %}</label>{% else %}</div>{% endif %}
                 {% else %}<div class="worker-calendar-empty"></div>{% endif %}
               {% endfor %}
@@ -554,13 +556,14 @@
             {% if can_operate %}
               <div class="worker-calendar-actions" data-calendar-actions hidden>
                 <div class="worker-calendar-selection"><span>{{ employer_t.support_worker_schedule_selected_count }}: <strong data-selected-count>0</strong></span><button class="jh-btn" type="button" data-clear-selection>{{ employer_t.support_worker_schedule_clear_selection }}</button></div>
-                <div class="jh-actions"><button class="jh-btn danger" name="action" value="scheduled_shifts_clear" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_bulk_clear }}</button></div>
+                <div class="jh-actions"><button class="jh-btn" name="action" value="scheduled_shifts_day_off" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_mark_day_off }}</button><button class="jh-btn danger" name="action" value="scheduled_shifts_clear" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_bulk_clear }}</button></div>
               </div>
             {% endif %}
             <div class="worker-calendar-legend">
               <span><i class="published"></i>{{ employer_t.support_worker_state_published }}</span>
               <span><i class="draft"></i>{{ employer_t.support_worker_state_draft }}</span>
               <span><i class="conflict"></i>{{ employer_t.support_worker_schedule_overlap }}</span>
+              <span><i class="day-off"></i>{{ employer_t.support_worker_schedule_day_off }}</span>
             </div>
           </div>
         {% if can_operate %}</form>{% else %}</div>{% endif %}

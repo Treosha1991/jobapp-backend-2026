@@ -138,7 +138,10 @@ from .services.organizations import (
     grant_worker_access_scope,
     revoke_worker_access_scope,
 )
-from .services.project_crews import release_project_crew_member_days
+from .services.project_crews import (
+    mark_worker_schedule_days_off,
+    release_project_crew_member_days,
+)
 from .services.conversations import (
     mark_conversation_read,
     require_conversation_access,
@@ -1274,6 +1277,21 @@ def _worker_card_operation(request, *, snapshot):
                 else:
                     cancel_scheduled_shift(actor=request.user, shift=shift)
             messages.success(request, tr(request, "support_worker_quick_shifts_cleared"))
+        elif action == "scheduled_shifts_day_off":
+            work_dates = sorted(
+                {_operation_date(value) for value in request.POST.getlist("work_dates")}
+            )
+            if not work_dates:
+                raise ValidationError({"work_dates": "schedule_dates_required"})
+            mark_worker_schedule_days_off(
+                actor=request.user,
+                connection=connection,
+                work_dates=work_dates,
+            )
+            messages.success(
+                request,
+                tr(request, "support_worker_schedule_days_off_saved"),
+            )
         elif action == "crew_schedule_override":
             work_dates = sorted(
                 {_operation_date(value) for value in request.POST.getlist("work_dates")}

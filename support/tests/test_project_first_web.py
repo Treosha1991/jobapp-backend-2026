@@ -546,6 +546,67 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertContains(project_page, project_page.context["pf"]["absent_dates"])
         self.assertContains(project_page, "12.08")
 
+    def test_worker_marks_day_off_and_project_crew_labels_it(self):
+        crew = self._create_crew()
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "shifts_publish",
+                "crew_id": str(crew.public_id),
+                "work_dates": ["2026-08-12", "2026-08-13"],
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:45",
+                "break_minutes": "30",
+            },
+        )
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "passenger_add",
+                "crew_id": str(crew.public_id),
+                "connection_id": str(self.passenger.public_id),
+                "scope": "future",
+                "effective_on": "2026-08-11",
+            },
+        )
+
+        worker_page = self.client.get(self._worker_url(self.passenger))
+        self.assertContains(worker_page, 'value="scheduled_shifts_day_off"')
+        response = self.client.post(
+            self._worker_url(self.passenger),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "scheduled_shifts_day_off",
+                "work_dates": ["2026-08-12"],
+                "return_tab": "work_transport",
+                "return_month": "2026-08",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        worker_page = self.client.get(self._worker_url(self.passenger))
+        day = next(
+            item
+            for item in worker_page.context["calendar_days"]
+            if item and item["date"] == date(2026, 8, 12)
+        )
+        self.assertTrue(day["has_day_off"])
+        self.assertIsNone(day["display_shift"])
+        self.assertContains(worker_page, "has-day-off")
+
+        project_page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        displayed = next(
+            item
+            for item in project_page.context["crews"][0].display_passengers
+            if item["connection"].pk == self.passenger.pk
+        )
+        self.assertEqual(displayed["day_off_dates"], [date(2026, 8, 12)])
+        self.assertEqual(displayed["excluded_dates"], [])
+        self.assertContains(project_page, project_page.context["pf"]["day_off"])
+        self.assertContains(project_page, "12.08")
+
     def test_passenger_picker_excludes_current_driver_and_existing_passengers(self):
         crew = self._create_crew()
         self.client.post(

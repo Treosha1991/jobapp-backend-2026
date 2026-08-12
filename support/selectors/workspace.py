@@ -37,6 +37,7 @@ from support.models import (
     TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
+    WorkerScheduleDayOff,
     WorkerProjectAssignment,
     WorkProject,
     Worksite,
@@ -1007,6 +1008,13 @@ def worker_card_snapshot(
                 "project_crew_member__shift__members__connection__candidate",
             ).order_by("work_date", "starts_at", "id")
         )
+        schedule_days_off = set(
+            WorkerScheduleDayOff.objects.filter(
+                organization=organization,
+                connection=connection,
+                work_date__range=(month_start, month_end),
+            ).values_list("work_date", flat=True)
+        )
         for shift in scheduled_shifts:
             shift.is_preview = False
             shift.has_conflict = False
@@ -1076,6 +1084,7 @@ def worker_card_snapshot(
                     for item in day_shifts
                 ),
                 "is_today": current_date == timezone.localdate(),
+                "has_day_off": current_date in schedule_days_off,
             }
             if (
                 display_shift is not None

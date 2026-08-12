@@ -21,6 +21,7 @@ from support.models import (
     ScheduledWorkShift,
     SupportConnection,
     Vehicle,
+    WorkerScheduleDayOff,
     WorkProject,
 )
 from support.permission_codes import SCHEDULE_MANAGE, TRANSPORT_MANAGE
@@ -217,6 +218,16 @@ def _resolve_passenger_conflicts(*, connection, shift):
 
 
 def _add_passenger_to_shift(*, actor, shift, connection):
+    if WorkerScheduleDayOff.objects.filter(
+        connection=connection,
+        work_date=shift.work_date,
+    ).exists():
+        _operation_error(
+            "worker_day_off",
+            f"The selected worker has a day off on {shift.work_date.isoformat()}.",
+            work_date=shift.work_date.isoformat(),
+            worker=str(connection.public_id),
+        )
     existing = shift.members.filter(connection=connection).first()
     if existing:
         if existing.role == ProjectCrewShiftMember.ROLE_DRIVER:
@@ -254,7 +265,21 @@ def _sync_shift_members_for_new_shift(*, actor, shift, resource):
             "The crew driver does not have a confirmed driving licence.",
             worker=str(resource.driver_connection.public_id),
         )
-    roster = list(_active_roster_for_date(crew=shift.crew, work_date=shift.work_date, lock=True))
+    day_off_connection_ids = set(
+        WorkerScheduleDayOff.objects.filter(
+            organization=shift.crew.organization,
+            work_date=shift.work_date,
+        ).values_list("connection_id", flat=True)
+    )
+    roster = [
+        item
+        for item in _active_roster_for_date(
+            crew=shift.crew,
+            work_date=shift.work_date,
+            lock=True,
+        )
+        if item.connection_id not in day_off_connection_ids
+    ]
     if len(roster) + 1 > resource.vehicle.seat_capacity:
         _operation_error(
             "crew_capacity_exceeded",
@@ -266,18 +291,49 @@ def _sync_shift_members_for_new_shift(*, actor, shift, resource):
             occupied=len(roster) + 1,
             capacity=resource.vehicle.seat_capacity,
         )
-    driver = ProjectCrewShiftMember(
-        shift=shift,
-        connection=resource.driver_connection,
-        role=ProjectCrewShiftMember.ROLE_DRIVER,
-        vehicle=resource.vehicle,
-        created_by=actor,
-    )
-    driver.full_clean()
-    driver.save()
-    _sync_member_worker_calendar(member=driver, actor=actor)
+    driver_is_off = resource.driver_connection_id in day_off_connection_ids
+    if not driver_is_off:
+        driver = ProjectCrewShiftMember(
+            shift=shift,
+            connection=resource.driver_connection,
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+            vehicle=resource.vehicle,
+            created_by=actor,
+        )
+        driver.full_clean()
+        driver.save()
+        _sync_member_worker_calendar(member=driver, actor=actor)
     for roster_entry in roster:
-        _add_passenger_to_shift(actor=actor, shift=shift, connection=roster_entry.connection)
+        if driver_is_off:
+            _resolve_passenger_conflicts(
+                connection=roster_entry.connection,
+                shift=shift,
+            )
+            member = ProjectCrewShiftMember(
+                shift=shift,
+                connection=roster_entry.connection,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+                created_by=actor,
+            )
+            member.full_clean()
+            member.save()
+            _sync_member_worker_calendar(member=member, actor=actor)
+        else:
+            _add_passenger_to_shift(
+                actor=actor,
+                shift=shift,
+                connection=roster_entry.connection,
+            )
+
+
+def _remove_day_off_members(*, shift):
+    """Keep worker-wide days off authoritative when a crew day is republished."""
+
+    day_off_connection_ids = WorkerScheduleDayOff.objects.filter(
+        organization=shift.crew.organization,
+        work_date=shift.work_date,
+    ).values_list("connection_id", flat=True)
+    shift.members.filter(connection_id__in=day_off_connection_ids).delete()
 
 
 def _validate_existing_shift_conflicts(*, shift):
@@ -467,6 +523,7 @@ def publish_project_crew_shifts(
                     "updated_at",
                 )
             )
+            _remove_day_off_members(shift=shift)
             if not shift.members.exists():
                 resource = _resource_for_date(crew=crew, work_date=work_date, lock=True)
                 _sync_shift_members_for_new_shift(actor=actor, shift=shift, resource=resource)
@@ -597,6 +654,11 @@ def assign_project_crew_passenger(
 
     added_count = 0
     for shift in shifts:
+        if scope == PASSENGER_SCOPE_FUTURE and WorkerScheduleDayOff.objects.filter(
+            connection=connection,
+            work_date=shift.work_date,
+        ).exists():
+            continue
         _, created = _add_passenger_to_shift(actor=actor, shift=shift, connection=connection)
         added_count += int(created)
     record_audit_event(
@@ -735,6 +797,68 @@ def release_project_crew_member_days(*, actor, connection, work_dates):
         },
     )
     return released_dates
+
+
+@transaction.atomic
+def mark_worker_schedule_days_off(*, actor, connection, work_dates):
+    """Persist worker-wide days off and remove work/crew membership on those days."""
+
+    connection = (
+        SupportConnection.objects.select_for_update()
+        .select_related("organization")
+        .get(pk=connection.pk)
+    )
+    organization = connection.organization
+    _require_permissions(actor=actor, organization=organization)
+    _require_connection(
+        actor=actor,
+        organization=organization,
+        connection=connection,
+    )
+    dates = _normalize_dates(work_dates)
+    for work_date in dates:
+        day_off, _ = WorkerScheduleDayOff.objects.get_or_create(
+            organization=organization,
+            connection=connection,
+            work_date=work_date,
+            defaults={"created_by": actor},
+        )
+        day_off.full_clean()
+
+    memberships = list(
+        ProjectCrewShiftMember.objects.select_for_update().filter(
+            connection=connection,
+            shift__work_date__in=dates,
+        )
+    )
+    if memberships:
+        ProjectCrewShiftMember.objects.filter(
+            pk__in=[item.pk for item in memberships]
+        ).delete()
+
+    legacy_shifts = ScheduledWorkShift.objects.select_for_update().filter(
+        organization=organization,
+        connection=connection,
+        work_date__in=dates,
+        project_crew_member__isnull=True,
+        state__in=(
+            ScheduledWorkShift.STATE_DRAFT,
+            ScheduledWorkShift.STATE_PUBLISHED,
+        ),
+    )
+    legacy_shifts.filter(state=ScheduledWorkShift.STATE_DRAFT).delete()
+    legacy_shifts.filter(state=ScheduledWorkShift.STATE_PUBLISHED).update(
+        state=ScheduledWorkShift.STATE_CANCELLED,
+        cancelled_at=timezone.now(),
+    )
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="worker.schedule_days_off_marked",
+        target=connection,
+        details={"work_dates": [item.isoformat() for item in dates]},
+    )
+    return dates
 
 
 @transaction.atomic
