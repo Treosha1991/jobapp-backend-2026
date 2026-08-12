@@ -349,3 +349,220 @@ class ProjectCrewShiftMember(models.Model):
                 errors["vehicle"] = "Vehicle and crew shift must belong to the same organization."
         if errors:
             raise ValidationError(errors)
+
+
+class ProjectCrewMemberAbsence(models.Model):
+    """A crew-specific absence for one worker on one calendar day.
+
+    The record belongs to the crew rather than to a daily shift membership so
+    it survives a driver/passenger role change.  Removing the worker from the
+    crew completely is handled by the service layer and removes these records.
+    """
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    organization = models.ForeignKey(
+        SupportOrganization,
+        on_delete=models.CASCADE,
+        related_name="project_crew_member_absences",
+    )
+    crew = models.ForeignKey(
+        ProjectCrew,
+        on_delete=models.CASCADE,
+        related_name="member_absences",
+    )
+    connection = models.ForeignKey(
+        SupportConnection,
+        on_delete=models.PROTECT,
+        related_name="project_crew_absences",
+    )
+    work_date = models.DateField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_project_crew_absences",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("work_date", "crew_id", "connection_id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("crew", "connection", "work_date"),
+                name="support_pc_unique_member_absence",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("organization", "work_date"), name="support_pc_abs_org_day_idx"),
+            models.Index(fields=("connection", "work_date"), name="support_pc_abs_worker_day_idx"),
+            models.Index(fields=("crew", "work_date"), name="support_pc_abs_crew_day_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.crew_id and self.organization_id and self.crew.organization_id != self.organization_id:
+            errors["crew"] = "Crew and absence must belong to the same organization."
+        if self.connection_id and self.organization_id:
+            if self.connection.organization_id != self.organization_id:
+                errors["connection"] = "Worker and absence must belong to the same organization."
+        if errors:
+            raise ValidationError(errors)
+
+
+class WorkerScheduleDayOff(models.Model):
+    """A worker-wide day off independent of project, crew and role changes."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    organization = models.ForeignKey(
+        SupportOrganization,
+        on_delete=models.CASCADE,
+        related_name="worker_schedule_days_off",
+    )
+    connection = models.ForeignKey(
+        SupportConnection,
+        on_delete=models.PROTECT,
+        related_name="schedule_days_off",
+    )
+    work_date = models.DateField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_worker_schedule_days_off",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("work_date", "connection_id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("connection", "work_date"),
+                name="support_unique_worker_day_off",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("organization", "work_date"), name="support_dayoff_org_day_idx"),
+            models.Index(fields=("connection", "work_date"), name="support_dayoff_worker_day_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.connection_id and self.organization_id:
+            if self.connection.organization_id != self.organization_id:
+                raise ValidationError(
+                    {"connection": "Worker and day off must belong to the same organization."}
+                )
+
+
+class ProjectCrewDriverSubstitution(models.Model):
+    """Date-specific substitute driver history for a project crew.
+
+    Replacing a substitute closes the active record instead of overwriting it,
+    preserving who drove the crew and its vehicle on every affected date.
+    """
+
+    STATE_ACTIVE = "active"
+    STATE_REPLACED = "replaced"
+    STATE_CANCELLED = "cancelled"
+    STATE_CHOICES = [
+        (STATE_ACTIVE, "Active"),
+        (STATE_REPLACED, "Replaced"),
+        (STATE_CANCELLED, "Cancelled"),
+    ]
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    organization = models.ForeignKey(
+        SupportOrganization,
+        on_delete=models.CASCADE,
+        related_name="project_crew_driver_substitutions",
+    )
+    crew = models.ForeignKey(
+        ProjectCrew,
+        on_delete=models.CASCADE,
+        related_name="driver_substitutions",
+    )
+    work_date = models.DateField()
+    primary_driver_connection = models.ForeignKey(
+        SupportConnection,
+        on_delete=models.PROTECT,
+        related_name="project_crew_primary_driver_substitutions",
+    )
+    substitute_driver_connection = models.ForeignKey(
+        SupportConnection,
+        on_delete=models.PROTECT,
+        related_name="project_crew_substitute_driver_dates",
+    )
+    vehicle = models.ForeignKey(
+        Vehicle,
+        on_delete=models.PROTECT,
+        related_name="project_crew_driver_substitutions",
+    )
+    state = models.CharField(max_length=16, choices=STATE_CHOICES, default=STATE_ACTIVE)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_project_crew_driver_substitutions",
+    )
+    ended_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ended_project_crew_driver_substitutions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-work_date", "-created_at", "-id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("crew", "work_date"),
+                condition=Q(state="active"),
+                name="support_pc_one_active_substitution",
+            ),
+            models.CheckConstraint(
+                condition=~Q(primary_driver_connection=F("substitute_driver_connection")),
+                name="support_pc_substitute_diff_driver",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("organization", "work_date"), name="support_pc_sub_org_day_idx"),
+            models.Index(fields=("crew", "work_date", "state"), name="support_pc_sub_crew_day_idx"),
+            models.Index(
+                fields=("substitute_driver_connection", "work_date"),
+                name="support_pc_sub_driver_day_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.crew_id and self.organization_id and self.crew.organization_id != self.organization_id:
+            errors["crew"] = "Crew and substitution must belong to the same organization."
+        for field_name in ("primary_driver_connection", "substitute_driver_connection"):
+            connection_id = getattr(self, f"{field_name}_id")
+            if connection_id and self.organization_id:
+                connection = getattr(self, field_name)
+                if connection.organization_id != self.organization_id:
+                    errors[field_name] = "Driver and substitution must belong to the same organization."
+                elif not connection.has_driving_license:
+                    errors[field_name] = "The driver must have a confirmed driving licence."
+        if self.vehicle_id and self.organization_id and self.vehicle.organization_id != self.organization_id:
+            errors["vehicle"] = "Vehicle and substitution must belong to the same organization."
+        if (
+            self.primary_driver_connection_id
+            and self.primary_driver_connection_id == self.substitute_driver_connection_id
+        ):
+            errors["substitute_driver_connection"] = "Substitute driver must differ from primary driver."
+        if self.state == self.STATE_ACTIVE and self.ended_at:
+            errors["ended_at"] = "An active substitution cannot have an end timestamp."
+        if self.state != self.STATE_ACTIVE and not self.ended_at:
+            errors["ended_at"] = "A closed substitution requires an end timestamp."
+        if errors:
+            raise ValidationError(errors)

@@ -8,6 +8,8 @@ from django.utils import timezone
 
 from support.models import (
     ProjectCrew,
+    ProjectCrewDriverSubstitution,
+    ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
     ProjectCrewShift,
@@ -16,6 +18,7 @@ from support.models import (
     SupportConnection,
     SupportVacancy,
     Vehicle,
+    WorkerScheduleDayOff,
     WorkProject,
     Worksite,
 )
@@ -230,3 +233,100 @@ class ProjectFirstCrewModelTests(TestCase):
         with self.assertRaises(ValidationError) as error:
             invalid.full_clean()
         self.assertIn("break_minutes", error.exception.message_dict)
+
+    def test_crew_absence_survives_member_role_change(self):
+        shift = self._shift()
+        member = ProjectCrewShiftMember.objects.create(
+            shift=shift,
+            connection=self.driver,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            created_by=self.owner,
+        )
+        ProjectCrewMemberAbsence.objects.create(
+            organization=self.organization,
+            crew=self.crew,
+            connection=self.driver,
+            work_date=shift.work_date,
+            created_by=self.owner,
+        )
+
+        member.role = ProjectCrewShiftMember.ROLE_DRIVER
+        member.vehicle = self.vehicle
+        member.full_clean()
+        member.save(update_fields=("role", "vehicle", "updated_at"))
+
+        self.assertTrue(
+            ProjectCrewMemberAbsence.objects.filter(
+                crew=self.crew,
+                connection=self.driver,
+                work_date=shift.work_date,
+            ).exists()
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            ProjectCrewMemberAbsence.objects.create(
+                organization=self.organization,
+                crew=self.crew,
+                connection=self.driver,
+                work_date=shift.work_date,
+                created_by=self.owner,
+            )
+
+    def test_worker_day_off_is_independent_from_crew_lifecycle(self):
+        day_off = WorkerScheduleDayOff.objects.create(
+            organization=self.organization,
+            connection=self.passenger,
+            work_date=date(2026, 8, 28),
+            created_by=self.owner,
+        )
+
+        self.crew.delete()
+
+        self.assertTrue(WorkerScheduleDayOff.objects.filter(pk=day_off.pk).exists())
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            WorkerScheduleDayOff.objects.create(
+                organization=self.organization,
+                connection=self.passenger,
+                work_date=date(2026, 8, 28),
+                created_by=self.owner,
+            )
+
+    def test_driver_substitution_keeps_history_and_allows_one_active_record(self):
+        first = ProjectCrewDriverSubstitution.objects.create(
+            organization=self.organization,
+            crew=self.crew,
+            work_date=date(2026, 8, 28),
+            primary_driver_connection=self.driver,
+            substitute_driver_connection=self.second_driver,
+            vehicle=self.vehicle,
+            created_by=self.owner,
+        )
+        first.full_clean()
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            ProjectCrewDriverSubstitution.objects.create(
+                organization=self.organization,
+                crew=self.crew,
+                work_date=date(2026, 8, 28),
+                primary_driver_connection=self.driver,
+                substitute_driver_connection=self.second_driver,
+                vehicle=self.vehicle,
+                created_by=self.owner,
+            )
+
+        first.state = ProjectCrewDriverSubstitution.STATE_REPLACED
+        first.ended_by = self.owner
+        first.ended_at = timezone.now()
+        first.full_clean()
+        first.save(update_fields=("state", "ended_by", "ended_at"))
+
+        replacement = ProjectCrewDriverSubstitution.objects.create(
+            organization=self.organization,
+            crew=self.crew,
+            work_date=date(2026, 8, 28),
+            primary_driver_connection=self.driver,
+            substitute_driver_connection=self.second_driver,
+            vehicle=self.vehicle,
+            created_by=self.owner,
+        )
+        self.assertEqual(self.crew.driver_substitutions.count(), 2)
+        self.assertEqual(replacement.state, ProjectCrewDriverSubstitution.STATE_ACTIVE)

@@ -56,10 +56,13 @@ from .pipeline import (
 )
 from .project_crews import (
     ProjectCrew,
+    ProjectCrewDriverSubstitution,
+    ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
     ProjectCrewShift,
     ProjectCrewShiftMember,
+    WorkerScheduleDayOff,
 )
 from .timekeeping import (
     CalendarMarkBatch,
@@ -113,6 +116,8 @@ __all__ = [
     "PermissionGrant",
     "PartnerPairRequest",
     "ProjectCrew",
+    "ProjectCrewDriverSubstitution",
+    "ProjectCrewMemberAbsence",
     "ProjectCrewPassenger",
     "ProjectCrewResourceAssignment",
     "ProjectCrewShift",
@@ -145,6 +150,7 @@ __all__ = [
     "TransportRoute",
     "Vehicle",
     "WorkerProjectAssignment",
+    "WorkerScheduleDayOff",
     "ProjectScheduleTemplate",
     "WorkerAccessScope",
     "WorkProject",
