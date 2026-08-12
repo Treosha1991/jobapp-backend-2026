@@ -216,16 +216,15 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertEqual(Vehicle.objects.filter(organization=self.organization).count(), 1)
         self.assertEqual(SupportConnection.objects.filter(organization=self.organization).count(), 3)
 
-    def test_optional_schedule_dates_remain_empty_until_selected(self):
+    def test_project_detail_uses_calendar_day_selection_instead_of_date_fields(self):
         self._create_crew()
 
-        response = self.client.get(self._detail_url())
+        response = self.client.get(f"{self._detail_url()}&month=2026-08")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.content.count(b'name="work_dates" data-preserve-empty'),
-            3,
-        )
+        self.assertContains(response, 'data-pf-calendar-form')
+        self.assertContains(response, 'name="work_dates" value="', count=31)
+        self.assertNotContains(response, 'name="work_dates" data-preserve-empty')
 
     @override_settings(SUPPORT_PROJECT_FIRST_ENABLED=False)
     def test_preview_returns_not_found_when_second_switch_is_off(self):

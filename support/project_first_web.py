@@ -70,6 +70,13 @@ COPY = {
         "start_date": "Дата начала",
         "create": "Создать экипаж",
         "schedule": "График экипажа",
+        "schedule_hint": "Один клик показывает день, двойной — выбирает его для изменения.",
+        "month_navigation": "Управление месяцем",
+        "today": "Сегодня",
+        "selected_days": "Выбрано дней",
+        "clear_selection": "Снять выбор",
+        "month_shifts": "Список смен этого месяца",
+        "published": "Опубликовано",
         "dates": "Даты",
         "shift_start": "Начало",
         "shift_end": "Окончание",
@@ -117,6 +124,9 @@ COPY = {
         "no_crews": "This project has no crews yet.", "create_crew": "Add crew", "name": "Crew name",
         "driver": "Driver", "vehicle": "Vehicle", "start_date": "Start date", "create": "Create crew",
         "schedule": "Crew schedule", "dates": "Dates", "shift_start": "Start", "shift_end": "End",
+        "schedule_hint": "Click once to view a day; double-click to select it for changes.",
+        "month_navigation": "Month navigation", "today": "Today", "selected_days": "Selected days",
+        "clear_selection": "Clear selection", "month_shifts": "This month's shifts", "published": "Published",
         "break": "Break, minutes", "publish": "Publish selected days", "release": "Release selected days",
         "passengers": "Passengers", "add_passenger": "Add passenger", "scope": "Apply to",
         "future": "All future published days", "selected": "Selected days only", "remove": "Remove",
@@ -143,6 +153,9 @@ COPY = {
         "no_crews": "Ten projekt nie ma jeszcze ekip.", "create_crew": "Dodaj ekipę", "name": "Nazwa ekipy",
         "driver": "Kierowca", "vehicle": "Samochód", "start_date": "Data rozpoczęcia", "create": "Utwórz ekipę",
         "schedule": "Grafik ekipy", "dates": "Daty", "shift_start": "Początek", "shift_end": "Koniec",
+        "schedule_hint": "Jedno kliknięcie pokazuje dzień, podwójne wybiera go do zmiany.",
+        "month_navigation": "Nawigacja miesiąca", "today": "Dzisiaj", "selected_days": "Wybrane dni",
+        "clear_selection": "Wyczyść wybór", "month_shifts": "Zmiany w tym miesiącu", "published": "Opublikowano",
         "break": "Przerwa, minuty", "publish": "Opublikuj wybrane dni", "release": "Zwolnij wybrane dni",
         "passengers": "Pasażerowie", "add_passenger": "Dodaj pasażera", "scope": "Zastosuj do",
         "future": "Wszystkich przyszłych opublikowanych dni", "selected": "Tylko wybranych dni", "remove": "Usuń",
@@ -169,6 +182,9 @@ COPY = {
         "no_crews": "У проєкту ще немає екіпажів.", "create_crew": "Додати екіпаж", "name": "Назва екіпажу",
         "driver": "Водій", "vehicle": "Автомобіль", "start_date": "Дата початку", "create": "Створити екіпаж",
         "schedule": "Графік екіпажу", "dates": "Дати", "shift_start": "Початок", "shift_end": "Кінець",
+        "schedule_hint": "Один клік показує день, подвійний вибирає його для зміни.",
+        "month_navigation": "Керування місяцем", "today": "Сьогодні", "selected_days": "Вибрано днів",
+        "clear_selection": "Зняти вибір", "month_shifts": "Зміни цього місяця", "published": "Опубліковано",
         "break": "Перерва, хвилин", "publish": "Опублікувати вибрані дні", "release": "Звільнити вибрані дні",
         "passengers": "Пасажири", "add_passenger": "Додати пасажира", "scope": "Застосувати до",
         "future": "Усіх майбутніх опублікованих днів", "selected": "Лише вибраних днів", "remove": "Виключити",
@@ -317,6 +333,45 @@ def _parse_dates(request):
     return parsed
 
 
+def _selected_month(request):
+    raw = (request.GET.get("month") or request.POST.get("return_month") or "").strip()
+    try:
+        selected = date.fromisoformat(f"{raw}-01") if raw else timezone.localdate().replace(day=1)
+    except ValueError:
+        selected = timezone.localdate().replace(day=1)
+    return selected.replace(day=1)
+
+
+def _shift_month(value, offset):
+    month_index = value.year * 12 + value.month - 1 + offset
+    return date(month_index // 12, month_index % 12 + 1, 1)
+
+
+def _crew_calendar(crew, *, selected_month, today):
+    shifts = [
+        shift
+        for shift in crew.calendar_shifts.all()
+        if shift.state == ProjectCrewShift.STATE_PUBLISHED
+        and shift.work_date.year == selected_month.year
+        and shift.work_date.month == selected_month.month
+    ]
+    shifts_by_day = {shift.work_date: shift for shift in shifts}
+    first_weekday, days_in_month = monthrange(selected_month.year, selected_month.month)
+    days = [None] * first_weekday
+    for number in range(1, days_in_month + 1):
+        work_date = selected_month.replace(day=number)
+        shift = shifts_by_day.get(work_date)
+        days.append(
+            {
+                "date": work_date,
+                "shift": shift,
+                "is_today": work_date == today,
+                "has_published": shift is not None,
+            }
+        )
+    return days, shifts
+
+
 def _scoped_connections(request, organization):
     return worker_connection_queryset_for(
         user=request.user,
@@ -328,7 +383,7 @@ def _scoped_connections(request, organization):
     )
 
 
-def _project_context(request, organization, project):
+def _project_context(request, organization, project, *, selected_month):
     today = timezone.localdate()
     connections = list(_scoped_connections(request, organization).order_by("candidate__first_name", "candidate__last_name", "id"))
     for item in connections:
@@ -396,6 +451,16 @@ def _project_context(request, organization, project):
             if connection.id not in unavailable_passenger_ids
         ]
         crew.published_shifts = list(crew.calendar_shifts.all())
+        crew.calendar_days, crew.month_shifts = _crew_calendar(
+            crew,
+            selected_month=selected_month,
+            today=today,
+        )
+        crew.schedule_example = (
+            crew.month_shifts[0]
+            if crew.month_shifts
+            else (crew.published_shifts[0] if crew.published_shifts else None)
+        )
         crew.occupied = 1 + len(crew.open_passengers)
         crew.passenger_driver_options = [
             item for item in crew.open_passengers if item.connection.has_driving_license
@@ -513,6 +578,7 @@ def project_first_workspace(request, project_public_id=None):
     memberships, membership, permissions = _selected_organization(request)
     organization = membership.organization
     copy = _copy(request)
+    selected_month = _selected_month(request)
     projects = list(
         WorkProject.objects.filter(organization=organization, is_active=True)
         .select_related("worksite")
@@ -550,7 +616,13 @@ def project_first_workspace(request, project_public_id=None):
                 messages.error(request, _validation_message(error))
             else:
                 messages.success(request, success)
-            return redirect(_workspace_url(organization, project=project))
+            return redirect(
+                _workspace_url(
+                    organization,
+                    project=project,
+                    month=(request.POST.get("return_month") or selected_month.strftime("%Y-%m")),
+                )
+            )
 
     context = {
         "pf": copy,
@@ -562,10 +634,44 @@ def project_first_workspace(request, project_public_id=None):
         "project": project,
         "project_list_url": _workspace_url(organization),
         "today": timezone.localdate(),
+        "selected_month": selected_month,
+        "calendar_month": selected_month.strftime("%Y-%m"),
+        "calendar_weekday_labels": {
+            "ru": ("ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"),
+            "en": ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"),
+            "pl": ("PN", "WT", "ŚR", "CZW", "PT", "SOB", "ND"),
+            "uk": ("ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "НД"),
+        }.get(get_lang(request), ("ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС")),
         "reset_plan_url": f"{reverse('support:project-first-reset-plan')}?{urlencode({'organization': organization.public_id})}",
     }
     if project is not None:
-        context.update(_project_context(request, organization, project))
+        context.update(
+            {
+                "calendar_previous_url": _workspace_url(
+                    organization,
+                    project=project,
+                    month=_shift_month(selected_month, -1).strftime("%Y-%m"),
+                ),
+                "calendar_next_url": _workspace_url(
+                    organization,
+                    project=project,
+                    month=_shift_month(selected_month, 1).strftime("%Y-%m"),
+                ),
+                "calendar_today_url": _workspace_url(
+                    organization,
+                    project=project,
+                    month=timezone.localdate().strftime("%Y-%m"),
+                ),
+            }
+        )
+        context.update(
+            _project_context(
+                request,
+                organization,
+                project,
+                selected_month=selected_month,
+            )
+        )
     return render(request, "support/project_first_workspace.html", context)
 
 
