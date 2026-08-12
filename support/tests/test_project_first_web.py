@@ -147,6 +147,30 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertContains(response, "Preview project")
         self.assertTemplateUsed(response, "support/project_first_workspace.html")
         self.assertContains(response, self._reset_plan_url())
+        self.assertContains(
+            response,
+            f'href="{self._list_url()}"',
+            html=False,
+        )
+
+    @override_settings(SUPPORT_PROJECT_FIRST_ENABLED=False)
+    def test_projects_header_keeps_legacy_fallback_when_preview_is_off(self):
+        response = self.client.get(
+            f"{reverse('support:workspace')}"
+            f"?organization={self.organization.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            f'href="{reverse("support:projects")}?organization={self.organization.public_id}"',
+            html=False,
+        )
+        self.assertNotContains(
+            response,
+            f'href="{self._list_url()}"',
+            html=False,
+        )
 
     def test_reset_plan_is_read_only_and_reports_current_counts(self):
         response = self.client.get(self._reset_plan_url())

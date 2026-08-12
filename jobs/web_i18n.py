@@ -3313,6 +3313,7 @@ def employer_i18n(request):
     support_header = {
         "organization_id": "",
         "query": "",
+        "project_first_projects": False,
         "active": {},
         "workers": False,
         "requests": False,
@@ -3326,7 +3327,10 @@ def employer_i18n(request):
     if getattr(request.user, "is_authenticated", False):
         # The link is intentionally absent until Support is enabled and the
         # account belongs to an active, manually approved organization.
-        from support.feature_flags import is_support_feature_enabled
+        from support.feature_flags import (
+            is_project_first_workspace_enabled,
+            is_support_feature_enabled,
+        )
 
         if is_support_feature_enabled():
             from support.models import OrganizationMembership
@@ -3369,11 +3373,19 @@ def employer_i18n(request):
                 support_header = {
                     "organization_id": str(organization.public_id),
                     "query": f"organization={organization.public_id}",
+                    "project_first_projects": is_project_first_workspace_enabled(),
                     "active": {
                         "workers": resolver_namespace == "support"
                         and resolver_name in {"workspace", "worker-card"},
                         "projects": resolver_namespace == "support"
-                        and resolver_name in {"projects", "project-detail"},
+                        and resolver_name
+                        in {
+                            "projects",
+                            "project-detail",
+                            "project-first",
+                            "project-first-detail",
+                            "project-first-reset-plan",
+                        },
                         "requests": resolver_namespace == "support"
                         and resolver_name == "worker-requests",
                         "registries": resolver_namespace == "support"
