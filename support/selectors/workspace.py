@@ -998,7 +998,10 @@ def worker_card_snapshot(
                 "work_assignment__project",
                 "schedule_template__project",
                 "crew",
+                "project_crew_member__connection__candidate",
                 "project_crew_member__shift__crew__project",
+            ).prefetch_related(
+                "project_crew_member__shift__members__connection__candidate",
             ).order_by("work_date", "starts_at", "id")
         )
         for shift in scheduled_shifts:
@@ -1051,31 +1054,54 @@ def worker_card_snapshot(
                 ),
                 default=None,
             )
-            calendar_days.append(
-                {
-                    "date": current_date,
-                    "shifts": day_shifts,
-                    "display_shift": display_shift,
-                    "active_shift_count": len(day_shifts),
-                    "has_published": any(
-                        item.state == ScheduledWorkShift.STATE_PUBLISHED
-                        for item in day_shifts
+            day_context = {
+                "date": current_date,
+                "shifts": day_shifts,
+                "display_shift": display_shift,
+                "active_shift_count": len(day_shifts),
+                "has_published": any(
+                    item.state == ScheduledWorkShift.STATE_PUBLISHED
+                    for item in day_shifts
+                ),
+                "has_draft": any(
+                    item.state == ScheduledWorkShift.STATE_DRAFT
+                    for item in day_shifts
+                ),
+                "has_conflict": any(item.has_conflict for item in day_shifts),
+                "has_assignment_conflict": any(
+                    getattr(item, "has_assignment_conflict", False)
+                    for item in day_shifts
+                ),
+                "is_today": current_date == timezone.localdate(),
+            }
+            if (
+                display_shift is not None
+                and display_shift.project_crew_member_id is not None
+            ):
+                project_shift = display_shift.project_crew_member.shift
+                day_members = []
+                for member in project_shift.members.all():
+                    day_members.append(
+                        {
+                            "connection": member.connection,
+                            "display_name": _display_name(member.connection.candidate),
+                            "role": member.role,
+                            "conversation": _active_worker_conversation(
+                                user=user,
+                                organization=organization,
+                                connection=member.connection,
+                            ),
+                        }
+                    )
+                day_context["project_crew_detail"] = {
+                    "project_name": project_shift.crew.project.worker_visible_name,
+                    "crew_name": (
+                        project_shift.crew.internal_name
+                        or project_shift.crew.project.worker_visible_name
                     ),
-                    "has_draft": any(
-                        item.state == ScheduledWorkShift.STATE_DRAFT
-                        for item in day_shifts
-                    ),
-                    "has_conflict": any(
-                        item.has_conflict
-                        for item in day_shifts
-                    ),
-                    "has_assignment_conflict": any(
-                        getattr(item, "has_assignment_conflict", False)
-                        for item in day_shifts
-                    ),
-                    "is_today": current_date == timezone.localdate(),
+                    "members": day_members,
                 }
-            )
+            calendar_days.append(day_context)
         selected_calendar_date = month_start
         calendar_previous_month = (
             date(month_start.year - 1, 12, 1)

@@ -82,6 +82,8 @@
   .worker-schedule-details { margin-top:13px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.18); }
   .worker-schedule-details > summary { padding:11px 13px; cursor:pointer; color:#ccecff; font-size:12px; font-weight:900; }
   .worker-schedule-details-content { padding:0 12px 12px; }
+  .worker-schedule-details-content .worker-status form,
+  .worker-schedule-details-content .worker-edit { display:none; }
   .worker-edit { margin-top:10px; padding:11px; border:1px solid var(--line); border-radius:13px; background:rgba(5,22,36,.2); }
   .worker-edit summary { cursor:pointer; color:#ccecff; font-weight:800; }
   .worker-edit form { margin-top:11px; }
@@ -338,7 +340,14 @@
             if (day) day.classList.toggle('is-viewed', candidate === input);
           });
           var day = input.closest('[data-calendar-day]');
-          if (day && day.dataset.calendarCrewUrl) {
+          var detailTemplate = form.querySelector(
+            'template[data-project-crew-day="' + input.value + '"]'
+          );
+          var dashboard = document.querySelector('[data-worker-transport-dashboard]');
+          if (detailTemplate && dashboard) {
+            dashboard.replaceChildren(detailTemplate.content.cloneNode(true));
+            dashboard.dataset.viewedCrewDate = input.value;
+          } else if (day && day.dataset.calendarCrewUrl) {
             loadCrewWorkspace(day.dataset.calendarCrewUrl, input.value);
           }
         };
@@ -522,33 +531,30 @@
                 {% else %}<div class="worker-calendar-empty"></div>{% endif %}
               {% endfor %}
             </div>
+            {% for day in calendar_days %}{% if day and day.project_crew_detail %}
+              <template data-project-crew-day="{{ day.date|date:'Y-m-d' }}">
+                <div class="worker-section-title"><h2>{{ day.project_crew_detail.crew_name }}</h2><span class="jh-status success">{{ day.date|date:'d.m.Y' }}</span></div>
+                <div class="worker-crew-summary">
+                  <div class="worker-crew-summary-main">
+                    <div class="worker-crew-summary-part"><small>{{ employer_t.support_projects_title }}</small><strong>{{ day.project_crew_detail.project_name }}</strong></div>
+                    <div class="worker-crew-summary-part"><small>{{ employer_t.support_worker_transport_roles }}</small><strong>{{ day.project_crew_detail.crew_name }}</strong></div>
+                  </div>
+                </div>
+                <div class="worker-passenger-list">
+                  {% for member in day.project_crew_detail.members %}
+                    <div class="worker-passenger-row">
+                      <strong>{{ member.display_name }}</strong>
+                      <span class="worker-passenger-address">{% if member.role == 'driver' %}{{ employer_t.support_worker_driver }}{% else %}{{ employer_t.support_transport_role_passenger }}{% endif %}</span>
+                      <div class="worker-passenger-actions">{% if member.chat_url %}<a class="jh-btn" href="{{ member.chat_url }}">{{ employer_t.support_transport_passenger_chat }}</a>{% else %}<span class="jh-btn worker-passenger-chat-disabled" title="{{ employer_t.support_transport_chat_unavailable }}">{{ employer_t.support_transport_passenger_chat }}</span>{% endif %}</div>
+                    </div>
+                  {% endfor %}
+                </div>
+              </template>
+            {% endif %}{% endfor %}
             {% if can_operate %}
               <div class="worker-calendar-actions" data-calendar-actions hidden>
                 <div class="worker-calendar-selection"><span>{{ employer_t.support_worker_schedule_selected_count }}: <strong data-selected-count>0</strong></span><button class="jh-btn" type="button" data-clear-selection>{{ employer_t.support_worker_schedule_clear_selection }}</button></div>
-                <div class="worker-form-grid">
-                  <label class="jh-field"><span>{{ employer_t.support_worker_quick_shift_project }}</span><select class="jh-input" name="project_id" required data-quick-shift-project><option value="" selected disabled>{{ employer_t.support_worker_quick_shift_project_placeholder }}</option>{% for project in work_projects %}<option value="{{ project.public_id }}">{{ project.worker_visible_name }}{% if project.internal_name != project.worker_visible_name %} · {{ project.internal_name }}{% endif %}</option>{% endfor %}</select></label>
-                  <label class="jh-field"><span>{{ employer_t.support_worker_quick_shift_template }}</span><select class="jh-input" name="schedule_template_id" required data-quick-shift-template><option value="" selected disabled data-template-placeholder="1">{{ employer_t.support_worker_quick_shift_template_placeholder }}</option>{% for project in work_projects %}{% for template in project.schedule_templates.all %}<option value="{{ template.public_id }}" data-project-id="{{ project.public_id }}" hidden disabled>{{ template.name }} · {{ template.starts_at_time|time:"H:i" }}–{{ template.ends_at_time|time:"H:i" }}</option>{% endfor %}{% endfor %}</select></label>
-                </div>
-                <p class="jh-help" data-template-empty hidden>{{ employer_t.support_worker_project_templates_empty }}</p>
-                <div class="jh-actions"><button class="jh-btn primary" name="action" value="scheduled_shifts_from_template" type="submit" data-template-submit disabled>{{ employer_t.support_worker_schedule_bulk_apply }}</button><button class="jh-btn" name="action" value="scheduled_shifts_clear" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_bulk_clear }}</button></div>
-                {% if permissions.transport and selected_transport_route %}
-                  <details class="worker-crew-override">
-                    <summary class="jh-btn">{{ employer_t.support_crew_override_title }}</summary>
-                    <div class="worker-crew-override-body">
-                      <p>{{ employer_t.support_crew_override_text }}</p>
-                      <input type="hidden" name="return_transport_crew" value="{{ selected_transport_crew.key }}">
-                      <div class="worker-form-grid">
-                        <label class="jh-field"><span>{{ employer_t.support_transport_schedule_switcher }}</span><select class="jh-input" name="route_id" required>{% for crew in transport_crews %}{% if crew.route %}<option value="{{ crew.route.public_id }}"{% if crew.key == selected_transport_crew.key %} selected{% endif %}>{{ crew.schedule_template.project.worker_visible_name }} · {{ crew.schedule_template.name }} · {{ crew.schedule_template.starts_at_time|time:'H:i' }}–{{ crew.schedule_template.ends_at_time|time:'H:i' }}</option>{% endif %}{% endfor %}</select></label>
-                        <label class="jh-field"><span>{{ employer_t.support_crew_override_kind }}</span><select class="jh-input" name="override_kind" data-crew-override-kind><option value="shift">{{ employer_t.support_crew_override_shift }}</option><option value="day_off">{{ employer_t.support_crew_override_day_off }}</option><option value="cancelled">{{ employer_t.support_crew_override_cancelled }}</option></select></label>
-                        <label class="jh-field"><span>{{ employer_t.support_worker_break }}</span><input class="jh-input" type="number" min="0" max="720" name="override_break_minutes" value="{{ selected_transport_template.break_minutes|default:0 }}" data-crew-override-time></label>
-                        <label class="jh-field"><span>{{ employer_t.support_worker_starts }}</span><input class="jh-input" type="time" name="override_starts_at_time" value="{{ selected_transport_template.starts_at_time|time:'H:i' }}" data-crew-override-time></label>
-                        <label class="jh-field"><span>{{ employer_t.support_worker_ends }}</span><input class="jh-input" type="time" name="override_ends_at_time" value="{{ selected_transport_template.ends_at_time|time:'H:i' }}" data-crew-override-time></label>
-                        <label class="jh-field"><span>{{ employer_t.support_crew_override_note }}</span><input class="jh-input" name="override_note" maxlength="240"></label>
-                      </div>
-                      <div class="jh-actions"><button class="jh-btn primary" name="action" value="crew_schedule_override" type="submit" formnovalidate>{{ employer_t.support_crew_override_apply }}</button></div>
-                    </div>
-                  </details>
-                {% endif %}
+                <div class="jh-actions"><button class="jh-btn danger" name="action" value="scheduled_shifts_clear" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_bulk_clear }}</button></div>
               </div>
             {% endif %}
             <div class="worker-calendar-legend">

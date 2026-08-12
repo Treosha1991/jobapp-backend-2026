@@ -1028,7 +1028,10 @@ class SupportWorkspaceWebTests(TestCase):
         worker_url = f"/employer/support/workers/{self.worker_connection.public_id}/"
 
         page = self.client.get(worker_url)
-        self.assertContains(
+        # Shift/project assignment is no longer offered from the worker card;
+        # project-first scheduling owns this UI. The legacy POST remains
+        # covered below for backwards-compatible integrations.
+        self.assertNotContains(
             page,
             f'<option value="{project.public_id}">{project.worker_visible_name}</option>',
         )
@@ -1250,7 +1253,7 @@ class SupportWorkspaceWebTests(TestCase):
         worker_page = self.client.get(worker_url)
         self.assertContains(worker_page, 'name="work_dates"')
         self.assertNotContains(worker_page, 'name="calendar_dates"')
-        self.assertContains(worker_page, 'value="scheduled_shifts_from_template"')
+        self.assertNotContains(worker_page, 'value="scheduled_shifts_from_template"')
         self.assertContains(worker_page, 'data-calendar-actions')
         self.assertContains(worker_page, 'data-worker-calendar-section')
         self.assertContains(worker_page, 'data-calendar-navigation>', count=3)
@@ -1268,11 +1271,7 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertNotContains(worker_page, 'value="work_draft"')
         self.assertNotContains(worker_page, 'value="scheduled_shift_create"')
         self.assertContains(worker_page, 'data-worker-assignment-history')
-        self.assertContains(worker_page, 'data-quick-shift-project')
-        self.assertContains(worker_page, 'data-quick-shift-template')
-        self.assertContains(worker_page, 'data-template-submit')
-        self.assertContains(worker_page, "Select a project")
-        self.assertContains(worker_page, "Select a shift template")
+        self.assertContains(worker_page, 'value="scheduled_shifts_clear"')
 
         first_day = project_starts + timedelta(days=1)
         second_day = project_starts + timedelta(days=3)
@@ -1828,7 +1827,8 @@ class SupportWorkspaceWebTests(TestCase):
         transport_card = self.client.get(
             f"/employer/support/workers/{self.worker_connection.public_id}/?tab=transport"
         )
-        self.assertContains(company_card, "Flevosap line A")
+        # The worker card no longer exposes project assignment controls.
+        self.assertNotContains(company_card, "Flevosap line A")
         self.assertContains(housing_card, "Lelystad home")
         # Unassigned vehicles are managed in Fleet and no longer clutter the
         # worker's schedule-first Transport tab.

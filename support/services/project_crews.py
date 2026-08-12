@@ -664,6 +664,62 @@ def remove_project_crew_passenger(
 
 
 @transaction.atomic
+def release_project_crew_member_days(*, actor, connection, work_dates):
+    """Remove one worker from concrete project-first crew days.
+
+    The project shift itself remains published for the rest of the crew.  For
+    a permanent passenger this deliberately leaves the roster entry open: the
+    missing day is an explicit absence, while later crew days still inherit
+    the passenger as usual.
+    """
+
+    connection = (
+        SupportConnection.objects.select_for_update()
+        .select_related("organization")
+        .get(pk=connection.pk)
+    )
+    organization = connection.organization
+    _require_permissions(actor=actor, organization=organization)
+    _require_connection(
+        actor=actor,
+        organization=organization,
+        connection=connection,
+    )
+    dates = _normalize_dates(work_dates)
+    memberships = list(
+        ProjectCrewShiftMember.objects.select_for_update()
+        .select_related("shift__crew")
+        .filter(
+            connection=connection,
+            shift__work_date__in=dates,
+            shift__state=ProjectCrewShift.STATE_PUBLISHED,
+        )
+        .order_by("shift__work_date", "id")
+    )
+    if not memberships:
+        _operation_error(
+            "selected_schedule_days_have_no_shifts",
+            "The selected project crew days are already free for this worker.",
+        )
+    released_dates = sorted({item.shift.work_date for item in memberships})
+    crew_ids = sorted({item.shift.crew_id for item in memberships})
+    ProjectCrewShiftMember.objects.filter(
+        pk__in=[item.pk for item in memberships]
+    ).delete()
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.worker_days_released",
+        target=connection,
+        details={
+            "crews": crew_ids,
+            "work_dates": [item.isoformat() for item in released_dates],
+        },
+    )
+    return released_dates
+
+
+@transaction.atomic
 def replace_project_crew_driver(
     *,
     actor,

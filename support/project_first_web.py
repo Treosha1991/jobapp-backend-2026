@@ -89,6 +89,7 @@ COPY = {
         "future": "На весь график экипажа",
         "selected": "Только к выбранным дням",
         "select_dates_hint": "Выделите даты в календаре.",
+        "absent_dates": "Отсутствует",
         "remove": "Исключить",
         "replace_driver": "Сменить водителя",
         "new_driver": "Новый водитель из пассажиров",
@@ -132,6 +133,7 @@ COPY = {
         "passengers": "Passengers", "add_passenger": "Add passenger", "scope": "Apply to",
         "future": "Entire crew schedule", "selected": "Selected days only",
         "select_dates_hint": "Select dates in the calendar.", "remove": "Remove",
+        "absent_dates": "Absent",
         "replace_driver": "Replace driver", "new_driver": "New driver from passengers", "replace": "Replace",
         "no_projects": "There are no active projects yet.", "no_shifts": "There are no published days yet.",
         "no_passengers": "There are no passengers yet.", "seats": "Seats", "project_address": "Address",
@@ -162,6 +164,7 @@ COPY = {
         "passengers": "Pasażerowie", "add_passenger": "Dodaj pasażera", "scope": "Zastosuj do",
         "future": "Całego grafiku ekipy", "selected": "Tylko wybranych dni",
         "select_dates_hint": "Wybierz daty w kalendarzu.", "remove": "Usuń",
+        "absent_dates": "Nieobecny/a",
         "replace_driver": "Zmień kierowcę", "new_driver": "Nowy kierowca z pasażerów", "replace": "Zmień",
         "no_projects": "Nie ma jeszcze aktywnych projektów.", "no_shifts": "Nie ma jeszcze opublikowanych dni.",
         "no_passengers": "Nie ma jeszcze pasażerów.", "seats": "Miejsca", "project_address": "Adres",
@@ -192,6 +195,7 @@ COPY = {
         "passengers": "Пасажири", "add_passenger": "Додати пасажира", "scope": "Застосувати до",
         "future": "Усього графіка екіпажу", "selected": "Лише вибраних днів",
         "select_dates_hint": "Виберіть дати в календарі.", "remove": "Виключити",
+        "absent_dates": "Відсутній/я",
         "replace_driver": "Змінити водія", "new_driver": "Новий водій з пасажирів", "replace": "Змінити",
         "no_projects": "Активних проєктів поки немає.", "no_shifts": "Опублікованих днів поки немає.",
         "no_passengers": "Пасажирів поки немає.", "seats": "Місця", "project_address": "Адреса",
@@ -473,6 +477,20 @@ def _project_context(request, organization, project, *, selected_month):
                 else member_connections[connection_id]
             )
             dates = sorted(set(member_dates.get(connection_id, [])))
+            excluded_dates = []
+            roster_entry = roster_by_connection.get(connection_id)
+            if roster_entry is not None:
+                assigned_dates = set(dates)
+                excluded_dates = [
+                    shift.work_date
+                    for shift in crew.calendar_shifts.all()
+                    if shift.work_date >= roster_entry.starts_on
+                    and (
+                        roster_entry.ends_on is None
+                        or shift.work_date <= roster_entry.ends_on
+                    )
+                    and shift.work_date not in assigned_dates
+                ]
             crew.display_passengers.append(
                 {
                     "connection": connection,
@@ -484,6 +502,10 @@ def _project_context(request, organization, project, *, selected_month):
                     ),
                     "work_dates": dates,
                     "dates_label": ", ".join(item.strftime("%d.%m") for item in dates),
+                    "excluded_dates": excluded_dates,
+                    "excluded_dates_label": ", ".join(
+                        item.strftime("%d.%m") for item in excluded_dates
+                    ),
                 }
             )
         # A passenger assigned only to particular calendar days must remain in

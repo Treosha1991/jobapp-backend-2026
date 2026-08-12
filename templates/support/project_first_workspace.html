@@ -21,6 +21,7 @@
   .pf-dates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   .pf-dates .jh-input{min-width:0;padding-right:32px}
   .pf-list{display:grid;gap:6px}.pf-person{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border:1px solid var(--line);border-radius:11px;background:rgba(5,22,36,.25)}
+  .pf-person-copy{min-width:0}.pf-absence{display:block;margin-top:3px;color:#ff8585;font-size:10px;font-weight:800}
   .pf-person form{display:flex;align-items:center;gap:6px}.pf-person strong{font-size:12px}
   .pf-create{margin-top:14px;padding:14px;border:1px solid rgba(24,223,103,.3);border-radius:16px;background:rgba(24,223,103,.06)}
   .pf-create h2{margin:0 0 10px;font-size:17px}.pf-empty{padding:18px;text-align:center;border:1px dashed var(--line);border-radius:14px;color:var(--muted)}
@@ -110,7 +111,7 @@ document.addEventListener('DOMContentLoaded',function(){
                 <div class="pf-list">
                   {% for passenger in crew.display_passengers %}
                     <div class="pf-person">
-                      <div><strong>{{ passenger.display_name }}</strong>{% if passenger.scope == 'selected' %}<span class="pf-muted">{{ passenger.dates_label }}</span>{% endif %}</div>
+                      <div class="pf-person-copy"><strong>{{ passenger.display_name }}</strong>{% if passenger.scope == 'selected' %}<span class="pf-muted">{{ passenger.dates_label }}</span>{% elif passenger.excluded_dates %}<span class="pf-absence">{{ pf.absent_dates }}: {{ passenger.excluded_dates_label }}</span>{% endif %}</div>
                       <form method="post">
                         {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="passenger_remove"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><input type="hidden" name="connection_id" value="{{ passenger.connection.public_id }}"><input type="hidden" name="scope" value="{{ passenger.scope }}"><input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">{% for work_date in passenger.work_dates %}<input type="hidden" name="work_dates" value="{{ work_date|date:'Y-m-d' }}">{% endfor %}
                         <button class="jh-btn danger" type="submit">{{ pf.remove }}</button>

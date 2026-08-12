@@ -137,6 +137,7 @@ from .services.organizations import (
     grant_worker_access_scope,
     revoke_worker_access_scope,
 )
+from .services.project_crews import release_project_crew_member_days
 from .services.conversations import (
     mark_conversation_read,
     require_conversation_access,
@@ -1251,7 +1252,22 @@ def _worker_card_operation(request, *, snapshot):
                 raise ValidationError(
                     {"work_dates": "selected_schedule_days_have_no_shifts"}
                 )
+            project_crew_dates = sorted(
+                {
+                    shift.work_date
+                    for shift in current_shifts
+                    if shift.project_crew_member_id is not None
+                }
+            )
+            if project_crew_dates:
+                release_project_crew_member_days(
+                    actor=request.user,
+                    connection=connection,
+                    work_dates=project_crew_dates,
+                )
             for shift in current_shifts:
+                if shift.project_crew_member_id is not None:
+                    continue
                 if shift.state == ScheduledWorkShift.STATE_DRAFT:
                     delete_scheduled_shift_draft(actor=request.user, shift=shift)
                 else:
@@ -1588,6 +1604,18 @@ def worker_card(request, connection_public_id):
         day["transport_url"] = (
             f"{crew_url}&crew_date={day['date'].isoformat()}" if crew_url else None
         )
+        project_crew_detail = day.get("project_crew_detail")
+        if project_crew_detail:
+            for member in project_crew_detail["members"]:
+                conversation = member.get("conversation")
+                member["chat_url"] = (
+                    reverse(
+                        "support:conversation-detail",
+                        kwargs={"conversation_public_id": conversation.public_id},
+                    )
+                    if conversation is not None
+                    else None
+                )
     for crew in snapshot["related_transport_crews"]:
         crew.transport_url = (
             f"{worker_base_url}?tab=work_transport&month={snapshot['calendar_month']}"
