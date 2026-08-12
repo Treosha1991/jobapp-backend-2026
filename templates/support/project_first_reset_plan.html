@@ -1,0 +1,44 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ pf.reset_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .reset-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .reset-kicker{margin:0 0 6px;color:var(--green);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+  .reset-note{margin:16px 0;padding:12px 14px;border:1px solid rgba(255,190,70,.35);border-radius:14px;background:rgba(255,190,70,.08);color:#ffe2a1}
+  .reset-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .reset-panel{padding:14px;border:1px solid var(--line);border-radius:16px;background:rgba(5,22,36,.28)}
+  .reset-panel h2{margin:0 0 10px;font-size:18px}.reset-list{display:grid;gap:6px}
+  .reset-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border:1px solid var(--line);border-radius:11px}
+  .reset-row strong{font-size:18px}.reset-delete strong{color:#ff9d9d}.reset-preserve strong{color:var(--green)}
+  .reset-confirm{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;color:var(--muted)}
+  .reset-confirm code{display:block;margin-top:5px;color:#fff;word-break:break-all}
+  @media(max-width:800px){.reset-grid{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="jh-card">
+  <div class="reset-head">
+    <div>
+      <p class="reset-kicker">DRY RUN · {{ organization.display_name }}</p>
+      <h1 class="jh-title">{{ pf.reset_title }}</h1>
+      <p class="jh-subtitle">{{ pf.reset_subtitle }}</p>
+    </div>
+    <a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>
+  </div>
+  <div class="reset-note">{{ pf.report_updated }}</div>
+  <div class="reset-grid">
+    <section class="reset-panel reset-delete">
+      <h2>{{ pf.delete_group }}</h2>
+      <div class="reset-list">{% for item in delete_items %}<div class="reset-row"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></div>{% endfor %}</div>
+    </section>
+    <section class="reset-panel reset-preserve">
+      <h2>{{ pf.preserve_group }}</h2>
+      <div class="reset-list">{% for item in preserve_items %}<div class="reset-row"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></div>{% endfor %}</div>
+    </section>
+  </div>
+  <div class="reset-confirm">{{ pf.confirmation_phrase }}<code>{{ confirmation }}</code></div>
+</section>
+{% endblock %}

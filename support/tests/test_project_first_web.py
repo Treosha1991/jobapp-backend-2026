@@ -119,6 +119,12 @@ class ProjectFirstWorkspaceTests(TestCase):
             f"?organization={self.organization.public_id}"
         )
 
+    def _reset_plan_url(self):
+        return (
+            f"{reverse('support:project-first-reset-plan')}"
+            f"?organization={self.organization.public_id}"
+        )
+
     def _create_crew(self):
         response = self.client.post(
             self._detail_url(),
@@ -140,6 +146,18 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Preview project")
         self.assertTemplateUsed(response, "support/project_first_workspace.html")
+        self.assertContains(response, self._reset_plan_url())
+
+    def test_reset_plan_is_read_only_and_reports_current_counts(self):
+        response = self.client.get(self._reset_plan_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "support/project_first_reset_plan.html")
+        self.assertContains(response, "Staging reset preview")
+        self.assertContains(response, "Projects")
+        self.assertContains(response, f"RESET-{self.organization.public_id}")
+        self.assertEqual(WorkProject.objects.filter(organization=self.organization).count(), 1)
+        self.assertEqual(Vehicle.objects.filter(organization=self.organization).count(), 1)
 
     def test_optional_schedule_dates_remain_empty_until_selected(self):
         self._create_crew()

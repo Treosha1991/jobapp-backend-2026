@@ -100,7 +100,12 @@ a passenger without changing the legacy workspace. Russian, English, Polish
 and Ukrainian were checked for replacement-character regressions. Automated
 web, service and reset tests remain green.
 
-## Stage 6: controlled cutover (not started)
+## Stage 6: controlled cutover (in progress)
+
+The project-first project list now links to an organization-specific read-only
+reset report. It uses the same shared planning service as the management
+command, so the browser report and the command cannot drift into different
+deletion scopes. Opening the report never enables or applies the reset.
 
 Before changing the default employer navigation:
 
@@ -112,3 +117,4 @@ Before changing the default employer navigation:
 6. switch the employer's project navigation to the project-first workspace.
 
 The legacy workspace remains the default until all six cutover checks pass.
+Check 1 is ready for staging review; checks 2–6 have not been executed.

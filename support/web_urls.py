@@ -1,13 +1,18 @@
 from django.urls import path
 
 from . import web_views
-from .project_first_web import project_first_workspace
+from .project_first_web import project_first_reset_plan, project_first_workspace
 
 
 app_name = "support"
 
 urlpatterns = [
     path("project-first/", project_first_workspace, name="project-first"),
+    path(
+        "project-first/reset-plan/",
+        project_first_reset_plan,
+        name="project-first-reset-plan",
+    ),
     path(
         "project-first/projects/<uuid:project_public_id>/",
         project_first_workspace,

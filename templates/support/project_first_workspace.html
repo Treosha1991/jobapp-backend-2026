@@ -36,7 +36,7 @@
       <h1 class="jh-title">{% if project %}{{ project.internal_name }}{% else %}{{ pf.title }}{% endif %}</h1>
       <p class="jh-subtitle">{{ pf.subtitle }}</p>
     </div>
-    {% if project %}<a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>{% endif %}
+    {% if project %}<a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>{% else %}<a class="jh-btn" href="{{ reset_plan_url }}">{{ pf.reset_plan }}</a>{% endif %}
   </div>
 
   {% if not project %}

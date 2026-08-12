@@ -44,6 +44,7 @@ from .services.project_crews import (
     remove_project_crew_passenger,
     replace_project_crew_driver,
 )
+from .services.project_first_reset import build_project_first_reset_plan
 
 
 COPY = {
@@ -91,6 +92,13 @@ COPY = {
         "passenger_removed": "Пассажир исключён.",
         "driver_replaced": "Водитель экипажа изменён.",
         "choose_dates": "Выберите один или несколько опубликованных дней.",
+        "reset_plan": "План очистки",
+        "reset_title": "Предварительный план очистки staging",
+        "reset_subtitle": "Это только отчёт. Сейчас никакие данные не изменяются и не удаляются.",
+        "delete_group": "Будет удалено",
+        "preserve_group": "Будет сохранено",
+        "confirmation_phrase": "Фраза подтверждения",
+        "report_updated": "Отчёт рассчитан по текущему состоянию базы данных.",
     },
     "en": {
         "preview": "New workspace · preview",
@@ -110,6 +118,11 @@ COPY = {
         "shifts_released": "Selected days released.", "passenger_added": "Passenger added.",
         "passenger_removed": "Passenger removed.", "driver_replaced": "Crew driver replaced.",
         "choose_dates": "Select one or more published days.",
+        "reset_plan": "Reset plan", "reset_title": "Staging reset preview",
+        "reset_subtitle": "This is a read-only report. No data is changed or deleted now.",
+        "delete_group": "Will be deleted", "preserve_group": "Will be preserved",
+        "confirmation_phrase": "Confirmation phrase",
+        "report_updated": "The report was calculated from the current database state.",
     },
     "pl": {
         "preview": "Nowy panel · tryb testowy", "title": "Projekty i ekipy",
@@ -128,6 +141,11 @@ COPY = {
         "shifts_released": "Wybrane dni zostały zwolnione.", "passenger_added": "Pasażer został dodany.",
         "passenger_removed": "Pasażer został usunięty.", "driver_replaced": "Kierowca ekipy został zmieniony.",
         "choose_dates": "Wybierz co najmniej jeden opublikowany dzień.",
+        "reset_plan": "Plan czyszczenia", "reset_title": "Podgląd czyszczenia staging",
+        "reset_subtitle": "To tylko raport do odczytu. Żadne dane nie są teraz zmieniane ani usuwane.",
+        "delete_group": "Zostanie usunięte", "preserve_group": "Zostanie zachowane",
+        "confirmation_phrase": "Fraza potwierdzająca",
+        "report_updated": "Raport obliczono na podstawie bieżącego stanu bazy danych.",
     },
     "uk": {
         "preview": "Новий кабінет · тестовий режим", "title": "Проєкти та екіпажі",
@@ -146,6 +164,63 @@ COPY = {
         "shifts_released": "Вибрані дні звільнено.", "passenger_added": "Пасажира додано.",
         "passenger_removed": "Пасажира виключено.", "driver_replaced": "Водія екіпажу змінено.",
         "choose_dates": "Виберіть один або кілька опублікованих днів.",
+        "reset_plan": "План очищення", "reset_title": "Попередній план очищення staging",
+        "reset_subtitle": "Це лише звіт для читання. Зараз дані не змінюються і не видаляються.",
+        "delete_group": "Буде видалено", "preserve_group": "Буде збережено",
+        "confirmation_phrase": "Фраза підтвердження",
+        "report_updated": "Звіт розраховано за поточним станом бази даних.",
+    },
+}
+
+
+RESET_OBJECT_COPY = {
+    "ru": {
+        "project_crews": "Новые тестовые экипажи", "transport_crews": "Старые экипажи",
+        "scheduled_work_shifts": "Плановые смены", "transport_routes": "Маршруты",
+        "driver_vehicle_assignments": "Назначения водителей на автомобили",
+        "worker_project_assignments": "Назначения работников на проекты",
+        "project_schedule_templates": "Шаблоны графиков проектов", "work_projects": "Проекты",
+        "worksites": "Объекты работы", "scheduled_shift_batches": "Пакеты смен",
+        "shift_templates": "Старые шаблоны смен", "workers": "Работники",
+        "housing_sites": "Объекты жилья", "housing_rooms": "Комнаты",
+        "housing_places": "Места в комнатах", "housing_assignments": "Заселения",
+        "vehicles": "Автомобили", "work_time_entries": "Фактические записи рабочего времени",
+    },
+    "en": {
+        "project_crews": "New preview crews", "transport_crews": "Legacy crews",
+        "scheduled_work_shifts": "Planned shifts", "transport_routes": "Routes",
+        "driver_vehicle_assignments": "Driver/vehicle assignments",
+        "worker_project_assignments": "Worker/project assignments",
+        "project_schedule_templates": "Project schedule templates", "work_projects": "Projects",
+        "worksites": "Worksites", "scheduled_shift_batches": "Shift batches",
+        "shift_templates": "Legacy shift templates", "workers": "Workers",
+        "housing_sites": "Housing sites", "housing_rooms": "Rooms",
+        "housing_places": "Room places", "housing_assignments": "Housing assignments",
+        "vehicles": "Vehicles", "work_time_entries": "Factual work-time entries",
+    },
+    "pl": {
+        "project_crews": "Nowe ekipy testowe", "transport_crews": "Stare ekipy",
+        "scheduled_work_shifts": "Planowane zmiany", "transport_routes": "Trasy",
+        "driver_vehicle_assignments": "Przypisania kierowców do pojazdów",
+        "worker_project_assignments": "Przypisania pracowników do projektów",
+        "project_schedule_templates": "Szablony grafików projektów", "work_projects": "Projekty",
+        "worksites": "Miejsca pracy", "scheduled_shift_batches": "Pakiety zmian",
+        "shift_templates": "Stare szablony zmian", "workers": "Pracownicy",
+        "housing_sites": "Obiekty mieszkalne", "housing_rooms": "Pokoje",
+        "housing_places": "Miejsca w pokojach", "housing_assignments": "Zakwaterowania",
+        "vehicles": "Pojazdy", "work_time_entries": "Faktyczne wpisy czasu pracy",
+    },
+    "uk": {
+        "project_crews": "Нові тестові екіпажі", "transport_crews": "Старі екіпажі",
+        "scheduled_work_shifts": "Заплановані зміни", "transport_routes": "Маршрути",
+        "driver_vehicle_assignments": "Призначення водіїв на автомобілі",
+        "worker_project_assignments": "Призначення працівників на проєкти",
+        "project_schedule_templates": "Шаблони графіків проєктів", "work_projects": "Проєкти",
+        "worksites": "Об'єкти роботи", "scheduled_shift_batches": "Пакети змін",
+        "shift_templates": "Старі шаблони змін", "workers": "Працівники",
+        "housing_sites": "Об'єкти житла", "housing_rooms": "Кімнати",
+        "housing_places": "Місця в кімнатах", "housing_assignments": "Заселення",
+        "vehicles": "Автомобілі", "work_time_entries": "Фактичні записи робочого часу",
     },
 }
 
@@ -461,7 +536,40 @@ def project_first_workspace(request, project_public_id=None):
         "project": project,
         "project_list_url": _workspace_url(organization),
         "today": timezone.localdate(),
+        "reset_plan_url": f"{reverse('support:project-first-reset-plan')}?{urlencode({'organization': organization.public_id})}",
     }
     if project is not None:
         context.update(_project_context(request, organization, project))
     return render(request, "support/project_first_workspace.html", context)
+
+
+@login_required(login_url="employer:login")
+def project_first_reset_plan(request):
+    """Show the organization-specific cutover report without changing data."""
+
+    if not is_project_first_workspace_enabled():
+        raise Http404("project_first_workspace_not_available")
+    memberships, membership, permissions = _selected_organization(request)
+    organization = membership.organization
+    copy = _copy(request)
+    lang = get_lang(request)
+    object_copy = RESET_OBJECT_COPY.get(lang, RESET_OBJECT_COPY["ru"])
+    plan = build_project_first_reset_plan(organization)
+    context = {
+        "pf": copy,
+        "organization": organization,
+        "memberships": memberships,
+        "membership": membership,
+        "permissions": permissions,
+        "delete_items": [
+            {"key": key, "label": object_copy[key], "count": count}
+            for key, count in plan["delete_counts"].items()
+        ],
+        "preserve_items": [
+            {"key": key, "label": object_copy[key], "count": count}
+            for key, count in plan["preserve_counts"].items()
+        ],
+        "confirmation": plan["confirmation"],
+        "project_list_url": _workspace_url(organization),
+    }
+    return render(request, "support/project_first_reset_plan.html", context)

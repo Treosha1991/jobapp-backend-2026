@@ -32,6 +32,7 @@ from support.models import (
 )
 from support.services.organizations import activate_organization, create_organization
 from support.services.project_crews import create_project_crew
+from support.services.project_first_reset import build_project_first_reset_plan
 
 
 @override_settings(SUPPORT_FEATURE_ENABLED=True)
@@ -269,6 +270,20 @@ class ProjectFirstResetCommandTests(TestCase):
         self.assertEqual(ProjectCrew.objects.count(), 1)
         self.assertEqual(Vehicle.objects.count(), 2)
         self.assertEqual(HousingAssignment.objects.count(), 1)
+
+    def test_shared_reset_plan_reports_delete_and_preserve_counts(self):
+        plan = build_project_first_reset_plan(self.organization)
+
+        self.assertEqual(plan["delete_counts"]["work_projects"], 1)
+        self.assertEqual(plan["delete_counts"]["project_crews"], 1)
+        self.assertEqual(plan["preserve_counts"]["workers"], 1)
+        self.assertEqual(plan["preserve_counts"]["housing_assignments"], 1)
+        self.assertEqual(plan["preserve_counts"]["vehicles"], 2)
+        self.assertEqual(plan["preserve_counts"]["work_time_entries"], 1)
+        self.assertEqual(
+            plan["confirmation"],
+            f"RESET-{self.organization.public_id}",
+        )
 
     def test_apply_requires_server_side_guard_and_exact_confirmation(self):
         confirmation = f"RESET-{self.organization.public_id}"

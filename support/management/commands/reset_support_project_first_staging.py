@@ -1,32 +1,15 @@
-from collections import OrderedDict
-
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from support.models import (
-    DriverVehicleAssignment,
-    HousingAssignment,
-    HousingPlace,
-    HousingRoom,
-    HousingSite,
-    ProjectCrew,
-    ProjectScheduleTemplate,
-    ScheduledShiftBatch,
-    ScheduledWorkShift,
-    ShiftTemplate,
-    SupportConnection,
-    SupportOrganization,
-    TransportCrew,
-    TransportRoute,
-    Vehicle,
-    WorkerProjectAssignment,
-    WorkProject,
-    WorkTimeEntry,
-    Worksite,
-)
+from support.models import SupportOrganization
 from support.services.audit import record_audit_event
+from support.services.project_first_reset import (
+    build_project_first_reset_plan,
+    preserved_counts,
+    reset_target_querysets,
+)
 
 
 class Command(BaseCommand):
@@ -66,11 +49,10 @@ class Command(BaseCommand):
             raise CommandError("support_organization_not_found")
 
         actor = self._resolve_actor(options["actor_email"])
-        targets = self._target_querysets(organization)
-        preserved = self._preserved_counts(organization)
-        target_counts = OrderedDict(
-            (label, queryset.count()) for label, queryset in targets.items()
-        )
+        plan = build_project_first_reset_plan(organization)
+        targets = reset_target_querysets(organization)
+        preserved = plan["preserve_counts"]
+        target_counts = plan["delete_counts"]
 
         self.stdout.write(
             f"Organization: {organization.display_name} ({organization.public_id})"
@@ -107,13 +89,13 @@ class Command(BaseCommand):
             for queryset in targets.values():
                 queryset.delete()
 
-            after = self._preserved_counts(organization)
+            after = preserved_counts(organization)
             if after != preserved:
                 raise CommandError("preserved_data_count_changed; transaction_rolled_back")
 
             remaining = {
                 label: queryset.count()
-                for label, queryset in self._target_querysets(organization).items()
+                for label, queryset in reset_target_querysets(organization).items()
                 if queryset.exists()
             }
             if remaining:
@@ -154,62 +136,3 @@ class Command(BaseCommand):
         if actor is None:
             raise CommandError("active_jobhub_operator_not_found")
         return actor
-
-    @staticmethod
-    def _target_querysets(organization):
-        return OrderedDict(
-            (
-                ("project_crews", ProjectCrew.objects.filter(organization=organization)),
-                ("transport_crews", TransportCrew.objects.filter(organization=organization)),
-                (
-                    "scheduled_work_shifts",
-                    ScheduledWorkShift.objects.filter(organization=organization),
-                ),
-                ("transport_routes", TransportRoute.objects.filter(organization=organization)),
-                (
-                    "driver_vehicle_assignments",
-                    DriverVehicleAssignment.objects.filter(organization=organization),
-                ),
-                (
-                    "worker_project_assignments",
-                    WorkerProjectAssignment.objects.filter(organization=organization),
-                ),
-                (
-                    "project_schedule_templates",
-                    ProjectScheduleTemplate.objects.filter(project__organization=organization),
-                ),
-                ("work_projects", WorkProject.objects.filter(organization=organization)),
-                ("worksites", Worksite.objects.filter(organization=organization)),
-                (
-                    "scheduled_shift_batches",
-                    ScheduledShiftBatch.objects.filter(organization=organization),
-                ),
-                ("shift_templates", ShiftTemplate.objects.filter(organization=organization)),
-            )
-        )
-
-    @staticmethod
-    def _preserved_counts(organization):
-        return OrderedDict(
-            (
-                ("workers", SupportConnection.objects.filter(organization=organization).count()),
-                ("housing_sites", HousingSite.objects.filter(organization=organization).count()),
-                (
-                    "housing_rooms",
-                    HousingRoom.objects.filter(site__organization=organization).count(),
-                ),
-                (
-                    "housing_places",
-                    HousingPlace.objects.filter(room__site__organization=organization).count(),
-                ),
-                (
-                    "housing_assignments",
-                    HousingAssignment.objects.filter(organization=organization).count(),
-                ),
-                ("vehicles", Vehicle.objects.filter(organization=organization).count()),
-                (
-                    "work_time_entries",
-                    WorkTimeEntry.objects.filter(organization=organization).count(),
-                ),
-            )
-        )
