@@ -26,6 +26,7 @@ from .feature_flags import is_project_first_workspace_enabled
 from .models import (
     DriverVehicleAssignment,
     ProjectCrew,
+    ProjectCrewDriverSubstitution,
     ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
@@ -42,8 +43,10 @@ from .services.project_crews import (
     PASSENGER_SCOPE_FUTURE,
     PASSENGER_SCOPE_SELECTED,
     assign_project_crew_passenger,
+    assign_project_crew_substitute_driver,
     create_project_crew,
     publish_project_crew_shifts,
+    project_crew_substitute_driver_candidates,
     release_project_crew_shifts,
     remove_project_crew_passenger,
     replace_project_crew_driver,
@@ -110,6 +113,13 @@ COPY = {
         "passenger_added": "Пассажир добавлен.",
         "passenger_removed": "Пассажир исключён.",
         "driver_replaced": "Водитель экипажа изменён.",
+        "substitute_driver": "Подменный водитель",
+        "assign_substitute": "Подменить водителя",
+        "substitute_on": "Подменный водитель на",
+        "substitute_dates_hint": "Выберите в календаре только даты отсутствия основного водителя.",
+        "substitute_assigned": "Подменный водитель назначен.",
+        "error_substitution_requires_driver_absence": "Подмену можно назначить только на даты отсутствия основного водителя.",
+        "error_substitute_driver_unavailable": "Выбранный водитель занят или недоступен хотя бы в одну из выбранных дат.",
         "choose_dates": "Выберите один или несколько опубликованных дней.",
         "reset_plan": "План очистки",
         "reset_title": "Предварительный план очистки staging",
@@ -147,6 +157,11 @@ COPY = {
         "created": "Crew created.", "shifts_saved": "Crew schedule saved.",
         "shifts_released": "Selected days released.", "passenger_added": "Passenger added.",
         "passenger_removed": "Passenger removed.", "driver_replaced": "Crew driver replaced.",
+        "substitute_driver": "Substitute driver", "assign_substitute": "Assign substitute driver",
+        "substitute_on": "Substitute driver on", "substitute_dates_hint": "Select only dates when the primary driver is absent.",
+        "substitute_assigned": "Substitute driver assigned.",
+        "error_substitution_requires_driver_absence": "A substitute can be assigned only when the primary driver is absent.",
+        "error_substitute_driver_unavailable": "The selected driver is busy or unavailable on at least one selected date.",
         "choose_dates": "Select one or more published days.",
         "reset_plan": "Reset plan", "reset_title": "Staging reset preview",
         "reset_subtitle": "This is a read-only report. No data is changed or deleted now.",
@@ -180,6 +195,11 @@ COPY = {
         "created": "Ekipa została utworzona.", "shifts_saved": "Grafik ekipy został zapisany.",
         "shifts_released": "Wybrane dni zostały zwolnione.", "passenger_added": "Pasażer został dodany.",
         "passenger_removed": "Pasażer został usunięty.", "driver_replaced": "Kierowca ekipy został zmieniony.",
+        "substitute_driver": "Kierowca zastępczy", "assign_substitute": "Wyznacz kierowcę zastępczego",
+        "substitute_on": "Kierowca zastępczy na", "substitute_dates_hint": "Wybierz tylko dni nieobecności głównego kierowcy.",
+        "substitute_assigned": "Kierowca zastępczy został wyznaczony.",
+        "error_substitution_requires_driver_absence": "Zastępstwo można wyznaczyć tylko na dni nieobecności głównego kierowcy.",
+        "error_substitute_driver_unavailable": "Wybrany kierowca jest zajęty lub niedostępny co najmniej jednego wybranego dnia.",
         "choose_dates": "Wybierz co najmniej jeden opublikowany dzień.",
         "reset_plan": "Plan czyszczenia", "reset_title": "Podgląd czyszczenia staging",
         "reset_subtitle": "To tylko raport do odczytu. Żadne dane nie są teraz zmieniane ani usuwane.",
@@ -213,6 +233,11 @@ COPY = {
         "created": "Екіпаж створено.", "shifts_saved": "Графік екіпажу збережено.",
         "shifts_released": "Вибрані дні звільнено.", "passenger_added": "Пасажира додано.",
         "passenger_removed": "Пасажира виключено.", "driver_replaced": "Водія екіпажу змінено.",
+        "substitute_driver": "Підмінний водій", "assign_substitute": "Призначити підмінного водія",
+        "substitute_on": "Підмінний водій на", "substitute_dates_hint": "Виберіть лише дні відсутності основного водія.",
+        "substitute_assigned": "Підмінного водія призначено.",
+        "error_substitution_requires_driver_absence": "Підміну можна призначити лише на дні відсутності основного водія.",
+        "error_substitute_driver_unavailable": "Вибраний водій зайнятий або недоступний щонайменше в один із вибраних днів.",
         "choose_dates": "Виберіть один або кілька опублікованих днів.",
         "reset_plan": "План очищення", "reset_title": "Попередній план очищення staging",
         "reset_subtitle": "Це лише звіт для читання. Зараз дані не змінюються і не видаляються.",
@@ -295,9 +320,14 @@ def _copy(request):
     return COPY.get(get_lang(request), COPY["ru"])
 
 
-def _validation_message(error):
+def _validation_message(error, copy=None):
     detail = getattr(error, "detail", None)
     if isinstance(detail, dict):
+        code = detail.get("code")
+        if code and copy:
+            localized = copy.get(f"error_{code}")
+            if localized:
+                return localized
         message = detail.get("message")
         if message:
             return str(message)
@@ -366,7 +396,8 @@ def _shift_month(value, offset):
     return date(month_index // 12, month_index % 12 + 1, 1)
 
 
-def _crew_calendar(crew, *, selected_month, today):
+def _crew_calendar(crew, *, selected_month, today, driver_absence_dates=None):
+    driver_absence_dates = set(driver_absence_dates or ())
     shifts = [
         shift
         for shift in crew.calendar_shifts.all()
@@ -394,6 +425,7 @@ def _crew_calendar(crew, *, selected_month, today):
                 "is_today": work_date == today,
                 "has_published": shift is not None,
                 "has_no_driver": has_no_driver,
+                "is_driver_absence": work_date in driver_absence_dates,
             }
         )
     return days, shifts
@@ -454,6 +486,14 @@ def _project_context(request, organization, project, *, selected_month):
                 ).select_related("connection__candidate").order_by(
                     "work_date", "connection_id"
                 ),
+            ),
+            Prefetch(
+                "driver_substitutions",
+                queryset=ProjectCrewDriverSubstitution.objects.select_related(
+                    "primary_driver_connection__candidate",
+                    "substitute_driver_connection__candidate",
+                    "vehicle",
+                ).order_by("work_date", "created_at", "id"),
             ),
         )
         .order_by("internal_name", "id")
@@ -531,6 +571,40 @@ def _project_context(request, organization, project, *, selected_month):
             crew.current_resource.absence_dates_label = ", ".join(
                 item.strftime("%d.%m") for item in driver_absence_dates
             )
+            crew.driver_absence_dates = driver_absence_dates
+            crew.driver_absence_date_values = {
+                item.isoformat() for item in driver_absence_dates
+            }
+        else:
+            crew.driver_absence_dates = []
+            crew.driver_absence_date_values = set()
+
+        active_substitutions = [
+            item
+            for item in crew.driver_substitutions.all()
+            if item.state == ProjectCrewDriverSubstitution.STATE_ACTIVE
+            and item.work_date >= today
+        ]
+        substitution_groups = {}
+        for substitution in active_substitutions:
+            group = substitution_groups.setdefault(
+                substitution.substitute_driver_connection_id,
+                {
+                    "connection": substitution.substitute_driver_connection,
+                    "display_name": _display_name(
+                        substitution.substitute_driver_connection
+                    ),
+                    "work_dates": [],
+                },
+            )
+            group["work_dates"].append(substitution.work_date)
+        crew.current_substitution_groups = []
+        for group in substitution_groups.values():
+            group["work_dates"] = sorted(set(group["work_dates"]))
+            group["dates_label"] = ", ".join(
+                item.strftime("%d.%m") for item in group["work_dates"]
+            )
+            crew.current_substitution_groups.append(group)
         crew.open_passengers = list(crew.passenger_assignments.all())
         roster_by_connection = {
             passenger.connection_id: passenger for passenger in crew.open_passengers
@@ -622,6 +696,7 @@ def _project_context(request, organization, project, *, selected_month):
             crew,
             selected_month=selected_month,
             today=today,
+            driver_absence_dates=crew.driver_absence_dates,
         )
         crew.schedule_example = (
             crew.month_shifts[0]
@@ -636,6 +711,39 @@ def _project_context(request, organization, project, *, selected_month):
         crew.passenger_driver_options = [
             item for item in crew.display_passengers if item["connection"].has_driving_license
         ]
+        substitute_options = {}
+        for work_date in crew.driver_absence_dates:
+            try:
+                available = project_crew_substitute_driver_candidates(
+                    crew=crew,
+                    work_dates=[work_date],
+                    candidate_connections=connections,
+                )
+            except ValidationError:
+                available = []
+            for candidate in available:
+                option = substitute_options.setdefault(
+                    candidate.id,
+                    {
+                        "connection": candidate,
+                        "display_name": _display_name(candidate),
+                        "is_current_crew_passenger": candidate.is_current_crew_passenger,
+                        "work_dates": [],
+                    },
+                )
+                option["work_dates"].append(work_date)
+        crew.substitute_driver_options = sorted(
+            substitute_options.values(),
+            key=lambda item: (
+                not item["is_current_crew_passenger"],
+                item["display_name"].casefold(),
+                item["connection"].id,
+            ),
+        )
+        for option in crew.substitute_driver_options:
+            option["available_dates_value"] = ",".join(
+                item.isoformat() for item in sorted(set(option["work_dates"]))
+            )
 
     available_drivers = [
         item for item in connections
@@ -750,6 +858,19 @@ def _handle_action(request, *, organization, project, copy):
             effective_on=parse_date(request.POST.get("effective_on")) or timezone.localdate(),
         )
         return copy["driver_replaced"]
+    if action == "driver_substitute":
+        substitute = get_object_or_404(
+            _scoped_connections(request, organization),
+            public_id=request.POST.get("driver_id"),
+            has_driving_license=True,
+        )
+        assign_project_crew_substitute_driver(
+            actor=request.user,
+            crew=crew,
+            substitute_driver_connection=substitute,
+            work_dates=_parse_dates(request),
+        )
+        return copy["substitute_assigned"]
     raise ValidationError({"message": "Unknown project crew operation."})
 
 
@@ -795,7 +916,7 @@ def project_first_workspace(request, project_public_id=None):
                     copy=copy,
                 )
             except (APIException, ValueError) as error:
-                messages.error(request, _validation_message(error))
+                messages.error(request, _validation_message(error, copy))
             else:
                 messages.success(request, success)
             return redirect(

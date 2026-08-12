@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from support.models import (
     ProjectCrew,
+    ProjectCrewDriverSubstitution,
     ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewShift,
@@ -664,6 +665,82 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertTrue(calendar_day["has_no_driver"])
         self.assertContains(project_page, "has-no-driver")
         self.assertContains(project_page, project_page.context["pf"]["driver_missing"])
+
+    def test_owner_assigns_substitute_driver_for_selected_absence_date(self):
+        crew = self._create_crew()
+        work_date = date(2026, 8, 12)
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "shifts_publish",
+                "crew_id": str(crew.public_id),
+                "work_dates": [work_date.isoformat()],
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:45",
+                "break_minutes": "0",
+            },
+        )
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "passenger_add",
+                "crew_id": str(crew.public_id),
+                "connection_id": str(self.second_driver.public_id),
+                "scope": "selected",
+                "work_dates": [work_date.isoformat()],
+            },
+        )
+        self.client.post(
+            self._worker_url(self.driver),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "scheduled_shifts_clear",
+                "work_dates": [work_date.isoformat()],
+                "return_tab": "work_transport",
+                "return_month": "2026-08",
+            },
+        )
+
+        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        self.assertContains(page, "data-pf-substitute-form", html=False)
+        self.assertContains(page, 'data-pf-driver-absence="1"', html=False)
+        self.assertContains(page, str(self.second_driver.public_id))
+
+        response = self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "driver_substitute",
+                "crew_id": str(crew.public_id),
+                "driver_id": str(self.second_driver.public_id),
+                "work_dates": [work_date.isoformat()],
+                "return_month": "2026-08",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        substitution = ProjectCrewDriverSubstitution.objects.get(
+            crew=crew,
+            work_date=work_date,
+            state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+        )
+        self.assertEqual(
+            substitution.substitute_driver_connection,
+            self.second_driver,
+        )
+        self.assertTrue(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=work_date,
+                connection=self.second_driver,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+            ).exists()
+        )
+        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        self.assertContains(page, page.context["pf"]["substitute_on"])
+        self.assertContains(page, self.second_driver.candidate.get_full_name())
 
     def test_passenger_picker_excludes_current_driver_and_existing_passengers(self):
         crew = self._create_crew()

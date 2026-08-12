@@ -23,6 +23,7 @@
   .pf-list{display:grid;gap:6px}.pf-person{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border:1px solid var(--line);border-radius:11px;background:rgba(5,22,36,.25)}
   .pf-person-copy{min-width:0}.pf-absence{display:block;margin-top:3px;color:#ff8585;font-size:10px;font-weight:800}
   .pf-person form{display:flex;align-items:center;gap:6px}.pf-person strong{font-size:12px}
+  .pf-substitutions{display:grid;gap:3px;margin-top:6px}.pf-substitution{color:#ffd37a;font-size:10px;font-weight:800}.pf-substitute-form{display:grid;gap:7px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
   .pf-create{margin-top:14px;padding:14px;border:1px solid rgba(24,223,103,.3);border-radius:16px;background:rgba(24,223,103,.06)}
   .pf-create h2{margin:0 0 10px;font-size:17px}.pf-empty{padding:18px;text-align:center;border:1px dashed var(--line);border-radius:14px;color:var(--muted)}
   .pf-crew-summary{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.9fr) auto;gap:10px;padding:10px;border:1px solid var(--line);border-radius:12px;background:rgba(5,22,36,.23)}
@@ -46,6 +47,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var count=form.querySelector('[data-pf-count]');
     var crew=form.closest('[data-pf-crew]');
     var passengerForms=crew?Array.prototype.slice.call(crew.querySelectorAll('[data-pf-passenger-form]')):[];
+    var substituteForms=crew?Array.prototype.slice.call(crew.querySelectorAll('[data-pf-substitute-form]')):[];
     function syncPassengerForms(selected){
       var publishedSelected=selected.filter(function(input){return input.dataset.pfHasShift==='1';});
       passengerForms.forEach(function(passengerForm){
@@ -62,9 +64,25 @@ document.addEventListener('DOMContentLoaded',function(){
         if(hint)hint.hidden=!(selectedMode&&publishedSelected.length===0);
       });
     }
-    function sync(){var selected=inputs.filter(function(input){return input.checked;});inputs.forEach(function(input){input.closest('[data-pf-day]')?.classList.toggle('is-selected',input.checked);});if(count)count.textContent=selected.length;if(actions)actions.hidden=selected.length===0;syncPassengerForms(selected);}
+    function syncSubstituteForms(selected){
+      substituteForms.forEach(function(substituteForm){
+        var target=substituteForm.querySelector('[data-pf-substitute-dates]');
+        var select=substituteForm.querySelector('[data-pf-substitute-select]');
+        var button=substituteForm.querySelector('[data-pf-substitute-submit]');
+        var hint=substituteForm.querySelector('[data-pf-substitute-hint]');
+        var valid=selected.length>0&&selected.every(function(input){return input.dataset.pfDriverAbsence==='1'&&input.dataset.pfHasShift==='1';});
+        if(target){target.replaceChildren();if(valid){selected.forEach(function(input){var hidden=document.createElement('input');hidden.type='hidden';hidden.name='work_dates';hidden.value=input.value;target.appendChild(hidden);});}}
+        var availableCount=0;
+        if(select){Array.prototype.slice.call(select.options).forEach(function(option,index){if(index===0)return;var dates=(option.dataset.availableDates||'').split(',').filter(Boolean);var available=valid&&selected.every(function(input){return dates.indexOf(input.value)!==-1;});option.disabled=!available;option.hidden=!available;if(available)availableCount+=1;});if(select.selectedOptions[0]&&select.selectedOptions[0].disabled)select.value='';}
+        if(button)button.disabled=!valid||availableCount===0||!select||!select.value;
+        if(select)select.disabled=!valid||availableCount===0;
+        if(hint)hint.hidden=valid&&availableCount>0;
+      });
+    }
+    function sync(){var selected=inputs.filter(function(input){return input.checked;});inputs.forEach(function(input){input.closest('[data-pf-day]')?.classList.toggle('is-selected',input.checked);});if(count)count.textContent=selected.length;if(actions)actions.hidden=selected.length===0;syncPassengerForms(selected);syncSubstituteForms(selected);}
     inputs.forEach(function(input){var day=input.closest('[data-pf-day]');if(!day)return;day.addEventListener('click',function(event){event.preventDefault();form.querySelectorAll('[data-pf-day]').forEach(function(item){item.classList.toggle('is-viewed',item===day);});});day.addEventListener('dblclick',function(event){event.preventDefault();window.getSelection()?.removeAllRanges();input.checked=!input.checked;sync();});});
     passengerForms.forEach(function(passengerForm){passengerForm.querySelector('[data-pf-passenger-scope]')?.addEventListener('change',sync);});
+    substituteForms.forEach(function(substituteForm){substituteForm.querySelector('[data-pf-substitute-select]')?.addEventListener('change',sync);});
     form.querySelector('[data-pf-clear]')?.addEventListener('click',function(){inputs.forEach(function(input){input.checked=false;});sync();});sync();
   });
 });
@@ -105,7 +123,26 @@ document.addEventListener('DOMContentLoaded',function(){
 
           <div class="pf-panels">
             <section class="pf-panel">
-              {% if crew.current_resource %}<div class="pf-crew-summary"><div><small>{{ pf.driver }}</small><strong>{{ crew.current_resource.driver_name }}</strong><span>{{ crew.current_resource.vehicle.registration_identifier }} · {{ crew.current_resource.vehicle.internal_name }}</span>{% if crew.current_resource.absence_dates_label %}<span class="pf-absence">{{ pf.absent_dates }}: {{ crew.current_resource.absence_dates_label }}</span>{% endif %}{% if crew.current_resource.day_off_dates_label %}<span class="pf-absence">{{ pf.day_off }}: {{ crew.current_resource.day_off_dates_label }}</span>{% endif %}</div><div><small>{{ pf.schedule }}</small><strong>{{ project.worker_visible_name }}</strong><span>{% if crew.schedule_example %}{{ crew.schedule_example.starts_at|time:"H:i" }}–{{ crew.schedule_example.ends_at|time:"H:i" }}{% else %}{{ pf.no_shifts }}{% endif %}</span></div><div class="pf-occupancy"><small>{{ pf.seats }}</small><strong>{{ crew.occupied }}/{{ crew.current_resource.vehicle.seat_capacity }}</strong></div></div>{% endif %}
+              {% if crew.current_resource %}
+                <div class="pf-crew-summary">
+                  <div>
+                    <small>{{ pf.driver }}</small><strong>{{ crew.current_resource.driver_name }}</strong><span>{{ crew.current_resource.vehicle.registration_identifier }} · {{ crew.current_resource.vehicle.internal_name }}</span>
+                    {% if crew.current_resource.absence_dates_label %}<span class="pf-absence">{{ pf.absent_dates }}: {{ crew.current_resource.absence_dates_label }}</span>{% endif %}
+                    {% if crew.current_resource.day_off_dates_label %}<span class="pf-absence">{{ pf.day_off }}: {{ crew.current_resource.day_off_dates_label }}</span>{% endif %}
+                    {% if crew.current_substitution_groups %}<div class="pf-substitutions">{% for substitution in crew.current_substitution_groups %}<span class="pf-substitution">{{ pf.substitute_on }} {{ substitution.dates_label }}: {{ substitution.display_name }}</span>{% endfor %}</div>{% endif %}
+                  </div>
+                  <div><small>{{ pf.schedule }}</small><strong>{{ project.worker_visible_name }}</strong><span>{% if crew.schedule_example %}{{ crew.schedule_example.starts_at|time:"H:i" }}–{{ crew.schedule_example.ends_at|time:"H:i" }}{% else %}{{ pf.no_shifts }}{% endif %}</span></div>
+                  <div class="pf-occupancy"><small>{{ pf.seats }}</small><strong>{{ crew.occupied }}/{{ crew.current_resource.vehicle.seat_capacity }}</strong></div>
+                </div>
+                {% if crew.driver_absence_dates %}
+                  <form method="post" class="pf-substitute-form" data-pf-substitute-form>
+                    {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="driver_substitute"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><span data-pf-substitute-dates></span>
+                    <select class="jh-input" name="driver_id" required data-pf-substitute-select disabled><option value="">{{ pf.substitute_driver }}</option>{% for option in crew.substitute_driver_options %}<option value="{{ option.connection.public_id }}" data-available-dates="{{ option.available_dates_value }}">{{ option.display_name }}{% if option.is_current_crew_passenger %} · {{ pf.passengers }}{% endif %}</option>{% endfor %}</select>
+                    <p class="pf-muted" data-pf-substitute-hint>{{ pf.substitute_dates_hint }}</p>
+                    <button class="jh-btn" type="submit" data-pf-substitute-submit disabled>{{ pf.assign_substitute }}</button>
+                  </form>
+                {% endif %}
+              {% endif %}
               <div class="pf-passenger-head"><h3>{{ pf.passengers }}</h3>{% if crew.current_resource %}<span class="pf-passenger-count">{{ crew.display_passengers|length }} / {{ crew.current_resource.vehicle.seat_capacity|add:'-1' }}</span>{% endif %}</div>
               {% if crew.display_passengers %}
                 <div class="pf-list">
@@ -149,7 +186,7 @@ document.addEventListener('DOMContentLoaded',function(){
                 <div class="pf-calendar-shell">
                   <div class="pf-calendar-toolbar"><div class="pf-calendar-nav"><a class="jh-btn" href="{{ calendar_previous_url }}" aria-label="Previous month">←</a></div><div class="pf-calendar-toolbar-copy"><span>{{ pf.month_navigation }}</span><strong>{{ selected_month|date:"F Y" }}</strong></div><div class="pf-calendar-nav"><a class="jh-btn" href="{{ calendar_today_url }}">{{ pf.today }}</a><a class="jh-btn" href="{{ calendar_next_url }}" aria-label="Next month">→</a></div></div>
                   <div class="pf-calendar-weekdays" aria-hidden="true">{% for weekday in calendar_weekday_labels %}<span>{{ weekday }}</span>{% endfor %}</div>
-                  <div class="pf-calendar">{% for day in crew.calendar_days %}{% if day %}<label class="pf-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_no_driver %} has-no-driver{% endif %}" data-pf-day><input class="pf-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-pf-date data-pf-has-shift="{% if day.has_published %}1{% else %}0{% endif %}"><span class="pf-calendar-content"><span class="pf-calendar-number">{{ day.date|date:"j" }}</span>{% if day.shift %}<span class="pf-calendar-time">{{ day.shift.starts_at|time:"H:i" }}–{{ day.shift.ends_at|time:"H:i" }}</span>{% endif %}</span></label>{% else %}<div class="pf-calendar-empty"></div>{% endif %}{% endfor %}</div>
+                  <div class="pf-calendar">{% for day in crew.calendar_days %}{% if day %}<label class="pf-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_no_driver %} has-no-driver{% endif %}" data-pf-day><input class="pf-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-pf-date data-pf-has-shift="{% if day.has_published %}1{% else %}0{% endif %}" data-pf-driver-absence="{% if day.is_driver_absence %}1{% else %}0{% endif %}"><span class="pf-calendar-content"><span class="pf-calendar-number">{{ day.date|date:"j" }}</span>{% if day.shift %}<span class="pf-calendar-time">{{ day.shift.starts_at|time:"H:i" }}–{{ day.shift.ends_at|time:"H:i" }}</span>{% endif %}</span></label>{% else %}<div class="pf-calendar-empty"></div>{% endif %}{% endfor %}</div>
                   <div class="pf-calendar-actions" data-pf-actions hidden><div class="pf-calendar-selection"><span>{{ pf.selected_days }}: <strong data-pf-count>0</strong></span><button class="jh-btn" type="button" data-pf-clear>{{ pf.clear_selection }}</button></div><div class="pf-row three"><label class="pf-field"><span>{{ pf.shift_start }}</span><input class="jh-input" type="time" name="starts_at_time" value="06:00" required></label><label class="pf-field"><span>{{ pf.shift_end }}</span><input class="jh-input" type="time" name="ends_at_time" value="14:45" required></label><label class="pf-field"><span>{{ pf.break }}</span><input class="jh-input" type="number" min="0" max="720" name="break_minutes" value="0"></label></div><div class="jh-actions"><button class="jh-btn primary" name="action" value="shifts_publish" type="submit">{{ pf.publish }}</button><button class="jh-btn danger" name="action" value="shifts_release" type="submit" formnovalidate>{{ pf.release }}</button></div></div>
                   <div class="pf-calendar-legend"><span><i></i>{{ pf.published }}</span><span><i class="no-driver"></i>{{ pf.driver_missing }}</span></div>
                 </div>

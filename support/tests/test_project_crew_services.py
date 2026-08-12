@@ -8,6 +8,7 @@ from rest_framework.exceptions import ValidationError
 from support.models import (
     AuditEvent,
     DriverVehicleAssignment,
+    ProjectCrewDriverSubstitution,
     ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
@@ -26,6 +27,7 @@ from support.services.organizations import activate_organization, create_organiz
 from support.services.project_crews import (
     PASSENGER_SCOPE_FUTURE,
     PASSENGER_SCOPE_SELECTED,
+    assign_project_crew_substitute_driver,
     assign_project_crew_passenger,
     create_project_crew,
     mark_worker_schedule_days_off,
@@ -527,6 +529,135 @@ class ProjectCrewServiceTests(TestCase):
         self.assertEqual(
             self._error_code(error.exception),
             "substitution_requires_driver_absence",
+        )
+
+    def test_assign_substitute_driver_only_on_primary_absence_dates(self):
+        crew = self._crew()
+        dates = [date(2026, 8, 14), date(2026, 8, 15)]
+        self.passenger.has_driving_license = True
+        self.passenger.save(update_fields=["has_driving_license", "updated_at"])
+        self._publish(crew, dates)
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=dates[0],
+        )
+        release_project_crew_member_days(
+            actor=self.owner,
+            connection=self.driver,
+            work_dates=dates,
+        )
+
+        substitutions = assign_project_crew_substitute_driver(
+            actor=self.owner,
+            crew=crew,
+            substitute_driver_connection=self.passenger,
+            work_dates=dates,
+        )
+
+        self.assertEqual(len(substitutions), 2)
+        self.assertTrue(all(item.substitute_was_passenger for item in substitutions))
+        self.assertEqual(
+            ProjectCrewDriverSubstitution.objects.filter(
+                crew=crew,
+                state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+            ).count(),
+            2,
+        )
+        for work_date in dates:
+            member = ProjectCrewShiftMember.objects.get(
+                shift__crew=crew,
+                shift__work_date=work_date,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+            )
+            self.assertEqual(member.connection, self.passenger)
+            self.assertEqual(member.vehicle, self.vehicle)
+            self.assertTrue(
+                ScheduledWorkShift.objects.filter(
+                    project_crew_member=member,
+                    connection=self.passenger,
+                    state=ScheduledWorkShift.STATE_PUBLISHED,
+                ).exists()
+            )
+
+    def test_new_substitute_replaces_entire_previous_selection_and_restores_passenger(self):
+        crew = self._crew()
+        dates = [date(2026, 8, 14), date(2026, 8, 15)]
+        self.passenger.has_driving_license = True
+        self.passenger.save(update_fields=["has_driving_license", "updated_at"])
+        self._publish(crew, dates)
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.second_driver,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=dates[0],
+        )
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=dates[0],
+        )
+        release_project_crew_member_days(
+            actor=self.owner,
+            connection=self.driver,
+            work_dates=dates,
+        )
+        assign_project_crew_substitute_driver(
+            actor=self.owner,
+            crew=crew,
+            substitute_driver_connection=self.second_driver,
+            work_dates=dates,
+        )
+
+        replacements = assign_project_crew_substitute_driver(
+            actor=self.owner,
+            crew=crew,
+            substitute_driver_connection=self.passenger,
+            work_dates=[dates[1]],
+        )
+
+        self.assertEqual(len(replacements), 1)
+        self.assertEqual(
+            ProjectCrewDriverSubstitution.objects.filter(
+                crew=crew,
+                substitute_driver_connection=self.second_driver,
+                state=ProjectCrewDriverSubstitution.STATE_REPLACED,
+            ).count(),
+            2,
+        )
+        self.assertFalse(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=dates[0],
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+            ).exists()
+        )
+        self.assertTrue(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=dates[0],
+                connection=self.second_driver,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).exists()
+        )
+        new_driver = ProjectCrewShiftMember.objects.get(
+            shift__crew=crew,
+            shift__work_date=dates[1],
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+        )
+        self.assertEqual(new_driver.connection, self.passenger)
+        self.assertTrue(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=dates[1],
+                connection=self.second_driver,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).exists()
         )
 
     def test_selected_passenger_replaces_other_passenger_day(self):

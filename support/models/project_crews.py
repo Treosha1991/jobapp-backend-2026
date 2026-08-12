@@ -500,6 +500,10 @@ class ProjectCrewDriverSubstitution(models.Model):
         on_delete=models.PROTECT,
         related_name="project_crew_driver_substitutions",
     )
+    substitute_was_passenger = models.BooleanField(
+        default=False,
+        help_text="Whether the substitute must return to the passenger role when replaced.",
+    )
     state = models.CharField(max_length=16, choices=STATE_CHOICES, default=STATE_ACTIVE)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

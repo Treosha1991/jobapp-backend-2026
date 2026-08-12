@@ -14,6 +14,7 @@ from rest_framework.exceptions import ValidationError
 from support.models import (
     DriverVehicleAssignment,
     ProjectCrew,
+    ProjectCrewDriverSubstitution,
     ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
@@ -462,6 +463,14 @@ def project_crew_substitute_driver_candidates(
             work_date__in=dates,
         ).values_list("connection_id", flat=True)
     )
+    active_substitute_pairs = set(
+        ProjectCrewDriverSubstitution.objects.filter(
+            crew=crew,
+            state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+            work_date__in=dates,
+            substitute_driver_connection__in=candidates,
+        ).values_list("substitute_driver_connection_id", "work_date")
+    )
     schedule_conflicts = ScheduledWorkShift.objects.filter(
         organization=crew.organization,
         connection__in=candidates,
@@ -470,13 +479,18 @@ def project_crew_substitute_driver_candidates(
             ScheduledWorkShift.STATE_DRAFT,
             ScheduledWorkShift.STATE_PUBLISHED,
         ),
-    ).exclude(
-        project_crew_member__shift__crew=crew,
-        project_crew_member__role=ProjectCrewShiftMember.ROLE_PASSENGER,
-    )
-    unavailable_ids.update(
-        schedule_conflicts.values_list("connection_id", flat=True)
-    )
+    ).select_related("project_crew_member__shift")
+    for conflict in schedule_conflicts:
+        membership = conflict.project_crew_member
+        if membership is not None and membership.shift.crew_id == crew.id:
+            if membership.role == ProjectCrewShiftMember.ROLE_PASSENGER:
+                continue
+            if (
+                membership.role == ProjectCrewShiftMember.ROLE_DRIVER
+                and (conflict.connection_id, conflict.work_date) in active_substitute_pairs
+            ):
+                continue
+        unavailable_ids.add(conflict.connection_id)
 
     available = [item for item in candidates if item.id not in unavailable_ids]
     for item in available:
@@ -490,6 +504,169 @@ def project_crew_substitute_driver_candidates(
             item.id,
         ),
     )
+
+
+def _restore_replaced_substitute_membership(*, substitution, actor):
+    shift = ProjectCrewShift.objects.select_for_update().filter(
+        crew=substitution.crew,
+        work_date=substitution.work_date,
+        state=ProjectCrewShift.STATE_PUBLISHED,
+    ).first()
+    if shift is None:
+        return
+    member = shift.members.select_for_update().filter(
+        connection=substitution.substitute_driver_connection,
+        role=ProjectCrewShiftMember.ROLE_DRIVER,
+    ).first()
+    if member is None:
+        return
+    if substitution.substitute_was_passenger:
+        member.role = ProjectCrewShiftMember.ROLE_PASSENGER
+        member.vehicle = None
+        member.full_clean()
+        member.save(update_fields=("role", "vehicle", "updated_at"))
+        _sync_member_worker_calendar(member=member, actor=actor)
+    else:
+        member.delete()
+
+
+@transaction.atomic
+def assign_project_crew_substitute_driver(
+    *,
+    actor,
+    crew,
+    substitute_driver_connection,
+    work_dates,
+):
+    """Replace the active substitute selection for a crew.
+
+    The primary resource assignment is never changed. Active substitution
+    records are closed as history, then the selected worker drives the crew's
+    existing vehicle only on the chosen primary-driver absence dates.
+    """
+
+    crew = ProjectCrew.objects.select_for_update().select_related("organization").get(pk=crew.pk)
+    organization = crew.organization
+    _require_permissions(actor=actor, organization=organization)
+    substitute = SupportConnection.objects.select_for_update().get(
+        pk=substitute_driver_connection.pk
+    )
+    _require_connection(actor=actor, organization=organization, connection=substitute)
+    if not substitute.has_driving_license:
+        _operation_error(
+            "driver_licence_not_confirmed",
+            "The substitute driver must have a confirmed driving licence.",
+        )
+    dates = _normalize_dates(work_dates)
+    candidates = project_crew_substitute_driver_candidates(
+        crew=crew,
+        work_dates=dates,
+        candidate_connections=[substitute],
+    )
+    if not candidates:
+        _operation_error(
+            "substitute_driver_unavailable",
+            "The selected substitute driver is unavailable on one or more selected dates.",
+            work_dates=[item.isoformat() for item in dates],
+        )
+
+    shifts_by_date = {
+        shift.work_date: shift
+        for shift in ProjectCrewShift.objects.select_for_update().filter(
+            crew=crew,
+            work_date__in=dates,
+            state=ProjectCrewShift.STATE_PUBLISHED,
+        )
+    }
+    missing_dates = [item for item in dates if item not in shifts_by_date]
+    if missing_dates:
+        _operation_error(
+            "crew_shift_missing",
+            "A published crew shift is required on every substitution date.",
+            work_dates=[item.isoformat() for item in missing_dates],
+        )
+
+    now = timezone.now()
+    active_substitutions = list(
+        ProjectCrewDriverSubstitution.objects.select_for_update()
+        .select_related("substitute_driver_connection", "crew")
+        .filter(
+            crew=crew,
+            state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+            work_date__gte=timezone.localdate(),
+        )
+        .order_by("work_date", "id")
+    )
+    for previous in active_substitutions:
+        _restore_replaced_substitute_membership(substitution=previous, actor=actor)
+        previous.state = ProjectCrewDriverSubstitution.STATE_REPLACED
+        previous.ended_by = actor
+        previous.ended_at = now
+        previous.full_clean()
+        previous.save(update_fields=("state", "ended_by", "ended_at"))
+
+    created = []
+    for work_date in dates:
+        shift = shifts_by_date[work_date]
+        resource = _resource_for_date(crew=crew, work_date=work_date, lock=True)
+        if resource is None:
+            _operation_error(
+                "crew_resource_missing",
+                f"The crew has no primary driver and vehicle on {work_date.isoformat()}.",
+                work_date=work_date.isoformat(),
+            )
+        existing_member = shift.members.select_for_update().filter(
+            connection=substitute,
+        ).first()
+        substitute_was_passenger = bool(
+            existing_member
+            and existing_member.role == ProjectCrewShiftMember.ROLE_PASSENGER
+        )
+        shift.members.filter(role=ProjectCrewShiftMember.ROLE_DRIVER).exclude(
+            connection=substitute,
+        ).delete()
+        if existing_member is None:
+            existing_member = ProjectCrewShiftMember(
+                shift=shift,
+                connection=substitute,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+                vehicle=resource.vehicle,
+                created_by=actor,
+            )
+        else:
+            existing_member.role = ProjectCrewShiftMember.ROLE_DRIVER
+            existing_member.vehicle = resource.vehicle
+        existing_member.full_clean()
+        existing_member.save()
+        _sync_member_worker_calendar(member=existing_member, actor=actor)
+
+        substitution = ProjectCrewDriverSubstitution(
+            organization=organization,
+            crew=crew,
+            work_date=work_date,
+            primary_driver_connection=resource.driver_connection,
+            substitute_driver_connection=substitute,
+            vehicle=resource.vehicle,
+            substitute_was_passenger=substitute_was_passenger,
+            state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+            created_by=actor,
+        )
+        substitution.full_clean()
+        substitution.save()
+        created.append(substitution)
+
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.substitute_driver_assigned",
+        target=crew,
+        details={
+            "substitute_driver": str(substitute.public_id),
+            "work_dates": [item.isoformat() for item in dates],
+            "replaced_records": len(active_substitutions),
+        },
+    )
+    return created
 
 
 def _validate_existing_shift_conflicts(*, shift):
