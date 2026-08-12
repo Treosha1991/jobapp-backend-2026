@@ -378,6 +378,120 @@ def _connection_is_unavailable_for_crew_day(*, crew, connection, work_date):
     ).exists()
 
 
+def project_crew_substitute_driver_candidates(
+    *,
+    crew,
+    work_dates,
+    candidate_connections=None,
+):
+    """Return drivers available for every selected primary-driver absence.
+
+    Current passengers are allowed to take the wheel because their mirrored
+    schedule belongs to the same crew day. Any other active schedule, day off
+    or crew absence makes a worker unavailable for that date.
+    """
+
+    dates = _normalize_dates(work_dates)
+    resources_by_date = {
+        work_date: _resource_for_date(crew=crew, work_date=work_date)
+        for work_date in dates
+    }
+    if any(resource is None for resource in resources_by_date.values()):
+        _operation_error(
+            "crew_resource_missing",
+            "The crew has no primary driver and vehicle for one of the selected dates.",
+        )
+    missing_absence_dates = [
+        work_date
+        for work_date, resource in resources_by_date.items()
+        if not ProjectCrewMemberAbsence.objects.filter(
+            crew=crew,
+            connection=resource.driver_connection,
+            work_date=work_date,
+        ).exists()
+    ]
+    if missing_absence_dates:
+        _operation_error(
+            "substitution_requires_driver_absence",
+            "A substitute can be selected only for dates when the primary driver is absent.",
+            work_dates=[item.isoformat() for item in missing_absence_dates],
+        )
+
+    primary_driver_ids = {
+        resource.driver_connection_id for resource in resources_by_date.values()
+    }
+    candidates = SupportConnection.objects.filter(
+        organization=crew.organization,
+        is_archived=False,
+        has_driving_license=True,
+    ).exclude(id__in=primary_driver_ids).select_related("candidate")
+    if candidate_connections is not None:
+        candidates = candidates.filter(
+            id__in=[item.id for item in candidate_connections]
+        )
+
+    passenger_ids = set(
+        ProjectCrewPassenger.objects.filter(
+            crew=crew,
+            connection__in=candidates,
+            starts_on__lte=max(dates),
+        ).filter(
+            Q(ends_on__isnull=True) | Q(ends_on__gte=min(dates))
+        ).values_list("connection_id", flat=True)
+    )
+    passenger_ids.update(
+        ProjectCrewShiftMember.objects.filter(
+            shift__crew=crew,
+            shift__work_date__in=dates,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            connection__in=candidates,
+        ).values_list("connection_id", flat=True)
+    )
+
+    unavailable_ids = set(
+        WorkerScheduleDayOff.objects.filter(
+            organization=crew.organization,
+            connection__in=candidates,
+            work_date__in=dates,
+        ).values_list("connection_id", flat=True)
+    )
+    unavailable_ids.update(
+        ProjectCrewMemberAbsence.objects.filter(
+            organization=crew.organization,
+            connection__in=candidates,
+            work_date__in=dates,
+        ).values_list("connection_id", flat=True)
+    )
+    schedule_conflicts = ScheduledWorkShift.objects.filter(
+        organization=crew.organization,
+        connection__in=candidates,
+        work_date__in=dates,
+        state__in=(
+            ScheduledWorkShift.STATE_DRAFT,
+            ScheduledWorkShift.STATE_PUBLISHED,
+        ),
+    ).exclude(
+        project_crew_member__shift__crew=crew,
+        project_crew_member__role=ProjectCrewShiftMember.ROLE_PASSENGER,
+    )
+    unavailable_ids.update(
+        schedule_conflicts.values_list("connection_id", flat=True)
+    )
+
+    available = [item for item in candidates if item.id not in unavailable_ids]
+    for item in available:
+        item.is_current_crew_passenger = item.id in passenger_ids
+    return sorted(
+        available,
+        key=lambda item: (
+            not item.is_current_crew_passenger,
+            (item.candidate.first_name or "").casefold(),
+            (item.candidate.last_name or "").casefold(),
+            item.id,
+        ),
+    )
+
+
 def _validate_existing_shift_conflicts(*, shift):
     for member in list(shift.members.select_related("connection")):
         conflicts = _overlapping_memberships(

@@ -30,6 +30,7 @@ from support.services.project_crews import (
     create_project_crew,
     mark_worker_schedule_days_off,
     publish_project_crew_shifts,
+    project_crew_substitute_driver_candidates,
     release_project_crew_member_days,
     release_project_crew_shifts,
     remove_project_crew_passenger,
@@ -447,6 +448,85 @@ class ProjectCrewServiceTests(TestCase):
         self.assertEqual(shift.state, ProjectCrewShift.STATE_PUBLISHED)
         self.assertFalse(
             shift.members.filter(role=ProjectCrewShiftMember.ROLE_DRIVER).exists()
+        )
+
+    def test_substitute_candidates_put_available_crew_passenger_first(self):
+        crew = self._crew()
+        dates = [date(2026, 8, 14), date(2026, 8, 15)]
+        self.passenger.has_driving_license = True
+        self.passenger.save(update_fields=["has_driving_license", "updated_at"])
+        self._publish(crew, dates)
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=dates[0],
+        )
+        release_project_crew_member_days(
+            actor=self.owner,
+            connection=self.driver,
+            work_dates=dates,
+        )
+
+        candidates = project_crew_substitute_driver_candidates(
+            crew=crew,
+            work_dates=dates,
+        )
+
+        self.assertEqual(
+            [item.id for item in candidates],
+            [self.passenger.id, self.second_driver.id],
+        )
+        self.assertTrue(candidates[0].is_current_crew_passenger)
+        self.assertFalse(candidates[1].is_current_crew_passenger)
+
+    def test_substitute_candidates_exclude_driver_with_schedule_conflict(self):
+        target_crew = self._crew()
+        other_crew = self._crew(
+            driver=self.second_driver,
+            vehicle=self.second_vehicle,
+            name="Other crew",
+        )
+        work_date = date(2026, 8, 14)
+        self.passenger.has_driving_license = True
+        self.passenger.save(update_fields=["has_driving_license", "updated_at"])
+        self._publish(target_crew, [work_date])
+        self._publish(other_crew, [work_date])
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=target_crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_SELECTED,
+            selected_dates=[work_date],
+        )
+        release_project_crew_member_days(
+            actor=self.owner,
+            connection=self.driver,
+            work_dates=[work_date],
+        )
+
+        candidates = project_crew_substitute_driver_candidates(
+            crew=target_crew,
+            work_dates=[work_date],
+        )
+
+        self.assertEqual([item.id for item in candidates], [self.passenger.id])
+
+    def test_substitute_candidates_require_primary_driver_absence(self):
+        crew = self._crew()
+        work_date = date(2026, 8, 14)
+        self._publish(crew, [work_date])
+
+        with self.assertRaises(ValidationError) as error:
+            project_crew_substitute_driver_candidates(
+                crew=crew,
+                work_dates=[work_date],
+            )
+
+        self.assertEqual(
+            self._error_code(error.exception),
+            "substitution_requires_driver_absence",
         )
 
     def test_selected_passenger_replaces_other_passenger_day(self):
