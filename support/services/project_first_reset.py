@@ -12,11 +12,13 @@ from support.models import (
     HousingSite,
     ProjectCrew,
     ProjectScheduleTemplate,
+    RouteStop,
     ScheduledShiftBatch,
     ScheduledWorkShift,
     ShiftTemplate,
     SupportConnection,
     TransportCrew,
+    TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
     WorkerProjectAssignment,
@@ -45,6 +47,16 @@ def reset_target_querysets(organization, *, include_work_time=False):
             (
                 "scheduled_work_shifts",
                 ScheduledWorkShift.objects.filter(organization=organization),
+            ),
+            (
+                "transport_passenger_assignments",
+                TransportPassengerAssignment.objects.filter(
+                    route__organization=organization
+                ),
+            ),
+            (
+                "route_stops",
+                RouteStop.objects.filter(route__organization=organization),
             ),
             ("transport_routes", TransportRoute.objects.filter(organization=organization)),
             (

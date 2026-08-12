@@ -194,7 +194,9 @@ COPY = {
 RESET_OBJECT_COPY = {
     "ru": {
         "project_crews": "Новые тестовые экипажи", "transport_crews": "Старые экипажи",
-        "scheduled_work_shifts": "Плановые смены", "transport_routes": "Маршруты",
+        "scheduled_work_shifts": "Плановые смены",
+        "transport_passenger_assignments": "Пассажиры старых маршрутов",
+        "route_stops": "Остановки старых маршрутов", "transport_routes": "Маршруты",
         "driver_vehicle_assignments": "Назначения водителей на автомобили",
         "worker_project_assignments": "Назначения работников на проекты",
         "project_schedule_templates": "Шаблоны графиков проектов", "work_projects": "Проекты",
@@ -206,7 +208,9 @@ RESET_OBJECT_COPY = {
     },
     "en": {
         "project_crews": "New preview crews", "transport_crews": "Legacy crews",
-        "scheduled_work_shifts": "Planned shifts", "transport_routes": "Routes",
+        "scheduled_work_shifts": "Planned shifts",
+        "transport_passenger_assignments": "Legacy route passengers",
+        "route_stops": "Legacy route stops", "transport_routes": "Routes",
         "driver_vehicle_assignments": "Driver/vehicle assignments",
         "worker_project_assignments": "Worker/project assignments",
         "project_schedule_templates": "Project schedule templates", "work_projects": "Projects",
@@ -218,7 +222,9 @@ RESET_OBJECT_COPY = {
     },
     "pl": {
         "project_crews": "Nowe ekipy testowe", "transport_crews": "Stare ekipy",
-        "scheduled_work_shifts": "Planowane zmiany", "transport_routes": "Trasy",
+        "scheduled_work_shifts": "Planowane zmiany",
+        "transport_passenger_assignments": "Pasażerowie starych tras",
+        "route_stops": "Przystanki starych tras", "transport_routes": "Trasy",
         "driver_vehicle_assignments": "Przypisania kierowców do pojazdów",
         "worker_project_assignments": "Przypisania pracowników do projektów",
         "project_schedule_templates": "Szablony grafików projektów", "work_projects": "Projekty",
@@ -230,7 +236,9 @@ RESET_OBJECT_COPY = {
     },
     "uk": {
         "project_crews": "Нові тестові екіпажі", "transport_crews": "Старі екіпажі",
-        "scheduled_work_shifts": "Заплановані зміни", "transport_routes": "Маршрути",
+        "scheduled_work_shifts": "Заплановані зміни",
+        "transport_passenger_assignments": "Пасажири старих маршрутів",
+        "route_stops": "Зупинки старих маршрутів", "transport_routes": "Маршрути",
         "driver_vehicle_assignments": "Призначення водіїв на автомобілі",
         "worker_project_assignments": "Призначення працівників на проєкти",
         "project_schedule_templates": "Шаблони графіків проєктів", "work_projects": "Проєкти",

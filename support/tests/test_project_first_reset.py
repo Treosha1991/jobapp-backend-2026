@@ -16,6 +16,7 @@ from support.models import (
     HousingSite,
     ProjectCrew,
     ProjectScheduleTemplate,
+    RouteStop,
     ScheduledShiftBatch,
     ScheduledWorkShift,
     ShiftTemplate,
@@ -23,6 +24,7 @@ from support.models import (
     SupportConnection,
     SupportVacancy,
     TransportCrew,
+    TransportPassengerAssignment,
     TransportRoute,
     Vehicle,
     WorkerProjectAssignment,
@@ -185,7 +187,7 @@ class ProjectFirstResetCommandTests(TestCase):
             starts_on=date(2026, 8, 1),
             created_by=self.owner,
         )
-        TransportRoute.objects.create(
+        route = TransportRoute.objects.create(
             organization=self.organization,
             internal_name="Legacy route",
             worksite=worksite,
@@ -197,6 +199,24 @@ class ProjectFirstResetCommandTests(TestCase):
             created_by=self.owner,
             published_by=self.owner,
             published_at=timezone.now(),
+        )
+        pickup = RouteStop.objects.create(
+            route=route,
+            sequence=1,
+            kind=RouteStop.KIND_PICKUP,
+            label="Reset pickup",
+        )
+        dropoff = RouteStop.objects.create(
+            route=route,
+            sequence=2,
+            kind=RouteStop.KIND_DROPOFF,
+            label="Reset dropoff",
+        )
+        TransportPassengerAssignment.objects.create(
+            route=route,
+            connection=self.connection,
+            pickup_stop=pickup,
+            dropoff_stop=dropoff,
         )
         shift_template = ShiftTemplate.objects.create(
             organization=self.organization,
@@ -322,6 +342,8 @@ class ProjectFirstResetCommandTests(TestCase):
             ProjectCrew,
             TransportCrew,
             ScheduledWorkShift,
+            TransportPassengerAssignment,
+            RouteStop,
             TransportRoute,
             DriverVehicleAssignment,
             WorkerProjectAssignment,
