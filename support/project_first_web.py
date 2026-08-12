@@ -271,6 +271,110 @@ COPY = {
 }
 
 
+PROJECT_CREW_ERROR_COPY = {
+    "ru": {
+        "error_work_dates_required": "Выберите хотя бы один день в календаре.",
+        "error_shift_time_required": "Укажите время начала и окончания смены.",
+        "error_break_minutes_invalid": "Проверьте продолжительность паузы в минутах.",
+        "error_worker_not_in_organization": "Работник не относится к выбранной фирме.",
+        "error_worker_archived": "Выбранный работник находится в архиве.",
+        "error_project_not_in_organization": "Проект не относится к выбранной фирме.",
+        "error_vehicle_not_available": "Выбранный автомобиль недоступен в этой фирме.",
+        "error_driver_licence_not_confirmed": "У работника нет подтверждённой отметки о водительском удостоверении.",
+        "error_crew_driver_missing": "На выбранную дату у экипажа нет водителя.",
+        "error_crew_resource_missing": "На одну из выбранных дат у экипажа нет основного водителя или автомобиля.",
+        "error_crew_shift_missing": "На одну из выбранных дат нет опубликованной смены экипажа.",
+        "error_crew_capacity_exceeded": "В автомобиле недостаточно свободных мест.",
+        "error_worker_drives_other_crew": "В выбранную дату работник уже является водителем другого экипажа.",
+        "error_worker_day_off": "На выбранную дату у работника отмечен выходной.",
+        "error_worker_absent_from_crew": "На выбранную дату работник отмечен отсутствующим в этом экипаже.",
+        "error_worker_is_crew_driver": "Водителя этого экипажа нельзя назначить его пассажиром.",
+        "error_driver_shift_conflict": "У водителя уже есть другая смена в выбранное время.",
+        "error_legacy_driver_or_vehicle_already_assigned": "Водитель или автомобиль всё ещё занят в прежнем транспортном назначении.",
+        "error_driver_or_vehicle_already_assigned": "Водитель или автомобиль уже закреплён за другим экипажем.",
+        "error_passenger_scope_invalid": "Выберите: весь график экипажа или только отмеченные дни.",
+        "error_selected_schedule_days_have_no_shifts": "В выбранных днях нет смен, которые можно изменить.",
+        "error_replacement_driver_not_in_crew": "Нового постоянного водителя можно выбрать только из пассажиров этого экипажа.",
+        "error_replacement_driver_shift_conflict": "У нового водителя есть пересекающаяся смена в другом экипаже.",
+    },
+    "en": {
+        "error_work_dates_required": "Select at least one calendar date.",
+        "error_shift_time_required": "Enter the shift start and end time.",
+        "error_break_minutes_invalid": "Check the break duration in minutes.",
+        "error_worker_not_in_organization": "The worker does not belong to the selected company.",
+        "error_worker_archived": "The selected worker is archived.",
+        "error_project_not_in_organization": "The project does not belong to the selected company.",
+        "error_vehicle_not_available": "The selected vehicle is unavailable in this company.",
+        "error_driver_licence_not_confirmed": "The worker has no confirmed driving-licence mark.",
+        "error_crew_driver_missing": "The crew has no driver on the selected date.",
+        "error_crew_resource_missing": "The crew has no primary driver or vehicle on one selected date.",
+        "error_crew_shift_missing": "There is no published crew shift on one selected date.",
+        "error_crew_capacity_exceeded": "The vehicle has insufficient free seats.",
+        "error_worker_drives_other_crew": "The worker already drives another crew on the selected date.",
+        "error_worker_day_off": "The worker has a day off on the selected date.",
+        "error_worker_absent_from_crew": "The worker is marked absent from this crew on the selected date.",
+        "error_worker_is_crew_driver": "This crew's driver cannot be assigned as its passenger.",
+        "error_driver_shift_conflict": "The driver already has another overlapping shift.",
+        "error_legacy_driver_or_vehicle_already_assigned": "The driver or vehicle is still occupied by a legacy transport assignment.",
+        "error_driver_or_vehicle_already_assigned": "The driver or vehicle is already assigned to another crew.",
+        "error_passenger_scope_invalid": "Choose the entire crew schedule or selected days only.",
+        "error_selected_schedule_days_have_no_shifts": "The selected days contain no shifts to change.",
+        "error_replacement_driver_not_in_crew": "A permanent replacement driver must be a passenger of this crew.",
+        "error_replacement_driver_shift_conflict": "The new driver has an overlapping shift in another crew.",
+    },
+    "pl": {
+        "error_work_dates_required": "Wybierz co najmniej jeden dzień w kalendarzu.",
+        "error_shift_time_required": "Podaj godzinę rozpoczęcia i zakończenia zmiany.",
+        "error_break_minutes_invalid": "Sprawdź długość przerwy w minutach.",
+        "error_worker_not_in_organization": "Pracownik nie należy do wybranej firmy.",
+        "error_worker_archived": "Wybrany pracownik znajduje się w archiwum.",
+        "error_project_not_in_organization": "Projekt nie należy do wybranej firmy.",
+        "error_vehicle_not_available": "Wybrany samochód nie jest dostępny w tej firmie.",
+        "error_driver_licence_not_confirmed": "Pracownik nie ma potwierdzonego prawa jazdy.",
+        "error_crew_driver_missing": "Ekipa nie ma kierowcy w wybranym dniu.",
+        "error_crew_resource_missing": "W jednym z wybranych dni ekipa nie ma głównego kierowcy lub samochodu.",
+        "error_crew_shift_missing": "W jednym z wybranych dni nie ma opublikowanej zmiany ekipy.",
+        "error_crew_capacity_exceeded": "W samochodzie brakuje wolnych miejsc.",
+        "error_worker_drives_other_crew": "W wybranym dniu pracownik prowadzi już inną ekipę.",
+        "error_worker_day_off": "W wybranym dniu pracownik ma dzień wolny.",
+        "error_worker_absent_from_crew": "W wybranym dniu pracownik jest oznaczony jako nieobecny w tej ekipie.",
+        "error_worker_is_crew_driver": "Kierowca tej ekipy nie może być jej pasażerem.",
+        "error_driver_shift_conflict": "Kierowca ma już inną nakładającą się zmianę.",
+        "error_legacy_driver_or_vehicle_already_assigned": "Kierowca lub samochód jest nadal zajęty w poprzednim przypisaniu transportowym.",
+        "error_driver_or_vehicle_already_assigned": "Kierowca lub samochód jest już przypisany do innej ekipy.",
+        "error_passenger_scope_invalid": "Wybierz cały grafik ekipy albo tylko zaznaczone dni.",
+        "error_selected_schedule_days_have_no_shifts": "W wybranych dniach nie ma zmian do edycji.",
+        "error_replacement_driver_not_in_crew": "Nowego stałego kierowcę można wybrać tylko spośród pasażerów tej ekipy.",
+        "error_replacement_driver_shift_conflict": "Nowy kierowca ma nakładającą się zmianę w innej ekipie.",
+    },
+    "uk": {
+        "error_work_dates_required": "Виберіть хоча б один день у календарі.",
+        "error_shift_time_required": "Вкажіть час початку й завершення зміни.",
+        "error_break_minutes_invalid": "Перевірте тривалість перерви у хвилинах.",
+        "error_worker_not_in_organization": "Працівник не належить до вибраної фірми.",
+        "error_worker_archived": "Вибраний працівник перебуває в архіві.",
+        "error_project_not_in_organization": "Проєкт не належить до вибраної фірми.",
+        "error_vehicle_not_available": "Вибраний автомобіль недоступний у цій фірмі.",
+        "error_driver_licence_not_confirmed": "Працівник не має підтвердженої відмітки про водійське посвідчення.",
+        "error_crew_driver_missing": "На вибрану дату екіпаж не має водія.",
+        "error_crew_resource_missing": "На одну з вибраних дат екіпаж не має основного водія або автомобіля.",
+        "error_crew_shift_missing": "На одну з вибраних дат немає опублікованої зміни екіпажу.",
+        "error_crew_capacity_exceeded": "В автомобілі недостатньо вільних місць.",
+        "error_worker_drives_other_crew": "На вибрану дату працівник уже є водієм іншого екіпажу.",
+        "error_worker_day_off": "На вибрану дату працівник має вихідний.",
+        "error_worker_absent_from_crew": "На вибрану дату працівник позначений відсутнім у цьому екіпажі.",
+        "error_worker_is_crew_driver": "Водія цього екіпажу не можна призначити його пасажиром.",
+        "error_driver_shift_conflict": "Водій уже має іншу зміну, що перетинається в часі.",
+        "error_legacy_driver_or_vehicle_already_assigned": "Водій або автомобіль досі зайнятий у попередньому транспортному призначенні.",
+        "error_driver_or_vehicle_already_assigned": "Водій або автомобіль уже закріплений за іншим екіпажем.",
+        "error_passenger_scope_invalid": "Виберіть увесь графік екіпажу або лише позначені дні.",
+        "error_selected_schedule_days_have_no_shifts": "У вибраних днях немає змін, які можна редагувати.",
+        "error_replacement_driver_not_in_crew": "Нового постійного водія можна вибрати лише з пасажирів цього екіпажу.",
+        "error_replacement_driver_shift_conflict": "Новий водій має зміну, що перетинається, в іншому екіпажі.",
+    },
+}
+
+
 RESET_OBJECT_COPY = {
     "ru": {
         "project_crews": "Новые тестовые экипажи", "transport_crews": "Старые экипажи",
@@ -337,7 +441,10 @@ def _display_name(connection):
 
 
 def _copy(request):
-    return COPY.get(get_lang(request), COPY["ru"])
+    language = get_lang(request)
+    if language not in COPY:
+        language = "ru"
+    return {**COPY[language], **PROJECT_CREW_ERROR_COPY[language]}
 
 
 def _validation_message(error, copy=None):

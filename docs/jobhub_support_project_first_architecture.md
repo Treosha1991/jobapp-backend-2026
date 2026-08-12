@@ -118,3 +118,32 @@ Before changing the default employer navigation:
 
 The legacy workspace remains the default until all six cutover checks pass.
 Check 1 is ready for staging review; checks 2–6 have not been executed.
+
+## Stage 7: driver absence and substitution lifecycle
+
+The project calendar keeps the primary driver assignment unchanged while
+tracking date-specific absences and substitute drivers separately. A
+substitute can be selected only for a published future crew day on which the
+primary driver is absent. Current crew passengers with a confirmed driving
+licence are shown first; other licensed workers are shown only when they have
+no conflicting schedule, day off or crew absence on every selected date.
+
+Replacing a substitute closes the previous records instead of overwriting
+them. Cancelling a crew shift, giving the substitute a day off, removing that
+worker from the crew or permanently replacing the primary driver also closes
+the relevant active substitution. Closed records remain available in the
+employer's substitution history, while the calendar again marks an uncovered
+driver day clearly.
+
+## Stage 8: integration baseline
+
+The complete web flow is covered from project and crew creation through shift
+publication, passenger assignment, primary-driver absence, substitute
+assignment, worker calendar synchronization and substitution closure. Service,
+model and employer-web regression suites run against an isolated test database.
+
+All project-first operation errors have explicit Russian, English, Polish and
+Ukrainian interface text. Automated checks reject replacement characters and
+the literal `???` in this translation contract. The existing JobHub employer
+workspace and production navigation remain isolated behind the project-first
+feature switch until the separate cutover approval is completed.

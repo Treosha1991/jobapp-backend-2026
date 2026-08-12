@@ -21,6 +21,7 @@ from support.models import (
     Worksite,
 )
 from support.services.organizations import activate_organization, create_organization
+from support.project_first_web import COPY, PROJECT_CREW_ERROR_COPY
 
 
 @override_settings(
@@ -153,6 +154,43 @@ class ProjectFirstWorkspaceTests(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         return ProjectCrew.objects.get(project=self.project)
+
+    def test_project_crew_errors_have_four_complete_readable_translations(self):
+        expected_codes = {
+            "error_break_minutes_invalid",
+            "error_crew_capacity_exceeded",
+            "error_crew_driver_missing",
+            "error_crew_resource_missing",
+            "error_crew_shift_missing",
+            "error_driver_licence_not_confirmed",
+            "error_driver_or_vehicle_already_assigned",
+            "error_driver_shift_conflict",
+            "error_legacy_driver_or_vehicle_already_assigned",
+            "error_passenger_scope_invalid",
+            "error_project_not_in_organization",
+            "error_replacement_driver_not_in_crew",
+            "error_replacement_driver_shift_conflict",
+            "error_selected_schedule_days_have_no_shifts",
+            "error_shift_time_required",
+            "error_substitute_driver_unavailable",
+            "error_substitution_date_in_past",
+            "error_substitution_requires_driver_absence",
+            "error_vehicle_not_available",
+            "error_work_dates_required",
+            "error_worker_absent_from_crew",
+            "error_worker_archived",
+            "error_worker_day_off",
+            "error_worker_drives_other_crew",
+            "error_worker_is_crew_driver",
+            "error_worker_not_in_organization",
+        }
+
+        for language in ("ru", "en", "pl", "uk"):
+            translated = {**COPY[language], **PROJECT_CREW_ERROR_COPY[language]}
+            self.assertTrue(expected_codes.issubset(translated))
+            for code in expected_codes:
+                self.assertNotIn("???", translated[code])
+                self.assertNotIn("\ufffd", translated[code])
 
     def test_preview_is_separate_and_lists_projects(self):
         response = self.client.get(self._list_url())
@@ -741,6 +779,105 @@ class ProjectFirstWorkspaceTests(TestCase):
         page = self.client.get(f"{self._detail_url()}&month=2026-08")
         self.assertContains(page, page.context["pf"]["substitute_on"])
         self.assertContains(page, self.second_driver.candidate.get_full_name())
+
+    def test_complete_substitute_driver_web_flow_keeps_calendar_and_history_consistent(self):
+        crew = self._create_crew()
+        work_date = date(2026, 8, 14)
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "shifts_publish",
+                "crew_id": str(crew.public_id),
+                "work_dates": [work_date.isoformat()],
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:45",
+                "break_minutes": "30",
+            },
+        )
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "passenger_add",
+                "crew_id": str(crew.public_id),
+                "connection_id": str(self.second_driver.public_id),
+                "scope": "selected",
+                "work_dates": [work_date.isoformat()],
+            },
+        )
+        self.client.post(
+            self._worker_url(self.driver),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "scheduled_shifts_clear",
+                "work_dates": [work_date.isoformat()],
+                "return_tab": "work_transport",
+                "return_month": "2026-08",
+            },
+        )
+
+        response = self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "driver_substitute",
+                "crew_id": str(crew.public_id),
+                "driver_id": str(self.second_driver.public_id),
+                "work_dates": [work_date.isoformat()],
+                "return_month": "2026-08",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            ScheduledWorkShift.objects.filter(
+                connection=self.second_driver,
+                work_date=work_date,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).exists()
+        )
+
+        response = self.client.post(
+            self._worker_url(self.second_driver),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "scheduled_shifts_day_off",
+                "work_dates": [work_date.isoformat()],
+                "return_tab": "work_transport",
+                "return_month": "2026-08",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        substitution = ProjectCrewDriverSubstitution.objects.get(
+            crew=crew,
+            work_date=work_date,
+        )
+        self.assertEqual(
+            substitution.state,
+            ProjectCrewDriverSubstitution.STATE_CANCELLED,
+        )
+        self.assertIsNotNone(substitution.ended_at)
+        self.assertFalse(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=work_date,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+            ).exists()
+        )
+
+        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        rendered_crew = page.context["crews"][0]
+        calendar_day = next(
+            item
+            for item in rendered_crew.calendar_days
+            if item and item["date"] == work_date
+        )
+        self.assertTrue(calendar_day["has_no_driver"])
+        self.assertEqual(rendered_crew.current_substitution_groups, [])
+        self.assertEqual(len(rendered_crew.substitution_history), 1)
+        self.assertContains(page, page.context["pf"]["substitution_history"])
+        self.assertContains(page, page.context["pf"]["substitution_cancelled"])
 
     def test_passenger_picker_excludes_current_driver_and_existing_passengers(self):
         crew = self._create_crew()
