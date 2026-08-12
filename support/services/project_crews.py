@@ -14,6 +14,7 @@ from rest_framework.exceptions import ValidationError
 from support.models import (
     DriverVehicleAssignment,
     ProjectCrew,
+    ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
     ProjectCrewShift,
@@ -228,6 +229,17 @@ def _add_passenger_to_shift(*, actor, shift, connection):
             work_date=shift.work_date.isoformat(),
             worker=str(connection.public_id),
         )
+    if ProjectCrewMemberAbsence.objects.filter(
+        crew=shift.crew,
+        connection=connection,
+        work_date=shift.work_date,
+    ).exists():
+        _operation_error(
+            "worker_absent_from_crew",
+            f"The selected worker is absent from this crew on {shift.work_date.isoformat()}.",
+            work_date=shift.work_date.isoformat(),
+            worker=str(connection.public_id),
+        )
     existing = shift.members.filter(connection=connection).first()
     if existing:
         if existing.role == ProjectCrewShiftMember.ROLE_DRIVER:
@@ -271,6 +283,13 @@ def _sync_shift_members_for_new_shift(*, actor, shift, resource):
             work_date=shift.work_date,
         ).values_list("connection_id", flat=True)
     )
+    absent_connection_ids = set(
+        ProjectCrewMemberAbsence.objects.filter(
+            crew=shift.crew,
+            work_date=shift.work_date,
+        ).values_list("connection_id", flat=True)
+    )
+    unavailable_connection_ids = day_off_connection_ids | absent_connection_ids
     roster = [
         item
         for item in _active_roster_for_date(
@@ -278,7 +297,7 @@ def _sync_shift_members_for_new_shift(*, actor, shift, resource):
             work_date=shift.work_date,
             lock=True,
         )
-        if item.connection_id not in day_off_connection_ids
+        if item.connection_id not in unavailable_connection_ids
     ]
     if len(roster) + 1 > resource.vehicle.seat_capacity:
         _operation_error(
@@ -291,8 +310,8 @@ def _sync_shift_members_for_new_shift(*, actor, shift, resource):
             occupied=len(roster) + 1,
             capacity=resource.vehicle.seat_capacity,
         )
-    driver_is_off = resource.driver_connection_id in day_off_connection_ids
-    if not driver_is_off:
+    driver_is_unavailable = resource.driver_connection_id in unavailable_connection_ids
+    if not driver_is_unavailable:
         driver = ProjectCrewShiftMember(
             shift=shift,
             connection=resource.driver_connection,
@@ -304,7 +323,7 @@ def _sync_shift_members_for_new_shift(*, actor, shift, resource):
         driver.save()
         _sync_member_worker_calendar(member=driver, actor=actor)
     for roster_entry in roster:
-        if driver_is_off:
+        if driver_is_unavailable:
             _resolve_passenger_conflicts(
                 connection=roster_entry.connection,
                 shift=shift,
@@ -326,14 +345,37 @@ def _sync_shift_members_for_new_shift(*, actor, shift, resource):
             )
 
 
-def _remove_day_off_members(*, shift):
-    """Keep worker-wide days off authoritative when a crew day is republished."""
+def _remove_unavailable_members(*, shift):
+    """Keep days off and crew-specific absences authoritative on republish."""
 
     day_off_connection_ids = WorkerScheduleDayOff.objects.filter(
         organization=shift.crew.organization,
         work_date=shift.work_date,
     ).values_list("connection_id", flat=True)
-    shift.members.filter(connection_id__in=day_off_connection_ids).delete()
+    absent_connection_ids = ProjectCrewMemberAbsence.objects.filter(
+        crew=shift.crew,
+        work_date=shift.work_date,
+    ).values_list("connection_id", flat=True)
+    shift.members.filter(
+        Q(connection_id__in=day_off_connection_ids)
+        | Q(connection_id__in=absent_connection_ids)
+    ).delete()
+
+
+def _connection_is_unavailable_for_crew_day(*, crew, connection, work_date):
+    """Return whether a worker must stay outside this crew on one day."""
+
+    if WorkerScheduleDayOff.objects.filter(
+        organization=crew.organization,
+        connection=connection,
+        work_date=work_date,
+    ).exists():
+        return True
+    return ProjectCrewMemberAbsence.objects.filter(
+        crew=crew,
+        connection=connection,
+        work_date=work_date,
+    ).exists()
 
 
 def _validate_existing_shift_conflicts(*, shift):
@@ -523,7 +565,7 @@ def publish_project_crew_shifts(
                     "updated_at",
                 )
             )
-            _remove_day_off_members(shift=shift)
+            _remove_unavailable_members(shift=shift)
             if not shift.members.exists():
                 resource = _resource_for_date(crew=crew, work_date=work_date, lock=True)
                 _sync_shift_members_for_new_shift(actor=actor, shift=shift, resource=resource)
@@ -659,6 +701,12 @@ def assign_project_crew_passenger(
             work_date=shift.work_date,
         ).exists():
             continue
+        if scope == PASSENGER_SCOPE_FUTURE and ProjectCrewMemberAbsence.objects.filter(
+            crew=crew,
+            connection=connection,
+            work_date=shift.work_date,
+        ).exists():
+            continue
         _, created = _add_passenger_to_shift(actor=actor, shift=shift, connection=connection)
         added_count += int(created)
     record_audit_event(
@@ -717,12 +765,22 @@ def remove_project_crew_passenger(
             work_date__gte=effective_on,
         )
         dates = list(shifts.values_list("work_date", flat=True))
+        ProjectCrewMemberAbsence.objects.filter(
+            crew=crew,
+            connection=connection,
+            work_date__gte=effective_on,
+        ).delete()
     else:
         dates = _normalize_dates(selected_dates)
         shifts = ProjectCrewShift.objects.select_for_update().filter(
             crew=crew,
             work_date__in=dates,
         )
+        ProjectCrewMemberAbsence.objects.filter(
+            crew=crew,
+            connection=connection,
+            work_date__in=dates,
+        ).delete()
     removed_count, _ = ProjectCrewShiftMember.objects.filter(
         shift__in=shifts,
         connection=connection,
@@ -783,6 +841,15 @@ def release_project_crew_member_days(*, actor, connection, work_dates):
         )
     released_dates = sorted({item.shift.work_date for item in memberships})
     crew_ids = sorted({item.shift.crew_id for item in memberships})
+    for membership in memberships:
+        absence, _ = ProjectCrewMemberAbsence.objects.get_or_create(
+            organization=organization,
+            crew=membership.shift.crew,
+            connection=connection,
+            work_date=membership.shift.work_date,
+            defaults={"created_by": actor},
+        )
+        absence.full_clean()
     ProjectCrewShiftMember.objects.filter(
         pk__in=[item.pk for item in memberships]
     ).delete()
@@ -824,6 +891,12 @@ def mark_worker_schedule_days_off(*, actor, connection, work_dates):
             defaults={"created_by": actor},
         )
         day_off.full_clean()
+
+    ProjectCrewMemberAbsence.objects.filter(
+        organization=organization,
+        connection=connection,
+        work_date__in=dates,
+    ).delete()
 
     memberships = list(
         ProjectCrewShiftMember.objects.select_for_update().filter(
@@ -982,13 +1055,23 @@ def replace_project_crew_driver(
         .order_by("work_date")
     )
     for shift in shifts:
+        new_driver_is_unavailable = _connection_is_unavailable_for_crew_day(
+            crew=crew,
+            connection=new_driver,
+            work_date=shift.work_date,
+        )
+        old_driver_is_unavailable = _connection_is_unavailable_for_crew_day(
+            crew=crew,
+            connection=old_driver,
+            work_date=shift.work_date,
+        )
         new_driver_conflicts = _overlapping_memberships(
             connection=new_driver,
             starts_at=shift.starts_at,
             ends_at=shift.ends_at,
             exclude_shift=shift,
         )
-        if new_driver_conflicts:
+        if new_driver_conflicts and not new_driver_is_unavailable:
             _operation_error(
                 "replacement_driver_shift_conflict",
                 (
@@ -1002,17 +1085,19 @@ def replace_project_crew_driver(
             role=ProjectCrewShiftMember.ROLE_DRIVER,
         ).delete()
         shift.members.filter(connection=new_driver).delete()
-        new_driver_member = ProjectCrewShiftMember(
-            shift=shift,
-            connection=new_driver,
-            role=ProjectCrewShiftMember.ROLE_DRIVER,
-            vehicle=vehicle,
-            created_by=actor,
-        )
-        new_driver_member.full_clean()
-        new_driver_member.save()
-        _sync_member_worker_calendar(member=new_driver_member, actor=actor)
-        _add_passenger_to_shift(actor=actor, shift=shift, connection=old_driver)
+        if not new_driver_is_unavailable:
+            new_driver_member = ProjectCrewShiftMember(
+                shift=shift,
+                connection=new_driver,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+                vehicle=vehicle,
+                created_by=actor,
+            )
+            new_driver_member.full_clean()
+            new_driver_member.save()
+            _sync_member_worker_calendar(member=new_driver_member, actor=actor)
+        if not old_driver_is_unavailable:
+            _add_passenger_to_shift(actor=actor, shift=shift, connection=old_driver)
 
     record_audit_event(
         organization=organization,

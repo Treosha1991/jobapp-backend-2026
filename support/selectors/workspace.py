@@ -23,6 +23,7 @@ from support.models import (
     HousingSite,
     MembershipInvitation,
     OrganizationMembership,
+    ProjectCrewMemberAbsence,
     ProjectCrewResourceAssignment,
     ProjectCrewShift,
     ProjectCrewShiftMember,
@@ -1015,6 +1016,24 @@ def worker_card_snapshot(
                 work_date__range=(month_start, month_end),
             ).values_list("work_date", flat=True)
         )
+        crew_absences = list(
+            ProjectCrewMemberAbsence.objects.filter(
+                organization=organization,
+                connection=connection,
+                work_date__range=(month_start, month_end),
+            ).select_related("crew__project").order_by("work_date", "id")
+        )
+        crew_absence_by_date = {item.work_date: item for item in crew_absences}
+        absence_shift_by_key = {
+            (item.crew_id, item.work_date): item
+            for item in ProjectCrewShift.objects.filter(
+                crew_id__in={absence.crew_id for absence in crew_absences},
+                work_date__in={absence.work_date for absence in crew_absences},
+                state=ProjectCrewShift.STATE_PUBLISHED,
+            ).select_related("crew__project").prefetch_related(
+                "members__connection__candidate",
+            )
+        }
         for shift in scheduled_shifts:
             shift.is_preview = False
             shift.has_conflict = False
@@ -1085,6 +1104,7 @@ def worker_card_snapshot(
                 ),
                 "is_today": current_date == timezone.localdate(),
                 "has_day_off": current_date in schedule_days_off,
+                "has_crew_absence": current_date in crew_absence_by_date,
             }
             if (
                 display_shift is not None
@@ -1112,6 +1132,35 @@ def worker_card_snapshot(
                         or project_shift.crew.project.worker_visible_name
                     ),
                     "members": day_members,
+                }
+            elif current_date in crew_absence_by_date:
+                absence = crew_absence_by_date[current_date]
+                project_shift = absence_shift_by_key.get(
+                    (absence.crew_id, current_date)
+                )
+                day_members = []
+                if project_shift is not None:
+                    for member in project_shift.members.all():
+                        day_members.append(
+                            {
+                                "connection": member.connection,
+                                "display_name": _display_name(member.connection.candidate),
+                                "role": member.role,
+                                "conversation": _active_worker_conversation(
+                                    user=user,
+                                    organization=organization,
+                                    connection=member.connection,
+                                ),
+                            }
+                        )
+                day_context["project_crew_detail"] = {
+                    "project_name": absence.crew.project.worker_visible_name,
+                    "crew_name": (
+                        absence.crew.internal_name
+                        or absence.crew.project.worker_visible_name
+                    ),
+                    "members": day_members,
+                    "is_absent": True,
                 }
             calendar_days.append(day_context)
         selected_calendar_date = month_start

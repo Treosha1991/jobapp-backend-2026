@@ -54,6 +54,7 @@
   .worker-calendar-day.has-crew-override::after { content:"↺"; position:absolute; right:5px; bottom:4px; color:#6ec7ff; font-size:11px; font-weight:900; }
   .worker-calendar-day.has-no-driver::before { content:""; position:absolute; right:5px; top:5px; width:7px; height:7px; border-radius:50%; background:#ff6b6b; box-shadow:0 0 0 2px rgba(255,107,107,.18),0 0 8px rgba(255,107,107,.8); }
   .worker-calendar-day.has-day-off { border-color:rgba(141,126,255,.9); background:rgba(141,126,255,.14); }
+  .worker-calendar-day.has-crew-absence { border-color:rgba(255,102,119,.92); background:rgba(255,102,119,.12); }
   .worker-calendar-day.has-other-template:not(.is-selected-template) { opacity:.48; filter:saturate(.55); }
   .worker-calendar-day.is-selected-template { border-color:#62f59b; background:rgba(24,223,103,.17); box-shadow:inset 0 0 0 2px rgba(24,223,103,.72),0 0 18px rgba(24,223,103,.12); }
   .worker-calendar-day.is-selected { border-color:#6ec7ff; background:rgba(110,199,255,.17); box-shadow:inset 0 0 0 2px rgba(110,199,255,.95); transform:translateY(-1px); }
@@ -526,16 +527,16 @@
             <div class="worker-calendar">
               {% for day in calendar_days %}
                 {% if day %}
-                  {% if can_operate %}<label data-calendar-day data-calendar-date="{{ day.date|date:'Y-m-d' }}" data-calendar-crew-url="{{ day.transport_url|default:'' }}" class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.has_day_off %} has-day-off{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.has_day_off %} has-day-off{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
+                  {% if can_operate %}<label data-calendar-day data-calendar-date="{{ day.date|date:'Y-m-d' }}" data-calendar-crew-url="{{ day.transport_url|default:'' }}" class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.has_day_off %} has-day-off{% endif %}{% if day.has_crew_absence %} has-crew-absence{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><input class="worker-calendar-checkbox" type="checkbox" name="work_dates" value="{{ day.date|date:'Y-m-d' }}" data-schedule-date><span class="worker-calendar-day-content">{% else %}<div class="worker-calendar-day{% if day.is_today %} is-today{% endif %}{% if day.has_published %} has-published{% endif %}{% if day.has_draft %} has-draft{% endif %}{% if day.has_conflict %} has-conflict{% endif %}{% if day.has_crew_override %} has-crew-override{% endif %}{% if day.crew_has_no_driver %} has-no-driver{% endif %}{% if day.has_day_off %} has-day-off{% endif %}{% if day.has_crew_absence %} has-crew-absence{% endif %}{% if day.is_selected_template %} is-selected-template{% endif %}{% if day.has_other_template %} has-other-template{% endif %}"><span class="worker-calendar-day-content">{% endif %}
                     <span class="worker-calendar-number">{{ day.date|date:"j" }}{% if day.has_conflict %}<span class="worker-calendar-conflict-mark">!</span>{% endif %}</span>
-                    {% if day.has_day_off %}<span class="worker-calendar-time">{{ employer_t.support_worker_schedule_day_off }}</span>{% elif day.display_shift %}<span class="worker-calendar-time{% if day.display_shift.state == 'draft' %} is-preview{% endif %}">{{ day.display_shift.starts_at|time:"H:i" }}–{{ day.display_shift.ends_at|time:"H:i" }}</span>{% endif %}
+                    {% if day.has_day_off %}<span class="worker-calendar-time">{{ employer_t.support_worker_schedule_day_off }}</span>{% elif day.has_crew_absence %}<span class="worker-calendar-time">{{ employer_t.support_worker_schedule_absent }}</span>{% elif day.display_shift %}<span class="worker-calendar-time{% if day.display_shift.state == 'draft' %} is-preview{% endif %}">{{ day.display_shift.starts_at|time:"H:i" }}–{{ day.display_shift.ends_at|time:"H:i" }}</span>{% endif %}
                   </span>{% if can_operate %}</label>{% else %}</div>{% endif %}
                 {% else %}<div class="worker-calendar-empty"></div>{% endif %}
               {% endfor %}
             </div>
             {% for day in calendar_days %}{% if day and day.project_crew_detail %}
               <template data-project-crew-day="{{ day.date|date:'Y-m-d' }}">
-                <div class="worker-section-title"><h2>{{ day.project_crew_detail.crew_name }}</h2><span class="jh-status success">{{ day.date|date:'d.m.Y' }}</span></div>
+                <div class="worker-section-title"><h2>{{ day.project_crew_detail.crew_name }}</h2><span class="jh-status {% if day.project_crew_detail.is_absent %}danger{% else %}success{% endif %}">{% if day.project_crew_detail.is_absent %}{{ employer_t.support_worker_schedule_absent }} · {% endif %}{{ day.date|date:'d.m.Y' }}</span></div>
                 <div class="worker-crew-summary">
                   <div class="worker-crew-summary-main">
                     <div class="worker-crew-summary-part"><small>{{ employer_t.support_projects_title }}</small><strong>{{ day.project_crew_detail.project_name }}</strong></div>
@@ -564,6 +565,7 @@
               <span><i class="draft"></i>{{ employer_t.support_worker_state_draft }}</span>
               <span><i class="conflict"></i>{{ employer_t.support_worker_schedule_overlap }}</span>
               <span><i class="day-off"></i>{{ employer_t.support_worker_schedule_day_off }}</span>
+              <span><i class="conflict"></i>{{ employer_t.support_worker_schedule_absent }}</span>
             </div>
           </div>
         {% if can_operate %}</form>{% else %}</div>{% endif %}

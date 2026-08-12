@@ -26,6 +26,7 @@ from .feature_flags import is_project_first_workspace_enabled
 from .models import (
     DriverVehicleAssignment,
     ProjectCrew,
+    ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
     ProjectCrewShift,
@@ -93,6 +94,7 @@ COPY = {
         "select_dates_hint": "Выделите даты в календаре.",
         "absent_dates": "Отсутствует",
         "day_off": "Выходной",
+        "driver_missing": "Нет водителя",
         "remove": "Исключить",
         "replace_driver": "Сменить водителя",
         "new_driver": "Новый водитель из пассажиров",
@@ -138,6 +140,7 @@ COPY = {
         "select_dates_hint": "Select dates in the calendar.", "remove": "Remove",
         "absent_dates": "Absent",
         "day_off": "Day off",
+        "driver_missing": "No driver",
         "replace_driver": "Replace driver", "new_driver": "New driver from passengers", "replace": "Replace",
         "no_projects": "There are no active projects yet.", "no_shifts": "There are no published days yet.",
         "no_passengers": "There are no passengers yet.", "seats": "Seats", "project_address": "Address",
@@ -170,6 +173,7 @@ COPY = {
         "select_dates_hint": "Wybierz daty w kalendarzu.", "remove": "Usuń",
         "absent_dates": "Nieobecny/a",
         "day_off": "Dzień wolny",
+        "driver_missing": "Brak kierowcy",
         "replace_driver": "Zmień kierowcę", "new_driver": "Nowy kierowca z pasażerów", "replace": "Zmień",
         "no_projects": "Nie ma jeszcze aktywnych projektów.", "no_shifts": "Nie ma jeszcze opublikowanych dni.",
         "no_passengers": "Nie ma jeszcze pasażerów.", "seats": "Miejsca", "project_address": "Adres",
@@ -202,6 +206,7 @@ COPY = {
         "select_dates_hint": "Виберіть дати в календарі.", "remove": "Виключити",
         "absent_dates": "Відсутній/я",
         "day_off": "Вихідний",
+        "driver_missing": "Немає водія",
         "replace_driver": "Змінити водія", "new_driver": "Новий водій з пасажирів", "replace": "Змінити",
         "no_projects": "Активних проєктів поки немає.", "no_shifts": "Опублікованих днів поки немає.",
         "no_passengers": "Пасажирів поки немає.", "seats": "Місця", "project_address": "Адреса",
@@ -375,12 +380,20 @@ def _crew_calendar(crew, *, selected_month, today):
     for number in range(1, days_in_month + 1):
         work_date = selected_month.replace(day=number)
         shift = shifts_by_day.get(work_date)
+        has_no_driver = bool(
+            shift
+            and not any(
+                member.role == ProjectCrewShiftMember.ROLE_DRIVER
+                for member in shift.members.all()
+            )
+        )
         days.append(
             {
                 "date": work_date,
                 "shift": shift,
                 "is_today": work_date == today,
                 "has_published": shift is not None,
+                "has_no_driver": has_no_driver,
             }
         )
     return days, shifts
@@ -399,6 +412,9 @@ def _scoped_connections(request, organization):
 
 def _project_context(request, organization, project, *, selected_month):
     today = timezone.localdate()
+    selected_month_end = selected_month.replace(
+        day=monthrange(selected_month.year, selected_month.month)[1]
+    )
     connections = list(_scoped_connections(request, organization).order_by("candidate__first_name", "candidate__last_name", "id"))
     for item in connections:
         item.display_name = _display_name(item)
@@ -430,6 +446,14 @@ def _project_context(request, organization, project, *, selected_month):
                     )
                 )
                 .order_by("work_date"),
+            ),
+            Prefetch(
+                "member_absences",
+                queryset=ProjectCrewMemberAbsence.objects.filter(
+                    work_date__range=(selected_month, selected_month_end),
+                ).select_related("connection__candidate").order_by(
+                    "work_date", "connection_id"
+                ),
             ),
         )
         .order_by("internal_name", "id")
@@ -473,6 +497,12 @@ def _project_context(request, organization, project, *, selected_month):
         ).values_list("connection_id", "work_date"):
             days_off_by_connection.setdefault(connection_id, set()).add(work_date)
     for crew in crews:
+        absence_dates_by_connection = {}
+        for absence in crew.member_absences.all():
+            absence_dates_by_connection.setdefault(
+                absence.connection_id,
+                set(),
+            ).add(absence.work_date)
         crew.current_resource = next(
             (
                 resource for resource in crew.resource_assignments.all()
@@ -491,6 +521,15 @@ def _project_context(request, organization, project, *, selected_month):
             )
             crew.current_resource.day_off_dates_label = ", ".join(
                 item.strftime("%d.%m") for item in driver_days_off
+            )
+            driver_absence_dates = sorted(
+                absence_dates_by_connection.get(
+                    crew.current_resource.driver_connection_id,
+                    set(),
+                )
+            )
+            crew.current_resource.absence_dates_label = ", ".join(
+                item.strftime("%d.%m") for item in driver_absence_dates
             )
         crew.open_passengers = list(crew.passenger_assignments.all())
         roster_by_connection = {
@@ -523,9 +562,14 @@ def _project_context(request, organization, project, *, selected_month):
                 days_off_by_connection.get(connection_id, set())
                 & {shift.work_date for shift in crew.calendar_shifts.all()}
             )
-            excluded_dates = []
+            excluded_dates = sorted(
+                absence_dates_by_connection.get(connection_id, set())
+                - set(day_off_dates)
+            )
             roster_entry = roster_by_connection.get(connection_id)
-            if roster_entry is not None:
+            if roster_entry is not None and not excluded_dates:
+                # Compatibility for data created before explicit absence
+                # records existed. New releases always use the records above.
                 assigned_dates = set(dates)
                 excluded_dates = [
                     shift.work_date
