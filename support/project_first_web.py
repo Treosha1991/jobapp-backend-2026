@@ -1,8 +1,8 @@
 """Isolated employer preview for the project-first crew workflow.
 
 The legacy Support workspace remains the default.  This module is reachable
-only when the dedicated project-first feature switch is enabled and all write
-operations delegate to ``support.services.project_crews``.
+only when the dedicated project-first feature switch is enabled and write
+operations delegate to the dedicated transactional Support services.
 """
 
 from calendar import monthrange
@@ -38,6 +38,7 @@ from .models import (
     WorkProject,
 )
 from .permissions import has_unrestricted_worker_access, worker_connection_queryset_for
+from .serializers import ProjectCreateSerializer
 from .selectors.workspace import _permissions_for, _select_membership
 from .services.project_crews import (
     PASSENGER_SCOPE_FUTURE,
@@ -56,6 +57,7 @@ from .services.project_first_reset import (
     build_project_first_reset_plan,
     execute_project_first_reset,
 )
+from .services.registries import create_project
 
 
 COPY = {
@@ -137,6 +139,8 @@ COPY = {
         "reset_complete": "Очистка завершена. Работники, жильё и автопарк сохранены.",
         "reset_guard_disabled": "Серверная защита очистки выключена.",
         "reset_confirmation_invalid": "Фраза подтверждения не совпадает.",
+        "add_project": "Добавить проект",
+        "project_created": "Проект создан.",
     },
     "en": {
         "preview": "New workspace · preview",
@@ -181,6 +185,7 @@ COPY = {
         "apply_reset": "Apply confirmed reset", "reset_complete": "Reset complete. Workers, housing and fleet were preserved.",
         "reset_guard_disabled": "The server-side reset guard is disabled.",
         "reset_confirmation_invalid": "The confirmation phrase does not match.",
+        "add_project": "Add project", "project_created": "Project created.",
     },
     "pl": {
         "preview": "Nowy panel · tryb testowy", "title": "Projekty i ekipy",
@@ -224,6 +229,7 @@ COPY = {
         "apply_reset": "Wykonaj potwierdzone czyszczenie", "reset_complete": "Czyszczenie zakończone. Pracownicy, mieszkania i flota zostały zachowane.",
         "reset_guard_disabled": "Serwerowa blokada czyszczenia jest wyłączona.",
         "reset_confirmation_invalid": "Fraza potwierdzająca nie pasuje.",
+        "add_project": "Dodaj projekt", "project_created": "Projekt został utworzony.",
     },
     "uk": {
         "preview": "Новий кабінет · тестовий режим", "title": "Проєкти та екіпажі",
@@ -267,6 +273,7 @@ COPY = {
         "apply_reset": "Виконати підтверджене очищення", "reset_complete": "Очищення завершено. Працівники, житло й автопарк збережено.",
         "reset_guard_disabled": "Серверний захист очищення вимкнено.",
         "reset_confirmation_invalid": "Фраза підтвердження не збігається.",
+        "add_project": "Додати проєкт", "project_created": "Проєкт створено.",
     },
 }
 
@@ -1051,6 +1058,38 @@ def project_first_workspace(request, project_public_id=None):
         .order_by("internal_name", "id")
     )
     project = None
+    if project_public_id is None and request.method == "POST":
+        try:
+            if (request.POST.get("action") or "").strip() != "project_create":
+                raise ValidationError({"message": "Unknown project operation."})
+            serializer = ProjectCreateSerializer(
+                data={
+                    "name": request.POST.get("name", ""),
+                    "country_code": request.POST.get("country_code", ""),
+                    "city": request.POST.get("city", ""),
+                    "postal_code": request.POST.get("postal_code", ""),
+                    "street": request.POST.get("street", ""),
+                    "building": request.POST.get("building", ""),
+                    "worker_capacity": request.POST.get("worker_capacity", ""),
+                    "starts_on": request.POST.get("starts_on", ""),
+                    "ends_on": request.POST.get("ends_on") or None,
+                    "contact_name": request.POST.get("contact_name", ""),
+                    "contact_phone": request.POST.get("contact_phone", ""),
+                    "contact_email": request.POST.get("contact_email", ""),
+                    "instructions": request.POST.get("instructions", ""),
+                }
+            )
+            serializer.is_valid(raise_exception=True)
+            project = create_project(
+                actor=request.user,
+                organization=organization,
+                **serializer.validated_data,
+            )
+        except (APIException, ValueError) as error:
+            messages.error(request, _validation_message(error, copy))
+            return redirect(_workspace_url(organization))
+        messages.success(request, copy["project_created"])
+        return redirect(_workspace_url(organization, project=project))
     if project_public_id is not None:
         project = get_object_or_404(
             WorkProject.objects.select_related("worksite"),

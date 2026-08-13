@@ -5,6 +5,7 @@
 {% block extra_head %}
 <style>
   .pf-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .pf-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
   .pf-kicker{margin:0 0 6px;color:var(--green);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
   .pf-projects{display:grid;gap:8px;margin-top:18px}
   .pf-project{display:grid;grid-template-columns:minmax(180px,1.3fr) minmax(220px,1fr) auto auto;gap:12px;align-items:center;padding:11px 13px;border:1px solid var(--line);border-radius:14px;background:rgba(5,22,36,.28)}
@@ -25,6 +26,11 @@
   .pf-person form{display:flex;align-items:center;gap:6px}.pf-person strong{font-size:12px}
   .pf-substitutions{display:grid;gap:3px;margin-top:6px}.pf-substitution{color:#ffd37a;font-size:10px;font-weight:800}.pf-substitute-form{display:grid;gap:7px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
   .pf-create{margin-top:14px;padding:14px;border:1px solid rgba(24,223,103,.3);border-radius:16px;background:rgba(24,223,103,.06)}
+  .pf-modal{width:min(94vw,900px);max-height:90vh;margin:auto;padding:0;overflow:hidden;color:var(--text);border:1px solid rgba(24,223,103,.42);border-radius:20px;background:#103753;box-shadow:0 28px 80px rgba(0,0,0,.55)}
+  .pf-modal::backdrop{background:rgba(1,13,25,.72);backdrop-filter:blur(4px)}
+  .pf-modal-card{max-height:90vh;padding:20px;overflow:auto}.pf-modal-head{position:sticky;top:-20px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:-20px -20px 14px;padding:18px 20px 12px;border-bottom:1px solid var(--line);background:#103753}.pf-modal-head h2{margin:0;font-size:1.3rem}.pf-modal-close{width:38px;height:38px;padding:0;display:grid;place-items:center;font-size:24px;line-height:1}
+  .pf-project-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.pf-project-form .wide{grid-column:1/-1}.pf-project-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;margin-top:4px}
+  body:has(.pf-modal[open]){overflow:hidden}
   .pf-create h2{margin:0 0 10px;font-size:17px}.pf-empty{padding:18px;text-align:center;border:1px dashed var(--line);border-radius:14px;color:var(--muted)}
   .pf-crew-summary{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.9fr) auto;gap:10px;padding:10px;border:1px solid var(--line);border-radius:12px;background:rgba(5,22,36,.23)}
   .pf-crew-summary small{display:block;color:var(--muted);font-size:8px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}.pf-crew-summary strong{display:block;overflow:hidden;margin-top:3px;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.pf-crew-summary span{display:block;overflow:hidden;margin-top:2px;color:var(--muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.pf-occupancy strong{font-size:15px}
@@ -37,10 +43,19 @@
   .pf-calendar-checkbox{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.pf-calendar-content{min-height:36px;display:grid;align-content:start;gap:1px;padding:4px 6px}.pf-calendar-number{font-size:11px;font-weight:900;line-height:1}.pf-calendar-time{color:#d7fce3;font-size:9px;font-weight:800;line-height:1.1;white-space:nowrap}
   .pf-calendar-actions{margin-top:7px;padding:11px;border:1px solid rgba(110,199,255,.55);border-radius:15px;background:linear-gradient(135deg,rgba(17,61,92,.98),rgba(6,27,45,.98));box-shadow:0 8px 22px rgba(0,0,0,.2)}.pf-calendar-actions[hidden]{display:none}.pf-calendar-selection{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px;color:#dff4ff;font-size:12px;font-weight:900}.pf-calendar-selection strong{color:var(--green);font-size:16px}.pf-calendar-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;color:var(--muted);font-size:10px}.pf-calendar-legend span{display:inline-flex;align-items:center;gap:5px}.pf-calendar-legend i{width:9px;height:9px;border:1px solid var(--green);border-radius:3px;background:rgba(24,223,103,.16)}.pf-calendar-legend i.no-driver{border:0;border-radius:50%;background:#ff6677}
   .pf-month-shifts{margin-top:10px;border:1px solid var(--line);border-radius:13px;background:rgba(5,22,36,.18)}.pf-month-shifts>summary{padding:10px 12px;cursor:pointer;color:#ccecff;font-size:12px;font-weight:900}.pf-month-list{display:grid;gap:6px;padding:0 10px 10px}.pf-month-row{display:flex;justify-content:space-between;gap:10px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;color:var(--muted);font-size:11px}
-  @media(max-width:1120px){.pf-panels{grid-template-columns:1fr}}@media(max-width:850px){.pf-project{grid-template-columns:1fr}.pf-row,.pf-row.three,.pf-dates,.pf-crew-summary{grid-template-columns:1fr}}
+  @media(max-width:1120px){.pf-panels{grid-template-columns:1fr}}@media(max-width:850px){.pf-project{grid-template-columns:1fr}.pf-row,.pf-row.three,.pf-dates,.pf-crew-summary,.pf-project-form{grid-template-columns:1fr}.pf-project-form .wide,.pf-project-form-actions{grid-column:auto}}
 </style>
 <script>
 document.addEventListener('DOMContentLoaded',function(){
+  document.querySelectorAll('[data-pf-dialog-target]').forEach(function(button){
+    button.addEventListener('click',function(){
+      var dialog=document.getElementById(button.dataset.pfDialogTarget);
+      if(!dialog)return;
+      if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','');
+    });
+  });
+  document.querySelectorAll('[data-pf-modal-close]').forEach(function(button){button.addEventListener('click',function(){button.closest('dialog')?.close();});});
+  document.querySelectorAll('.pf-modal').forEach(function(dialog){dialog.addEventListener('click',function(event){if(event.target===dialog)dialog.close();});});
   document.querySelectorAll('[data-pf-calendar-form]').forEach(function(form){
     var inputs=Array.prototype.slice.call(form.querySelectorAll('[data-pf-date]'));
     var actions=form.querySelector('[data-pf-actions]');
@@ -97,10 +112,34 @@ document.addEventListener('DOMContentLoaded',function(){
       <h1 class="jh-title">{% if project %}{{ project.internal_name }}{% else %}{{ pf.title }}{% endif %}</h1>
       <p class="jh-subtitle">{{ pf.subtitle }}</p>
     </div>
-    {% if project %}<a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>{% else %}<a class="jh-btn" href="{{ reset_plan_url }}">{{ pf.reset_plan }}</a>{% endif %}
+    {% if project %}<a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>{% else %}<div class="pf-head-actions">{% if permissions.work %}<button class="jh-btn primary" type="button" data-pf-dialog-target="pf-project-add-modal">{{ pf.add_project }}</button>{% endif %}<a class="jh-btn" href="{{ reset_plan_url }}">{{ pf.reset_plan }}</a></div>{% endif %}
   </div>
 
   {% if not project %}
+    {% if permissions.work %}
+      <dialog class="pf-modal" id="pf-project-add-modal" aria-labelledby="pf-project-add-title">
+        <div class="pf-modal-card">
+          <div class="pf-modal-head"><h2 id="pf-project-add-title">{{ pf.add_project }}</h2><button class="jh-btn pf-modal-close" type="button" data-pf-modal-close aria-label="{{ employer_t.support_modal_close }}">×</button></div>
+          <form class="pf-project-form" method="post">
+            {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="project_create">
+            <label class="pf-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" required></label>
+            <label class="pf-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="1" max="5000" value="1" required></label>
+            <label class="pf-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="NL" required></label>
+            <label class="pf-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" required></label>
+            <label class="pf-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20"></label>
+            <label class="pf-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" required></label>
+            <label class="pf-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" required></label>
+            <label class="pf-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" value="{{ today|date:'Y-m-d' }}" required></label>
+            <label class="pf-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date"></label>
+            <label class="pf-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160"></label>
+            <label class="pf-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48"></label>
+            <label class="pf-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email"></label>
+            <label class="pf-field wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000"></textarea></label>
+            <div class="pf-project-form-actions"><button class="jh-btn primary" type="submit">{{ pf.add_project }}</button></div>
+          </form>
+        </div>
+      </dialog>
+    {% endif %}
     {% if projects %}
       <div class="pf-projects">
         {% for item in projects %}

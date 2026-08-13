@@ -199,11 +199,44 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertContains(response, "Preview project")
         self.assertTemplateUsed(response, "support/project_first_workspace.html")
         self.assertContains(response, self._reset_plan_url())
+        self.assertContains(response, 'data-pf-dialog-target="pf-project-add-modal"')
+        self.assertContains(response, 'id="pf-project-add-modal"')
         self.assertContains(
             response,
             f'href="{self._list_url()}"',
             html=False,
         )
+
+    def test_owner_can_create_project_from_project_first_workspace(self):
+        response = self.client.post(
+            self._list_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "project_create",
+                "name": "Fresh project",
+                "worker_capacity": "18",
+                "country_code": "NL",
+                "city": "Dronten",
+                "postal_code": "8251AA",
+                "street": "Testweg",
+                "building": "12",
+                "starts_on": "2026-08-13",
+                "ends_on": "",
+                "contact_name": "Project Contact",
+                "contact_phone": "+31600000000",
+                "contact_email": "project@example.com",
+                "instructions": "Test project created in the new workspace.",
+            },
+        )
+
+        project = WorkProject.objects.get(
+            organization=self.organization,
+            internal_name="Fresh project",
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(project.worker_capacity, 18)
+        self.assertEqual(project.worksite.city, "Dronten")
+        self.assertIn(str(project.public_id), response["Location"])
 
     @override_settings(SUPPORT_PROJECT_FIRST_ENABLED=False)
     def test_projects_header_keeps_legacy_fallback_when_preview_is_off(self):
