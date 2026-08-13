@@ -37,5 +37,6 @@ urlpatterns = [
     ),
     path("transport/", web_views.transport_workspace, name="transport"),
     path("fleet/", web_views.fleet_workspace, name="fleet"),
+    path("housing/", web_views.housing_workspace, name="housing"),
     path("workers/<uuid:connection_public_id>/", web_views.worker_card, name="worker-card"),
 ]

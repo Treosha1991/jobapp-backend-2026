@@ -454,6 +454,163 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(assignment.state, HousingAssignment.STATE_CANCELLED)
         self.assertContains(cancelled, "The assignment was cancelled. Its history was kept;")
 
+    def test_owner_manages_housing_from_organization_workspace(self):
+        second_candidate = User.objects.create_user(
+            username="housing-queue-worker",
+            first_name="Queue",
+            last_name="Worker",
+            email="housing-queue-worker@example.com",
+            password="password",
+        )
+        second_application = SupportApplication.objects.create(
+            vacancy=self.worker_connection.vacancy,
+            candidate=second_candidate,
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        second_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=second_application,
+            candidate=second_candidate,
+            stage=SupportConnection.STAGE_COORDINATOR,
+        )
+        self.client.force_login(self.owner)
+        housing_url = (
+            f"/employer/support/housing/?organization={self.organization.public_id}"
+        )
+
+        empty_page = self.client.get(housing_url)
+        self.assertEqual(empty_page.status_code, 200)
+        self.assertContains(empty_page, "Add housing")
+        self.assertContains(empty_page, 'href="/employer/support/housing/')
+
+        self.client.post(
+            housing_url,
+            {
+                "action": "housing_site_create",
+                "internal_name": "Housing workspace home",
+                "country_code": "NL",
+                "city": "Lelystad",
+                "postal_code": "8223XP",
+                "street": "Workspace street",
+                "building": "14",
+            },
+        )
+        site = HousingSite.objects.get(internal_name="Housing workspace home")
+        site_url = f"{housing_url}&site={site.public_id}"
+        room_response = self.client.post(
+            site_url,
+            {
+                "action": "housing_room_create",
+                "site_id": str(site.public_id),
+                "label": "Room A",
+                "capacity": "2",
+            },
+            follow=True,
+        )
+        self.assertEqual(room_response.status_code, 200)
+        room = HousingRoom.objects.get(site=site, label="Room A")
+        self.assertEqual(
+            list(room.places.order_by("label").values_list("label", flat=True)),
+            ["1", "2"],
+        )
+        place = room.places.get(label="1")
+        today = timezone.localdate()
+
+        assigned = self.client.post(
+            site_url,
+            {
+                "action": "housing_assign",
+                "place_id": str(place.public_id),
+                "connection_id": str(self.worker_connection.public_id),
+                "check_in_on": (today - timedelta(days=1)).isoformat(),
+            },
+            follow=True,
+        )
+        self.assertEqual(assigned.status_code, 200)
+        current_assignment = HousingAssignment.objects.get(
+            connection=self.worker_connection,
+            place=place,
+        )
+        self.assertEqual(current_assignment.state, HousingAssignment.STATE_PUBLISHED)
+        self.assertContains(assigned, "workspace-active-worker")
+
+        checked_out = self.client.post(
+            site_url,
+            {
+                "action": "housing_check_out",
+                "assignment_id": str(current_assignment.public_id),
+                "check_out_on": (today + timedelta(days=2)).isoformat(),
+            },
+            follow=True,
+        )
+        self.assertEqual(checked_out.status_code, 200)
+        current_assignment.refresh_from_db()
+        self.assertEqual(current_assignment.check_out_at.date(), today + timedelta(days=2))
+
+        queued = self.client.post(
+            site_url,
+            {
+                "action": "housing_assign",
+                "place_id": str(place.public_id),
+                "connection_id": str(second_connection.public_id),
+                "check_in_on": (today + timedelta(days=3)).isoformat(),
+            },
+            follow=True,
+        )
+        self.assertEqual(queued.status_code, 200)
+        queued_assignment = HousingAssignment.objects.get(connection=second_connection)
+        self.assertEqual(queued_assignment.state, HousingAssignment.STATE_PUBLISHED)
+        self.assertContains(queued, "Queue Worker")
+        self.assertContains(queued, "Queued")
+
+        queue_updated = self.client.post(
+            site_url,
+            {
+                "action": "housing_queue_edit",
+                "assignment_id": str(queued_assignment.public_id),
+                "check_in_on": (today + timedelta(days=4)).isoformat(),
+                "check_out_on": (today + timedelta(days=8)).isoformat(),
+            },
+            follow=True,
+        )
+        self.assertEqual(queue_updated.status_code, 200)
+        queued_assignment.refresh_from_db()
+        self.assertEqual(queued_assignment.check_in_at.date(), today + timedelta(days=4))
+        self.assertEqual(queued_assignment.check_out_at.date(), today + timedelta(days=8))
+
+        before_conflict = HousingAssignment.objects.count()
+        conflict = self.client.post(
+            site_url,
+            {
+                "action": "housing_assign",
+                "place_id": str(place.public_id),
+                "connection_id": str(second_connection.public_id),
+                "check_in_on": today.isoformat(),
+            },
+            follow=True,
+        )
+        self.assertEqual(conflict.status_code, 200)
+        self.assertEqual(HousingAssignment.objects.count(), before_conflict)
+        self.assertContains(conflict, "This place is occupied during the selected period")
+
+        delete_blocked = self.client.post(
+            site_url,
+            {
+                "action": "housing_room_delete",
+                "room_id": str(room.public_id),
+            },
+            follow=True,
+        )
+        self.assertEqual(delete_blocked.status_code, 200)
+        room.refresh_from_db()
+        self.assertTrue(room.is_active)
+        self.assertContains(delete_blocked, "active stays or drafts")
+
     def test_owner_can_open_fleet_and_see_vehicle_assignment_history(self):
         vehicle = Vehicle.objects.create(
             organization=self.organization,

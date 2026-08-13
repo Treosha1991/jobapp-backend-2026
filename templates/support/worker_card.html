@@ -476,7 +476,6 @@
 
     <nav class="worker-tabs" aria-label="{{ candidate_name }}">
       {% if permissions.work or permissions.transport %}<a class="jh-btn {% if active_tab == 'work_transport' %}primary{% endif %}" href="{{ work_transport_url }}">{{ employer_t.support_worker_work_transport }}</a>{% endif %}
-      {% if permissions.housing %}<a class="jh-btn {% if active_tab == 'housing' %}primary{% endif %}" href="{{ housing_tab_url }}">{{ employer_t.support_worker_housing }}</a>{% endif %}
       {% if permissions.transport %}<form class="worker-license-toggle" method="post">{% csrf_token %}<input type="hidden" name="action" value="driving_license_set"><input type="hidden" name="return_tab" value="{{ active_tab }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="return_site" value="{% if selected_housing_site %}{{ selected_housing_site.public_id }}{% endif %}"><label><input type="checkbox" name="has_driving_license" value="1"{% if connection.has_driving_license %} checked{% endif %} onchange="this.form.submit()"> {{ employer_t.support_worker_driving_license }}</label></form>{% endif %}
     </nav>
 

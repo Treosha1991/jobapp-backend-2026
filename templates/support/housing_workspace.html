@@ -1,0 +1,142 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_housing_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .housing-shell { display:grid; gap:18px; }
+  .housing-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+  .housing-head h1 { margin:0; font-size:36px; }
+  .housing-head p { margin:6px 0 0; color:var(--muted); }
+  .housing-tabs { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; }
+  .housing-tab { display:grid; gap:3px; padding:12px 14px; border:1px solid var(--line); border-radius:14px; color:var(--text); text-decoration:none; background:rgba(4,28,48,.38); }
+  .housing-tab.active { border-color:var(--green); box-shadow:inset 0 0 0 1px rgba(24,223,103,.35); }
+  .housing-tab small { color:var(--muted); }
+  .housing-site-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:4px; }
+  .housing-site-head h2 { margin:0; }
+  .housing-site-head p { margin:4px 0 0; color:var(--muted); }
+  .housing-rooms { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+  .housing-room { padding:14px; border:1px solid var(--line); border-radius:16px; background:rgba(4,28,48,.42); }
+  .housing-room-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
+  .housing-room-head h3 { margin:0; }
+  .housing-place { display:grid; gap:8px; padding:11px; border:1px solid rgba(255,255,255,.09); border-radius:12px; margin-top:8px; }
+  .housing-place.free { border-color:rgba(24,223,103,.42); }
+  .housing-place-top, .housing-person-line { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .housing-person-line { align-items:flex-start; padding-top:7px; border-top:1px solid rgba(255,255,255,.07); }
+  .housing-person-line:first-of-type { border-top:0; padding-top:0; }
+  .housing-person-meta { display:grid; gap:2px; min-width:0; }
+  .housing-person-meta small { color:var(--muted); }
+  .housing-inline-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+  .housing-inline-actions .jh-btn { padding:6px 9px; font-size:11px; }
+  .housing-footer-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; padding-top:18px; border-top:1px solid var(--line); }
+  .housing-modal { width:min(720px,calc(100vw - 32px)); max-height:86vh; padding:0; border:1px solid var(--line); border-radius:20px; color:var(--text); background:#0b304b; box-shadow:0 24px 80px rgba(0,0,0,.55); }
+  .housing-modal::backdrop { background:rgba(0,13,24,.76); backdrop-filter:blur(4px); }
+  .housing-modal-card { padding:20px; overflow:auto; max-height:86vh; }
+  .housing-modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+  .housing-modal-head h2 { margin:0; }
+  .housing-modal-close { min-width:38px; }
+  .housing-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .housing-form-grid .wide { grid-column:1 / -1; }
+  .housing-room-list, .housing-history-list { display:grid; gap:8px; margin-top:16px; }
+  .housing-room-row, .housing-history-row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; }
+  .housing-history-list { max-height:52vh; overflow:auto; }
+  .housing-search { margin-bottom:8px; }
+  .housing-empty { padding:30px 18px; text-align:center; color:var(--muted); border:1px dashed var(--line); border-radius:16px; }
+  @media (max-width:760px) { .housing-head,.housing-site-head,.housing-place-top,.housing-person-line { align-items:flex-start; flex-direction:column; } .housing-form-grid { grid-template-columns:1fr; } .housing-form-grid .wide { grid-column:auto; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="jh-card housing-shell">
+  <header class="housing-head">
+    <div><h1>{{ employer_t.support_housing_title }}</h1><p>{{ employer_t.support_housing_subtitle }}</p></div>
+    <a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_housing_back }}</a>
+  </header>
+
+  {% if housing_sites %}
+    <nav class="housing-tabs" aria-label="{{ employer_t.support_housing_objects }}">
+      {% for site in housing_sites %}
+        <a class="housing-tab{% if selected_housing_site.id == site.id %} active{% endif %}" href="{{ site.housing_url }}"><strong>{{ site.internal_name }}</strong><small>{{ site.city }} · {{ site.street }} {{ site.building }}</small></a>
+      {% endfor %}
+    </nav>
+  {% endif %}
+
+  {% if selected_housing_site %}
+    <div class="housing-site-head">
+      <div><h2>{{ selected_housing_site.internal_name }}</h2><p>{{ selected_housing_site.country_code }} · {{ selected_housing_site.city }} · {{ selected_housing_site.postal_code }} · {{ selected_housing_site.street }} {{ selected_housing_site.building }}</p></div>
+      <button class="jh-btn" type="button" data-housing-dialog="housing-site-edit">{{ employer_t.support_housing_edit }}</button>
+    </div>
+
+    {% if selected_housing_rooms %}
+      <div class="housing-rooms">
+        {% for room in selected_housing_rooms %}
+          <article class="housing-room">
+            <div class="housing-room-head"><h3>{{ room.label }}</h3><span class="jh-status info">{{ room.capacity }} {{ employer_t.support_housing_places }}</span></div>
+            {% for place in room.places_for_layout %}
+              <section class="housing-place{% if place.is_available_now %} free{% endif %}">
+                <div class="housing-place-top"><strong>{% if room.capacity > 1 %}{{ employer_t.support_housing_place }} {{ place.label }}{% else %}{{ employer_t.support_housing_single_room }}{% endif %}</strong><button class="jh-btn primary" type="button" data-housing-dialog="housing-assign-{{ place.public_id }}">{{ employer_t.support_housing_assign_worker }}</button></div>
+                {% if place.current_assignment %}
+                  <div class="housing-person-line"><div class="housing-person-meta"><strong>{{ employer_t.support_housing_occupied }} · {{ place.current_assignment.display_name }}</strong><small>{{ employer_t.support_housing_check_in }}: {{ place.current_assignment.check_in_at|date:"d.m.Y" }}{% if place.current_assignment.check_out_at %} · {{ employer_t.support_housing_check_out }}: {{ place.current_assignment.check_out_at|date:"d.m.Y" }}{% endif %}</small></div><div class="housing-inline-actions"><button class="jh-btn" type="button" data-housing-dialog="housing-checkout-{{ place.current_assignment.public_id }}">{{ employer_t.support_housing_checkout_action }}</button></div></div>
+                {% else %}<small class="jh-muted">{{ employer_t.support_housing_free }}</small>{% endif %}
+                {% for assignment in place.queue_assignments %}
+                  <div class="housing-person-line"><div class="housing-person-meta"><strong>{{ employer_t.support_housing_queue }} · {{ assignment.display_name }}</strong><small>{{ assignment.check_in_at|date:"d.m.Y" }}{% if assignment.check_out_at %} — {{ assignment.check_out_at|date:"d.m.Y" }}{% endif %}</small></div><button class="jh-btn" type="button" data-housing-dialog="housing-queue-{{ assignment.public_id }}">{{ employer_t.support_housing_change }}</button></div>
+                {% endfor %}
+                {% for assignment in place.draft_assignments %}
+                  <div class="housing-person-line"><div class="housing-person-meta"><strong>{{ employer_t.support_housing_draft }} · {{ assignment.display_name }}</strong><small>{{ assignment.check_in_at|date:"d.m.Y" }}</small></div></div>
+                {% endfor %}
+              </section>
+
+              <dialog class="housing-modal" id="housing-assign-{{ place.public_id }}"><div class="housing-modal-card"><div class="housing-modal-head"><h2>{{ employer_t.support_housing_assign_worker }}</h2><button class="jh-btn housing-modal-close" type="button">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="housing_assign"><input type="hidden" name="place_id" value="{{ place.public_id }}"><label class="jh-field housing-search"><span>{{ employer_t.support_housing_worker_search }}</span><input class="jh-input" type="search" data-worker-search="housing-worker-{{ place.public_id }}" placeholder="{{ employer_t.support_housing_worker_search_placeholder }}"></label><div class="housing-form-grid"><label class="jh-field wide"><span>{{ employer_t.support_housing_worker }}</span><select class="jh-input" id="housing-worker-{{ place.public_id }}" name="connection_id" required>{% for worker in housing_workers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% endfor %}</select></label><label class="jh-field"><span>{{ employer_t.support_housing_check_in }}</span><input class="jh-input" name="check_in_on" type="date" value="{{ today|date:'Y-m-d' }}" required></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_housing_assign }}</button></div></form></div></dialog>
+              {% if place.current_assignment %}<dialog class="housing-modal" id="housing-checkout-{{ place.current_assignment.public_id }}"><div class="housing-modal-card"><div class="housing-modal-head"><h2>{{ employer_t.support_housing_checkout_action }} · {{ place.current_assignment.display_name }}</h2><button class="jh-btn housing-modal-close" type="button">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="housing_check_out"><input type="hidden" name="assignment_id" value="{{ place.current_assignment.public_id }}"><label class="jh-field"><span>{{ employer_t.support_housing_check_out }}</span><input class="jh-input" name="check_out_on" type="date"{% if place.current_assignment.check_out_at %} value="{{ place.current_assignment.check_out_at|date:'Y-m-d' }}"{% endif %} required></label><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_housing_save }}</button></div></form></div></dialog>{% endif %}
+              {% for assignment in place.queue_assignments %}<dialog class="housing-modal" id="housing-queue-{{ assignment.public_id }}"><div class="housing-modal-card"><div class="housing-modal-head"><h2>{{ employer_t.support_housing_change }} · {{ assignment.display_name }}</h2><button class="jh-btn housing-modal-close" type="button">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="housing_queue_edit"><input type="hidden" name="assignment_id" value="{{ assignment.public_id }}"><div class="housing-form-grid"><label class="jh-field"><span>{{ employer_t.support_housing_check_in }}</span><input class="jh-input" name="check_in_on" type="date" value="{{ assignment.check_in_at|date:'Y-m-d' }}" required></label><label class="jh-field"><span>{{ employer_t.support_housing_optional_check_out }}</span><input class="jh-input" name="check_out_on" type="date"{% if assignment.check_out_at %} value="{{ assignment.check_out_at|date:'Y-m-d' }}"{% endif %}></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_housing_save }}</button></div></form></div></dialog>{% endfor %}
+            {% endfor %}
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}<div class="housing-empty">{{ employer_t.support_housing_no_rooms }}</div>{% endif %}
+
+    <dialog class="housing-modal" id="housing-site-edit"><div class="housing-modal-card"><div class="housing-modal-head"><h2>{{ employer_t.support_housing_rooms_manage }} · {{ selected_housing_site.internal_name }}</h2><button class="jh-btn housing-modal-close" type="button">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="housing_room_create"><input type="hidden" name="site_id" value="{{ selected_housing_site.public_id }}"><div class="housing-form-grid"><label class="jh-field"><span>{{ employer_t.support_housing_room_name }}</span><input class="jh-input" name="label" maxlength="80" required></label><label class="jh-field"><span>{{ employer_t.support_housing_room_capacity }}</span><input class="jh-input" name="capacity" type="number" min="1" max="50" value="1" required></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_housing_room_add }}</button></div></form><div class="housing-room-list">{% for room in selected_housing_rooms %}<div class="housing-room-row"><span><strong>{{ room.label }}</strong> · {{ room.capacity }}</span><form method="post" onsubmit="return confirm('{{ employer_t.support_housing_room_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="housing_room_delete"><input type="hidden" name="room_id" value="{{ room.public_id }}"><button class="jh-btn danger" type="submit" title="{{ employer_t.support_housing_room_delete }}">×</button></form></div>{% empty %}<div class="jh-empty">{{ employer_t.support_housing_no_rooms }}</div>{% endfor %}</div></div></dialog>
+  {% else %}<div class="housing-empty">{{ employer_t.support_housing_no_objects }}</div>{% endif %}
+
+  <footer class="housing-footer-actions">
+    <button class="jh-btn primary" type="button" data-housing-dialog="housing-site-create">{{ employer_t.support_housing_add_object }}</button>
+    {% if selected_housing_site and selected_housing_rooms %}<button class="jh-btn" type="button" data-housing-dialog="housing-draft-create">{{ employer_t.support_housing_create_draft }}</button>{% endif %}
+    <button class="jh-btn" type="button" data-housing-dialog="housing-drafts">{{ employer_t.support_housing_drafts }} · {{ housing_drafts|length }}</button>
+    <button class="jh-btn" type="button" data-housing-dialog="housing-history">{{ employer_t.support_housing_history }}</button>
+  </footer>
+</section>
+
+<dialog class="housing-modal" id="housing-site-create"><div class="housing-modal-card"><div class="housing-modal-head"><h2>{{ employer_t.support_housing_add_object }}</h2><button class="jh-btn housing-modal-close" type="button">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="housing_site_create"><div class="housing-form-grid"><label class="jh-field wide"><span>{{ employer_t.support_housing_object_name }}</span><input class="jh-input" name="internal_name" maxlength="160" required></label><label class="jh-field"><span>{{ employer_t.support_housing_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="NL" required></label><label class="jh-field"><span>{{ employer_t.support_housing_city }}</span><input class="jh-input" name="city" maxlength="120" required></label><label class="jh-field"><span>{{ employer_t.support_housing_postal }}</span><input class="jh-input" name="postal_code" maxlength="20"></label><label class="jh-field"><span>{{ employer_t.support_housing_street }}</span><input class="jh-input" name="street" maxlength="160" required></label><label class="jh-field"><span>{{ employer_t.support_housing_building }}</span><input class="jh-input" name="building" maxlength="40" required></label><label class="jh-field"><span>{{ employer_t.support_housing_contact }}</span><input class="jh-input" name="contact_name" maxlength="160"></label><label class="jh-field"><span>{{ employer_t.support_housing_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48"></label><label class="jh-field wide"><span>{{ employer_t.support_housing_rules }}</span><textarea class="jh-input" name="rules_text" maxlength="5000"></textarea></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_housing_add }}</button></div></form></div></dialog>
+
+{% if selected_housing_site and selected_housing_rooms %}<dialog class="housing-modal" id="housing-draft-create"><div class="housing-modal-card"><div class="housing-modal-head"><h2>{{ employer_t.support_housing_create_draft }}</h2><button class="jh-btn housing-modal-close" type="button">×</button></div><form method="post">{% csrf_token %}<input type="hidden" name="action" value="housing_draft_create"><label class="jh-field housing-search"><span>{{ employer_t.support_housing_worker_search }}</span><input class="jh-input" type="search" data-worker-search="housing-draft-worker" placeholder="{{ employer_t.support_housing_worker_search_placeholder }}"></label><div class="housing-form-grid"><label class="jh-field"><span>{{ employer_t.support_housing_worker }}</span><select class="jh-input" id="housing-draft-worker" name="connection_id" required>{% for worker in housing_workers %}<option value="{{ worker.public_id }}">{{ worker.display_name }}</option>{% endfor %}</select></label><label class="jh-field"><span>{{ employer_t.support_housing_place }}</span><select class="jh-input" name="place_id" required>{% for room in selected_housing_rooms %}{% for place in room.places_for_layout %}<option value="{{ place.public_id }}">{{ room.label }}{% if room.capacity > 1 %} · {{ place.label }}{% endif %}</option>{% endfor %}{% endfor %}</select></label><label class="jh-field"><span>{{ employer_t.support_housing_check_in }}</span><input class="jh-input" name="check_in_on" type="date" value="{{ today|date:'Y-m-d' }}" required></label></div><div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_housing_create_draft }}</button></div></form></div></dialog>{% endif %}
+
+<dialog class="housing-modal" id="housing-drafts"><div class="housing-modal-card"><div class="housing-modal-head"><h2>{{ employer_t.support_housing_drafts }}</h2><button class="jh-btn housing-modal-close" type="button">×</button></div><div class="housing-history-list">{% for assignment in housing_drafts %}<div class="housing-history-row"><span><strong>{{ assignment.display_name }}</strong><br><small>{{ assignment.place.room.site.internal_name }} · {{ assignment.place.room.label }}{% if assignment.place.room.capacity > 1 %} · {{ assignment.place.label }}{% endif %} · {{ assignment.check_in_at|date:"d.m.Y" }}</small></span><div class="housing-inline-actions"><form method="post">{% csrf_token %}<input type="hidden" name="action" value="housing_publish"><input type="hidden" name="assignment_id" value="{{ assignment.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_housing_publish }}</button></form><form method="post" onsubmit="return confirm('{{ employer_t.support_housing_draft_delete_confirm }}')">{% csrf_token %}<input type="hidden" name="action" value="housing_draft_delete"><input type="hidden" name="assignment_id" value="{{ assignment.public_id }}"><button class="jh-btn danger" type="submit">{{ employer_t.support_housing_delete }}</button></form></div></div>{% empty %}<div class="jh-empty">{{ employer_t.support_housing_no_drafts }}</div>{% endfor %}</div></div></dialog>
+
+<dialog class="housing-modal" id="housing-history"><div class="housing-modal-card"><div class="housing-modal-head"><h2>{{ employer_t.support_housing_history }}</h2><button class="jh-btn housing-modal-close" type="button">×</button></div><div class="housing-history-list">{% for assignment in housing_history %}<div class="housing-history-row"><span><strong>{{ assignment.display_name }}</strong><br><small>{{ assignment.place.room.site.internal_name }} · {{ assignment.place.room.label }}{% if assignment.place.room.capacity > 1 %} · {{ assignment.place.label }}{% endif %}<br>{{ assignment.check_in_at|date:"d.m.Y" }}{% if assignment.check_out_at %} — {{ assignment.check_out_at|date:"d.m.Y" }}{% endif %}</small></span><span class="jh-status {% if assignment.state == 'published' %}success{% else %}muted{% endif %}">{{ assignment.get_state_display }}</span></div>{% empty %}<div class="jh-empty">{{ employer_t.support_housing_no_history }}</div>{% endfor %}</div></div></dialog>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('[data-housing-dialog]').forEach(function (button) {
+    button.addEventListener('click', function () { document.getElementById(button.dataset.housingDialog)?.showModal(); });
+  });
+  document.querySelectorAll('.housing-modal').forEach(function (modal) {
+    modal.querySelector('.housing-modal-close')?.addEventListener('click', function () { modal.close(); });
+    modal.addEventListener('click', function (event) { if (event.target === modal) modal.close(); });
+  });
+  document.querySelectorAll('[data-worker-search]').forEach(function (input) {
+    var select = document.getElementById(input.dataset.workerSearch);
+    if (!select) return;
+    input.addEventListener('input', function () {
+      var query = input.value.trim().toLocaleLowerCase();
+      Array.from(select.options).forEach(function (option) {
+        var matches = !query || option.textContent.toLocaleLowerCase().includes(query);
+        option.hidden = !matches;
+        option.disabled = !matches;
+      });
+      var first = Array.from(select.options).find(function (option) { return !option.disabled; });
+      if (first) select.value = first.value;
+    });
+  });
+});
+</script>
+{% endblock %}

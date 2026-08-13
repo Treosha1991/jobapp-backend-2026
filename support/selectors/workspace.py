@@ -2162,6 +2162,142 @@ def registry_snapshot(*, user, organization_public_id=None):
     }
 
 
+def housing_workspace_snapshot(
+    *, user, organization_public_id=None, housing_site_public_id=None
+):
+    """Return the organization-wide housing plan visible to a housing manager."""
+
+    memberships, membership = _select_membership(
+        user=user,
+        organization_public_id=organization_public_id,
+    )
+    organization = membership.organization
+    permissions = _permissions_for(user=user, organization=organization)
+    if not permissions["housing"]:
+        raise Http404("support_housing_not_found")
+
+    workers = list(
+        worker_connection_queryset_for(
+            user=user,
+            organization=organization,
+            queryset=SupportConnection.objects.filter(
+                is_archived=False,
+                stage__in=(
+                    SupportConnection.STAGE_COORDINATOR,
+                    SupportConnection.STAGE_ACTIVE_WORKER,
+                ),
+            ),
+        )
+        .select_related("candidate")
+        .order_by("candidate__first_name", "candidate__last_name", "candidate__username", "id")
+    )
+    for worker in workers:
+        worker.display_name = _display_name(worker.candidate)
+
+    housing_sites = list(
+        HousingSite.objects.filter(organization=organization, is_active=True).order_by(
+            "internal_name", "id"
+        )
+    )
+    selected_housing_site = None
+    if housing_site_public_id:
+        selected_housing_site = next(
+            (
+                item
+                for item in housing_sites
+                if str(item.public_id) == str(housing_site_public_id)
+            ),
+            None,
+        )
+        if selected_housing_site is None:
+            raise Http404("support_housing_site_not_found")
+    elif housing_sites:
+        selected_housing_site = housing_sites[0]
+
+    selected_housing_rooms = []
+    if selected_housing_site is not None:
+        selected_housing_rooms = list(
+            HousingRoom.objects.filter(site=selected_housing_site, is_active=True)
+            .prefetch_related(
+                Prefetch(
+                    "places",
+                    queryset=HousingPlace.objects.filter(is_active=True).order_by("label", "id"),
+                )
+            )
+            .order_by("label", "id")
+        )
+        place_ids = [
+            place.id for room in selected_housing_rooms for place in room.places.all()
+        ]
+        now = timezone.now()
+        assignments_by_place_id = {}
+        for assignment in (
+            HousingAssignment.objects.filter(
+                place_id__in=place_ids,
+                state__in=(
+                    HousingAssignment.STATE_DRAFT,
+                    HousingAssignment.STATE_PUBLISHED,
+                ),
+            )
+            .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
+            .select_related("connection__candidate", "place__room__site")
+            .order_by("check_in_at", "id")
+        ):
+            assignment.display_name = _display_name(assignment.connection.candidate)
+            assignment.is_current = (
+                assignment.state == HousingAssignment.STATE_PUBLISHED
+                and assignment.check_in_at <= now
+                and (assignment.check_out_at is None or assignment.check_out_at > now)
+            )
+            assignment.is_queued = (
+                assignment.state == HousingAssignment.STATE_PUBLISHED
+                and assignment.check_in_at > now
+            )
+            assignment.is_draft = assignment.state == HousingAssignment.STATE_DRAFT
+            assignments_by_place_id.setdefault(assignment.place_id, []).append(assignment)
+        for room in selected_housing_rooms:
+            room.places_for_layout = []
+            for place in room.places.all():
+                assignments = assignments_by_place_id.get(place.id, [])
+                place.current_assignment = next(
+                    (item for item in assignments if item.is_current), None
+                )
+                place.queue_assignments = [item for item in assignments if item.is_queued]
+                place.draft_assignments = [item for item in assignments if item.is_draft]
+                place.is_available_now = place.current_assignment is None
+                room.places_for_layout.append(place)
+
+    drafts = list(
+        HousingAssignment.objects.filter(
+            organization=organization,
+            state=HousingAssignment.STATE_DRAFT,
+        )
+        .select_related("connection__candidate", "place__room__site")
+        .order_by("check_in_at", "id")
+    )
+    history = list(
+        HousingAssignment.objects.filter(organization=organization)
+        .exclude(state=HousingAssignment.STATE_DRAFT)
+        .select_related("connection__candidate", "place__room__site")
+        .order_by("-check_in_at", "-id")[:300]
+    )
+    for assignment in drafts + history:
+        assignment.display_name = _display_name(assignment.connection.candidate)
+
+    return {
+        "organization": organization,
+        "membership": membership,
+        "memberships": memberships,
+        "permissions": permissions,
+        "housing_sites": housing_sites,
+        "selected_housing_site": selected_housing_site,
+        "selected_housing_rooms": selected_housing_rooms,
+        "housing_workers": workers,
+        "housing_drafts": drafts,
+        "housing_history": history,
+    }
+
+
 def transport_workspace_snapshot(*, user, organization_public_id=None):
     """Return the transport-only staff workspace for one organization.
 

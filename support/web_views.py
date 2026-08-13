@@ -44,6 +44,7 @@ from .models import (
 )
 from .selectors.workspace import (
     registry_snapshot,
+    housing_workspace_snapshot,
     projects_snapshot,
     team_management_snapshot,
     timekeeping_snapshot,
@@ -105,6 +106,7 @@ from .services.operations import (
     set_worker_driving_license,
     sync_worker_schedule_transport,
     schedule_housing_check_out,
+    reschedule_future_housing_assignment,
 )
 from .services.timekeeping import (
     cancel_scheduled_shift,
@@ -132,6 +134,7 @@ from .services.registries import (
     create_project,
     update_project,
     create_project_schedule_template,
+    delete_housing_room,
 )
 from .services.organizations import (
     create_membership_invitation,
@@ -1798,6 +1801,192 @@ def registries(request):
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
     return render(request, "support/registries.html", snapshot)
+
+
+def _housing_redirect(organization, *, site=None):
+    query = {"organization": organization.public_id}
+    if site is not None:
+        query["site"] = site.public_id
+    return redirect(f"{reverse('support:housing')}?{urlencode(query)}")
+
+
+def _housing_error_key(error):
+    detail = str(getattr(error, "detail", error))
+    if "housing_place_conflicts_with_published_assignment" in detail:
+        return "support_housing_error_place_conflict"
+    if "housing_worker_conflicts_with_published_assignment" in detail:
+        return "support_housing_error_worker_conflict"
+    if "period_end_must_be_after_start" in detail:
+        return "support_housing_error_date_order"
+    if "housing_assignment_already_started" in detail:
+        return "support_housing_error_stay_started"
+    if "housing_room_has_active_assignments" in detail:
+        return "support_housing_error_room_in_use"
+    if "housing_room_label_already_exists" in detail:
+        return "support_housing_error_room_exists"
+    if "housing_site_internal_name_already_exists" in detail:
+        return "support_housing_error_site_exists"
+    return "support_housing_error_generic"
+
+
+@login_required(login_url="employer:login")
+def housing_workspace(request):
+    """Organization-wide housing management, independent of a worker card."""
+
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = housing_workspace_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+        housing_site_public_id=request.GET.get("site"),
+    )
+    organization = snapshot["organization"]
+    selected_site = snapshot["selected_housing_site"]
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        redirect_site = selected_site
+        try:
+            if action == "housing_site_create":
+                redirect_site = create_housing_site(
+                    actor=request.user,
+                    organization=organization,
+                    **_validated_post(HousingSiteCreateSerializer, request),
+                )
+                success_key = "support_housing_site_created"
+            elif action == "housing_room_create":
+                data = _validated_post(HousingRoomCreateSerializer, request)
+                site = get_object_or_404(
+                    HousingSite,
+                    organization=organization,
+                    public_id=data.pop("site_id"),
+                )
+                create_housing_room(
+                    actor=request.user,
+                    organization=organization,
+                    site=site,
+                    **data,
+                )
+                redirect_site = site
+                success_key = "support_housing_room_created"
+            elif action == "housing_room_delete":
+                room = get_object_or_404(
+                    HousingRoom.objects.select_related("site"),
+                    site__organization=organization,
+                    public_id=request.POST.get("room_id"),
+                )
+                redirect_site = room.site
+                delete_housing_room(
+                    actor=request.user,
+                    organization=organization,
+                    room=room,
+                )
+                success_key = "support_housing_room_deleted"
+            elif action in {"housing_assign", "housing_draft_create"}:
+                place = get_object_or_404(
+                    HousingPlace.objects.select_related("room__site"),
+                    room__site__organization=organization,
+                    public_id=request.POST.get("place_id"),
+                    is_active=True,
+                )
+                redirect_site = place.room.site
+                connection = get_object_or_404(
+                    worker_connection_queryset_for(
+                        user=request.user,
+                        organization=organization,
+                        queryset=SupportConnection.objects.filter(
+                            is_archived=False,
+                            stage__in=(
+                                SupportConnection.STAGE_COORDINATOR,
+                                SupportConnection.STAGE_ACTIVE_WORKER,
+                            ),
+                        ),
+                    ),
+                    public_id=request.POST.get("connection_id"),
+                )
+                check_in_at = _operation_date_start(request.POST.get("check_in_on"))
+                with transaction.atomic():
+                    assignment = create_housing_assignment(
+                        actor=request.user,
+                        organization=organization,
+                        connection=connection,
+                        place=place,
+                        check_in_at=check_in_at,
+                    )
+                    if action == "housing_assign":
+                        publish_housing_assignment(
+                            actor=request.user,
+                            assignment=assignment,
+                        )
+                success_key = (
+                    "support_housing_assignment_created"
+                    if action == "housing_assign"
+                    else "support_housing_draft_created"
+                )
+            elif action == "housing_publish":
+                assignment = get_object_or_404(
+                    HousingAssignment.objects.select_related("place__room__site"),
+                    organization=organization,
+                    public_id=request.POST.get("assignment_id"),
+                )
+                redirect_site = assignment.place.room.site
+                publish_housing_assignment(actor=request.user, assignment=assignment)
+                success_key = "support_housing_assignment_created"
+            elif action == "housing_draft_delete":
+                assignment = get_object_or_404(
+                    HousingAssignment.objects.select_related("place__room__site"),
+                    organization=organization,
+                    public_id=request.POST.get("assignment_id"),
+                )
+                redirect_site = assignment.place.room.site
+                delete_housing_assignment_draft(actor=request.user, assignment=assignment)
+                success_key = "support_housing_draft_deleted"
+            elif action == "housing_check_out":
+                assignment = get_object_or_404(
+                    HousingAssignment.objects.select_related("place__room__site"),
+                    organization=organization,
+                    public_id=request.POST.get("assignment_id"),
+                )
+                redirect_site = assignment.place.room.site
+                schedule_housing_check_out(
+                    actor=request.user,
+                    assignment=assignment,
+                    check_out_at=_operation_date_start(request.POST.get("check_out_on")),
+                )
+                success_key = "support_housing_checkout_saved"
+            elif action == "housing_queue_edit":
+                assignment = get_object_or_404(
+                    HousingAssignment.objects.select_related("place__room__site"),
+                    organization=organization,
+                    public_id=request.POST.get("assignment_id"),
+                )
+                redirect_site = assignment.place.room.site
+                reschedule_future_housing_assignment(
+                    actor=request.user,
+                    assignment=assignment,
+                    check_in_at=_operation_date_start(request.POST.get("check_in_on")),
+                    check_out_at=_operation_date_start(
+                        request.POST.get("check_out_on"), required=False
+                    ),
+                )
+                success_key = "support_housing_queue_updated"
+            else:
+                raise ValueError("housing_operation_unknown")
+        except (APIException, ValueError) as exc:
+            messages.error(request, tr(request, _housing_error_key(exc)))
+        else:
+            messages.success(request, tr(request, success_key))
+        return _housing_redirect(organization, site=redirect_site)
+
+    snapshot["workspace_url"] = (
+        f"{reverse('support:workspace')}?organization={organization.public_id}"
+    )
+    snapshot["today"] = timezone.localdate()
+    for site in snapshot["housing_sites"]:
+        site.housing_url = (
+            f"{reverse('support:housing')}?organization={organization.public_id}"
+            f"&site={site.public_id}"
+        )
+    return render(request, "support/housing_workspace.html", snapshot)
 
 
 def _projects_redirect(

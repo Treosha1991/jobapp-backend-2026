@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from support.models import (
+    HousingAssignment,
     HousingPlace,
     HousingRoom,
     HousingSite,
@@ -70,6 +71,39 @@ def create_housing_room(*, actor, organization, site, label, capacity):
     except IntegrityError as exc:
         raise ValidationError({"label": "housing_room_label_already_exists"}) from exc
     return room
+
+
+def delete_housing_room(*, actor, organization, room):
+    """Remove an unused room or archive it when historical stays exist."""
+
+    require_permission(user=actor, organization=organization, permission_code=HOUSING_MANAGE)
+    with transaction.atomic():
+        room = HousingRoom.objects.select_for_update().select_related("site").get(pk=room.pk)
+        if room.site.organization_id != organization.id:
+            raise ValidationError({"room": "operation_related_record_not_in_organization"})
+        active_assignments = room.places.filter(
+            assignments__state__in=(
+                HousingAssignment.STATE_DRAFT,
+                HousingAssignment.STATE_PUBLISHED,
+            )
+        ).exists()
+        if active_assignments:
+            raise ValidationError({"room": "housing_room_has_active_assignments"})
+        has_history = room.places.filter(assignments__isnull=False).exists()
+        room_public_id = str(room.public_id)
+        if has_history:
+            room.is_active = False
+            room.save(update_fields=["is_active", "updated_at"])
+            room.places.update(is_active=False)
+        else:
+            room.delete()
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="housing.room_deleted",
+            target=room if has_history else organization,
+            details={"room": room_public_id, "archived": has_history},
+        )
 
 
 def create_housing_place(*, actor, organization, room, label):

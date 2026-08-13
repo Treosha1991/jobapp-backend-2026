@@ -228,6 +228,73 @@ def schedule_housing_check_out(*, actor, assignment, check_out_at):
     return assignment
 
 
+def reschedule_future_housing_assignment(
+    *, actor, assignment, check_in_at, check_out_at=None
+):
+    """Change a queued published stay while preserving occupancy safety."""
+
+    organization = assignment.organization
+    require_permission(user=actor, organization=organization, permission_code=HOUSING_MANAGE)
+    with transaction.atomic():
+        assignment = (
+            HousingAssignment.objects.select_for_update()
+            .select_related("connection", "place__room__site")
+            .get(pk=assignment.pk)
+        )
+        if assignment.state != HousingAssignment.STATE_PUBLISHED:
+            raise ValidationError({"assignment": "housing_assignment_not_published"})
+        if assignment.check_in_at <= timezone.now():
+            raise ValidationError({"assignment": "housing_assignment_already_started"})
+        if check_out_at is not None and check_out_at <= check_in_at:
+            raise ValidationError({"check_out_at": "period_end_must_be_after_start"})
+        require_worker_connection_access(
+            user=actor,
+            organization=organization,
+            connection=assignment.connection,
+        )
+        place_conflict = _period_overlaps(
+            HousingAssignment.objects.select_for_update()
+            .filter(place=assignment.place, state=HousingAssignment.STATE_PUBLISHED)
+            .exclude(pk=assignment.pk),
+            starts_field="check_in_at",
+            ends_field="check_out_at",
+            starts_at=check_in_at,
+            ends_at=check_out_at,
+        ).exists()
+        worker_conflict = _period_overlaps(
+            HousingAssignment.objects.select_for_update()
+            .filter(connection=assignment.connection, state=HousingAssignment.STATE_PUBLISHED)
+            .exclude(pk=assignment.pk),
+            starts_field="check_in_at",
+            ends_field="check_out_at",
+            starts_at=check_in_at,
+            ends_at=check_out_at,
+        ).exists()
+        if place_conflict:
+            raise ValidationError(
+                {"place": "housing_place_conflicts_with_published_assignment"}
+            )
+        if worker_conflict:
+            raise ValidationError(
+                {"connection": "housing_worker_conflicts_with_published_assignment"}
+            )
+        assignment.check_in_at = check_in_at
+        assignment.check_out_at = check_out_at
+        assignment.save(update_fields=["check_in_at", "check_out_at", "updated_at"])
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="housing.assignment_rescheduled",
+            target=assignment,
+            details={
+                "connection": str(assignment.connection.public_id),
+                "check_in_at": check_in_at.isoformat(),
+                "check_out_at": check_out_at.isoformat() if check_out_at else None,
+            },
+        )
+    return assignment
+
+
 def publish_housing_assignment(*, actor, assignment):
     organization = assignment.organization
     require_permission(user=actor, organization=organization, permission_code=HOUSING_MANAGE)
