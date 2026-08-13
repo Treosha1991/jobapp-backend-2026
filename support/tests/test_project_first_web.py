@@ -1039,8 +1039,12 @@ class ProjectFirstWorkspaceTests(TestCase):
             ).exists()
         )
         page = self.client.get(f"{self._detail_url()}&month=2026-08")
-        self.assertContains(page, page.context["pf"]["substitute_on"])
+        self.assertContains(page, page.context["pf"]["substitute_driver"])
         self.assertContains(page, self.second_driver.candidate.get_full_name())
+        self.assertNotContains(
+            page,
+            f'{page.context["pf"]["substitute_on"]} 14.08',
+        )
 
     def test_complete_substitute_driver_web_flow_keeps_calendar_and_history_consistent(self):
         crew = self._create_crew()
