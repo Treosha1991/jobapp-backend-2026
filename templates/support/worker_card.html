@@ -558,7 +558,7 @@
             {% if can_operate %}
               <div class="worker-calendar-actions" data-calendar-actions hidden>
                 <div class="worker-calendar-selection"><span>{{ employer_t.support_worker_schedule_selected_count }}: <strong data-selected-count>0</strong></span><button class="jh-btn" type="button" data-clear-selection>{{ employer_t.support_worker_schedule_clear_selection }}</button></div>
-                <div class="jh-actions"><button class="jh-btn" name="action" value="scheduled_shifts_day_off" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_mark_day_off }}</button><button class="jh-btn danger" name="action" value="scheduled_shifts_clear" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_bulk_clear }}</button></div>
+                <div class="jh-actions"><button class="jh-btn" name="action" value="scheduled_shifts_day_off" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_mark_day_off }}</button><button class="jh-btn" name="action" value="scheduled_shifts_day_off_cancel" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_cancel_day_off }}</button><button class="jh-btn danger" name="action" value="scheduled_shifts_clear" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_bulk_clear }}</button><button class="jh-btn" name="action" value="scheduled_shifts_release_cancel" type="submit" formnovalidate>{{ employer_t.support_worker_schedule_cancel_absence }}</button></div>
               </div>
             {% endif %}
             <div class="worker-calendar-legend">

@@ -7,7 +7,7 @@ operations are intentionally isolated until the controlled UI cutover.
 from datetime import datetime, time, timedelta
 
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -140,23 +140,32 @@ def _ensure_shift_capacity(*, shift, additional_members=0):
     driver = shift.members.select_related("vehicle").filter(
         role=ProjectCrewShiftMember.ROLE_DRIVER
     ).first()
-    if driver is None or driver.vehicle_id is None:
+    resource = None
+    vehicle = driver.vehicle if driver and driver.vehicle_id else None
+    if vehicle is None:
+        resource = _resource_for_date(crew=shift.crew, work_date=shift.work_date)
+        vehicle = resource.vehicle if resource else None
+    if vehicle is None:
         _operation_error(
-            "crew_driver_missing",
-            f"Crew has no driver and vehicle on {shift.work_date.isoformat()}.",
+            "crew_resource_missing",
+            f"Crew has no assigned vehicle on {shift.work_date.isoformat()}.",
             work_date=shift.work_date.isoformat(),
         )
     occupied = shift.members.count()
-    if occupied + additional_members > driver.vehicle.seat_capacity:
+    # A temporary missing driver must not block passenger planning.  The car
+    # still has one seat reserved for the primary or substitute driver.
+    reserved_driver_seat = 0 if driver else 1
+    requested_occupied = occupied + additional_members + reserved_driver_seat
+    if requested_occupied > vehicle.seat_capacity:
         _operation_error(
             "crew_capacity_exceeded",
             (
                 f"Crew capacity is exceeded on {shift.work_date.isoformat()}: "
-                f"{occupied + additional_members}/{driver.vehicle.seat_capacity} seats."
+                f"{requested_occupied}/{vehicle.seat_capacity} seats."
             ),
             work_date=shift.work_date.isoformat(),
             occupied=occupied,
-            capacity=driver.vehicle.seat_capacity,
+            capacity=vehicle.seat_capacity,
         )
 
 
@@ -1112,6 +1121,12 @@ def release_project_crew_shifts(*, actor, crew, work_dates):
         shift.save(update_fields=("state", "updated_by", "updated_at"))
         _sync_shift_worker_calendars(shift=shift, actor=actor)
         changed.append(shift)
+    # Crew-specific absences only make sense while the crew has a published
+    # shift on that date. Worker-wide days off deliberately remain intact.
+    ProjectCrewMemberAbsence.objects.filter(
+        crew=crew,
+        work_date__in=dates,
+    ).delete()
     record_audit_event(
         organization=organization,
         actor=actor,
@@ -1456,6 +1471,169 @@ def mark_worker_schedule_days_off(*, actor, connection, work_dates):
     return dates
 
 
+def _restore_connection_to_crew_shift(*, actor, shift, connection):
+    """Restore one worker after cancelling a day off or crew absence."""
+
+    existing = shift.members.select_for_update().filter(connection=connection).first()
+    if existing:
+        _sync_member_worker_calendar(member=existing, actor=actor)
+        return existing
+
+    resource = _resource_for_date(
+        crew=shift.crew,
+        work_date=shift.work_date,
+        lock=True,
+    )
+    active_substitution = ProjectCrewDriverSubstitution.objects.select_for_update().filter(
+        crew=shift.crew,
+        work_date=shift.work_date,
+        state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+    ).first()
+    if resource and resource.driver_connection_id == connection.id:
+        if active_substitution:
+            _close_active_substitutions(
+                crew=shift.crew,
+                work_dates=[shift.work_date],
+                actor=actor,
+                state=ProjectCrewDriverSubstitution.STATE_CANCELLED,
+            )
+        shift.members.filter(role=ProjectCrewShiftMember.ROLE_DRIVER).delete()
+        member = ProjectCrewShiftMember(
+            shift=shift,
+            connection=connection,
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+            vehicle=resource.vehicle,
+            created_by=actor,
+        )
+        member.full_clean()
+        member.save()
+        _sync_member_worker_calendar(member=member, actor=actor)
+        return member
+
+    roster_exists = ProjectCrewPassenger.objects.filter(
+        crew=shift.crew,
+        connection=connection,
+        starts_on__lte=shift.work_date,
+    ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=shift.work_date)).exists()
+    if roster_exists:
+        member, _ = _add_passenger_to_shift(
+            actor=actor,
+            shift=shift,
+            connection=connection,
+        )
+        return member
+    return None
+
+
+@transaction.atomic
+def restore_project_crew_member_days(*, actor, connection, work_dates):
+    """Cancel crew-specific absences and restore applicable daily membership."""
+
+    connection = (
+        SupportConnection.objects.select_for_update()
+        .select_related("organization")
+        .get(pk=connection.pk)
+    )
+    organization = connection.organization
+    _require_permissions(actor=actor, organization=organization)
+    _require_connection(actor=actor, organization=organization, connection=connection)
+    dates = _normalize_dates(work_dates)
+    absences = list(
+        ProjectCrewMemberAbsence.objects.select_for_update()
+        .select_related("crew")
+        .filter(connection=connection, work_date__in=dates)
+    )
+    if not absences:
+        _operation_error(
+            "selected_schedule_days_have_no_absence",
+            "The selected days contain no crew absence to cancel.",
+        )
+    absence_keys = {(item.crew_id, item.work_date) for item in absences}
+    ProjectCrewMemberAbsence.objects.filter(pk__in=[item.pk for item in absences]).delete()
+    shifts = ProjectCrewShift.objects.select_for_update().select_related("crew").filter(
+        crew_id__in={item.crew_id for item in absences},
+        work_date__in={item.work_date for item in absences},
+        state=ProjectCrewShift.STATE_PUBLISHED,
+    )
+    restored = []
+    for shift in shifts:
+        if (shift.crew_id, shift.work_date) not in absence_keys:
+            continue
+        member = _restore_connection_to_crew_shift(
+            actor=actor,
+            shift=shift,
+            connection=connection,
+        )
+        if member:
+            restored.append(shift.work_date)
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.worker_days_restored",
+        target=connection,
+        details={"work_dates": [item.isoformat() for item in dates]},
+    )
+    return sorted(set(restored))
+
+
+@transaction.atomic
+def restore_worker_schedule_days_off(*, actor, connection, work_dates):
+    """Cancel worker-wide days off and restore current crew membership."""
+
+    connection = (
+        SupportConnection.objects.select_for_update()
+        .select_related("organization")
+        .get(pk=connection.pk)
+    )
+    organization = connection.organization
+    _require_permissions(actor=actor, organization=organization)
+    _require_connection(actor=actor, organization=organization, connection=connection)
+    dates = _normalize_dates(work_dates)
+    days_off = list(
+        WorkerScheduleDayOff.objects.select_for_update().filter(
+            connection=connection,
+            work_date__in=dates,
+        )
+    )
+    if not days_off:
+        _operation_error(
+            "selected_schedule_days_have_no_day_off",
+            "The selected days contain no day off to cancel.",
+        )
+    restored_dates = {item.work_date for item in days_off}
+    WorkerScheduleDayOff.objects.filter(pk__in=[item.pk for item in days_off]).delete()
+    shifts = ProjectCrewShift.objects.select_for_update().select_related("crew").filter(
+        state=ProjectCrewShift.STATE_PUBLISHED,
+        work_date__in=restored_dates,
+    ).filter(
+        Q(
+            crew__resource_assignments__driver_connection=connection,
+            crew__resource_assignments__starts_on__lte=F("work_date"),
+        )
+        | Q(
+            crew__passenger_assignments__connection=connection,
+            crew__passenger_assignments__starts_on__lte=F("work_date"),
+        )
+    ).distinct()
+    restored = []
+    for shift in shifts:
+        member = _restore_connection_to_crew_shift(
+            actor=actor,
+            shift=shift,
+            connection=connection,
+        )
+        if member:
+            restored.append(shift.work_date)
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="worker.schedule_days_off_cancelled",
+        target=connection,
+        details={"work_dates": [item.isoformat() for item in dates]},
+    )
+    return sorted(set(restored))
+
+
 @transaction.atomic
 def replace_project_crew_driver(
     *,
@@ -1477,12 +1655,22 @@ def replace_project_crew_driver(
             "The selected passenger does not have a confirmed driving licence.",
         )
     effective_on = effective_on or timezone.localdate()
-    current = _resource_for_date(crew=crew, work_date=effective_on, lock=True)
+    current = (
+        ProjectCrewResourceAssignment.objects.select_for_update()
+        .select_related("driver_connection", "vehicle")
+        .filter(crew=crew, ends_on__isnull=True)
+        .order_by("-starts_on", "-id")
+        .first()
+    )
+    if current is None:
+        current = _resource_for_date(crew=crew, work_date=effective_on, lock=True)
     if current is None:
         _operation_error(
             "crew_resource_missing",
             "The crew has no active driver and vehicle to replace on this date.",
         )
+    if effective_on < current.starts_on:
+        effective_on = current.starts_on
     if current.driver_connection_id == new_driver.id:
         return current
 

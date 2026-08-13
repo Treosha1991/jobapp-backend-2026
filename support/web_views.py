@@ -141,6 +141,8 @@ from .services.organizations import (
 from .services.project_crews import (
     mark_worker_schedule_days_off,
     release_project_crew_member_days,
+    restore_project_crew_member_days,
+    restore_worker_schedule_days_off,
 )
 from .services.conversations import (
     mark_conversation_read,
@@ -467,6 +469,10 @@ def _worker_operation_error_key(error):
         return "support_worker_schedule_dates_required"
     if "selected_schedule_days_have_no_shifts" in detail:
         return "support_worker_schedule_days_already_free"
+    if "selected_schedule_days_have_no_day_off" in detail:
+        return "support_worker_schedule_no_day_off"
+    if "selected_schedule_days_have_no_absence" in detail:
+        return "support_worker_schedule_no_absence"
     if "current_scheduled_shift_already_exists" in detail:
         return "support_worker_schedule_day_already_has_shift"
     if "driver_vehicle_assignment_required" in detail:
@@ -1291,6 +1297,36 @@ def _worker_card_operation(request, *, snapshot):
             messages.success(
                 request,
                 tr(request, "support_worker_schedule_days_off_saved"),
+            )
+        elif action == "scheduled_shifts_day_off_cancel":
+            work_dates = sorted(
+                {_operation_date(value) for value in request.POST.getlist("work_dates")}
+            )
+            if not work_dates:
+                raise ValidationError({"work_dates": "schedule_dates_required"})
+            restore_worker_schedule_days_off(
+                actor=request.user,
+                connection=connection,
+                work_dates=work_dates,
+            )
+            messages.success(
+                request,
+                tr(request, "support_worker_schedule_days_off_cancelled"),
+            )
+        elif action == "scheduled_shifts_release_cancel":
+            work_dates = sorted(
+                {_operation_date(value) for value in request.POST.getlist("work_dates")}
+            )
+            if not work_dates:
+                raise ValidationError({"work_dates": "schedule_dates_required"})
+            restore_project_crew_member_days(
+                actor=request.user,
+                connection=connection,
+                work_dates=work_dates,
+            )
+            messages.success(
+                request,
+                tr(request, "support_worker_schedule_absences_cancelled"),
             )
         elif action == "crew_schedule_override":
             work_dates = sorted(

@@ -18,6 +18,7 @@ from support.models import (
     SupportConnection,
     SupportVacancy,
     Vehicle,
+    WorkerScheduleDayOff,
     WorkProject,
     Worksite,
 )
@@ -744,6 +745,34 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertIsNone(day["display_shift"])
         self.assertEqual(day["project_crew_detail"]["crew_name"], crew.internal_name)
         self.assertContains(worker_page, "has-crew-absence")
+        self.assertContains(worker_page, 'value="scheduled_shifts_release_cancel"')
+
+        response = self.client.post(
+            self._worker_url(self.passenger),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "scheduled_shifts_release_cancel",
+                "work_dates": ["2026-08-12"],
+                "return_tab": "work_transport",
+                "return_month": "2026-08",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            ProjectCrewMemberAbsence.objects.filter(
+                crew=crew,
+                connection=self.passenger,
+                work_date=date(2026, 8, 12),
+            ).exists()
+        )
+        self.assertTrue(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=date(2026, 8, 12),
+                connection=self.passenger,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).exists()
+        )
 
     def test_worker_marks_day_off_and_project_crew_labels_it(self):
         crew = self._create_crew()
@@ -805,6 +834,93 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertEqual(displayed["excluded_dates"], [])
         self.assertContains(project_page, project_page.context["pf"]["day_off"])
         self.assertContains(project_page, "12.08")
+
+        worker_page = self.client.get(self._worker_url(self.passenger))
+        self.assertContains(worker_page, 'value="scheduled_shifts_day_off_cancel"')
+        response = self.client.post(
+            self._worker_url(self.passenger),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "scheduled_shifts_day_off_cancel",
+                "work_dates": ["2026-08-12"],
+                "return_tab": "work_transport",
+                "return_month": "2026-08",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            WorkerScheduleDayOff.objects.filter(
+                connection=self.passenger,
+                work_date=date(2026, 8, 12),
+            ).exists()
+        )
+        self.assertTrue(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=date(2026, 8, 12),
+                connection=self.passenger,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).exists()
+        )
+
+    def test_active_substitute_is_shown_as_driver_not_absent_passenger(self):
+        crew = self._create_crew()
+        work_date = date(2026, 8, 14)
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "shifts_publish",
+                "crew_id": str(crew.public_id),
+                "work_dates": [work_date.isoformat()],
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:45",
+                "break_minutes": "0",
+            },
+        )
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "passenger_add",
+                "crew_id": str(crew.public_id),
+                "connection_id": str(self.second_driver.public_id),
+                "scope": "future",
+                "effective_on": work_date.isoformat(),
+            },
+        )
+        self.client.post(
+            self._worker_url(self.driver),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "scheduled_shifts_clear",
+                "work_dates": [work_date.isoformat()],
+                "return_tab": "work_transport",
+                "return_month": "2026-08",
+            },
+        )
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "driver_substitute",
+                "crew_id": str(crew.public_id),
+                "driver_id": str(self.second_driver.public_id),
+                "work_dates": [work_date.isoformat()],
+                "return_month": "2026-08",
+            },
+        )
+
+        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        rendered = next(
+            item
+            for item in page.context["crews"][0].display_passengers
+            if item["connection"].pk == self.second_driver.pk
+        )
+        self.assertEqual(rendered["driver_dates"], [work_date])
+        self.assertEqual(rendered["driver_dates_label"], "14.08")
+        self.assertEqual(rendered["excluded_dates"], [])
+        self.assertContains(page, 'data-pf-select-substitution="2026-08-14"')
 
     def test_driver_absence_marks_project_calendar_as_missing_driver(self):
         crew = self._create_crew()

@@ -120,6 +120,8 @@ COPY = {
         "substitute_driver": "Подменный водитель",
         "assign_substitute": "Подменить водителя",
         "substitute_on": "Подменный водитель на",
+        "change_substitute": "Изменить подмену",
+        "driver_on": "Водитель",
         "substitute_dates_hint": "Выберите в календаре только даты отсутствия основного водителя.",
         "substitute_assigned": "Подменный водитель назначен.",
         "substitution_history": "История подмен",
@@ -176,6 +178,7 @@ COPY = {
         "passenger_removed": "Passenger removed.", "driver_replaced": "Crew driver replaced.",
         "substitute_driver": "Substitute driver", "assign_substitute": "Assign substitute driver",
         "substitute_on": "Substitute driver on", "substitute_dates_hint": "Select only dates when the primary driver is absent.",
+        "change_substitute": "Change substitute", "driver_on": "Driver",
         "substitute_assigned": "Substitute driver assigned.",
         "substitution_history": "Substitution history",
         "substitution_active": "Active",
@@ -225,6 +228,7 @@ COPY = {
         "passenger_removed": "Pasażer został usunięty.", "driver_replaced": "Kierowca ekipy został zmieniony.",
         "substitute_driver": "Kierowca zastępczy", "assign_substitute": "Wyznacz kierowcę zastępczego",
         "substitute_on": "Kierowca zastępczy na", "substitute_dates_hint": "Wybierz tylko dni nieobecności głównego kierowcy.",
+        "change_substitute": "Zmień zastępstwo", "driver_on": "Kierowca",
         "substitute_assigned": "Kierowca zastępczy został wyznaczony.",
         "substitution_history": "Historia zastępstw",
         "substitution_active": "Aktywne",
@@ -274,6 +278,7 @@ COPY = {
         "passenger_removed": "Пасажира виключено.", "driver_replaced": "Водія екіпажу змінено.",
         "substitute_driver": "Підмінний водій", "assign_substitute": "Призначити підмінного водія",
         "substitute_on": "Підмінний водій на", "substitute_dates_hint": "Виберіть лише дні відсутності основного водія.",
+        "change_substitute": "Змінити підміну", "driver_on": "Водій",
         "substitute_assigned": "Підмінного водія призначено.",
         "substitution_history": "Історія підмін",
         "substitution_active": "Активна",
@@ -695,6 +700,9 @@ def _project_context(request, organization, project, *, selected_month):
         ).values_list("connection_id", "work_date"):
             days_off_by_connection.setdefault(connection_id, set()).add(work_date)
     for crew in crews:
+        published_shift_dates = {
+            shift.work_date for shift in crew.calendar_shifts.all()
+        }
         absence_dates_by_connection = {}
         for absence in crew.member_absences.all():
             absence_dates_by_connection.setdefault(
@@ -715,7 +723,7 @@ def _project_context(request, organization, project, *, selected_month):
                     crew.current_resource.driver_connection_id,
                     set(),
                 )
-                & {shift.work_date for shift in crew.calendar_shifts.all()}
+                & published_shift_dates
             )
             crew.current_resource.day_off_dates_label = ", ".join(
                 item.strftime("%d.%m") for item in driver_days_off
@@ -725,6 +733,7 @@ def _project_context(request, organization, project, *, selected_month):
                     crew.current_resource.driver_connection_id,
                     set(),
                 )
+                & published_shift_dates
             )
             crew.current_resource.absence_dates_label = ", ".join(
                 item.strftime("%d.%m") for item in driver_absence_dates
@@ -782,6 +791,9 @@ def _project_context(request, organization, project, *, selected_month):
             group["dates_label"] = ", ".join(
                 item.strftime("%d.%m") for item in group["work_dates"]
             )
+            group["dates_value"] = ",".join(
+                item.isoformat() for item in group["work_dates"]
+            )
             crew.current_substitution_groups.append(group)
         substitution_state_labels = {
             ProjectCrewDriverSubstitution.STATE_ACTIVE: copy["substitution_active"],
@@ -808,6 +820,12 @@ def _project_context(request, organization, project, *, selected_month):
         }
         member_dates = {}
         member_connections = {}
+        substitute_dates_by_connection = {}
+        for substitution in active_substitutions:
+            substitute_dates_by_connection.setdefault(
+                substitution.substitute_driver_connection_id,
+                set(),
+            ).add(substitution.work_date)
         for shift in crew.calendar_shifts.all():
             for member in shift.members.all():
                 if member.role != ProjectCrewShiftMember.ROLE_PASSENGER:
@@ -831,11 +849,16 @@ def _project_context(request, organization, project, *, selected_month):
             dates = sorted(set(member_dates.get(connection_id, [])))
             day_off_dates = sorted(
                 days_off_by_connection.get(connection_id, set())
-                & {shift.work_date for shift in crew.calendar_shifts.all()}
+                & published_shift_dates
+            )
+            driver_dates = sorted(
+                substitute_dates_by_connection.get(connection_id, set())
+                & published_shift_dates
             )
             excluded_dates = sorted(
-                absence_dates_by_connection.get(connection_id, set())
+                (absence_dates_by_connection.get(connection_id, set()) & published_shift_dates)
                 - set(day_off_dates)
+                - set(driver_dates)
             )
             roster_entry = roster_by_connection.get(connection_id)
             if roster_entry is not None and not excluded_dates:
@@ -852,6 +875,7 @@ def _project_context(request, organization, project, *, selected_month):
                     )
                     and shift.work_date not in assigned_dates
                     and shift.work_date not in day_off_dates
+                    and shift.work_date not in driver_dates
                 ]
             crew.display_passengers.append(
                 {
@@ -871,6 +895,10 @@ def _project_context(request, organization, project, *, selected_month):
                     "day_off_dates": day_off_dates,
                     "day_off_dates_label": ", ".join(
                         item.strftime("%d.%m") for item in day_off_dates
+                    ),
+                    "driver_dates": driver_dates,
+                    "driver_dates_label": ", ".join(
+                        item.strftime("%d.%m") for item in driver_dates
                     ),
                 }
             )

@@ -102,7 +102,16 @@ document.addEventListener('DOMContentLoaded',function(){
     function sync(){var selected=inputs.filter(function(input){return input.checked;});inputs.forEach(function(input){input.closest('[data-pf-day]')?.classList.toggle('is-selected',input.checked);});if(count)count.textContent=selected.length;if(actions)actions.hidden=selected.length===0;syncPassengerForms(selected);syncSubstituteForms(selected);}
     inputs.forEach(function(input){var day=input.closest('[data-pf-day]');if(!day)return;day.addEventListener('click',function(event){event.preventDefault();form.querySelectorAll('[data-pf-day]').forEach(function(item){item.classList.toggle('is-viewed',item===day);});});day.addEventListener('dblclick',function(event){event.preventDefault();window.getSelection()?.removeAllRanges();input.checked=!input.checked;sync();});});
     passengerForms.forEach(function(passengerForm){passengerForm.querySelector('[data-pf-passenger-scope]')?.addEventListener('change',sync);});
-    substituteForms.forEach(function(substituteForm){substituteForm.querySelector('[data-pf-substitute-select]')?.addEventListener('change',sync);});
+    substituteForms.forEach(function(substituteForm){
+      substituteForm.querySelector('[data-pf-substitute-select]')?.addEventListener('change',sync);
+      crew?.querySelectorAll('[data-pf-select-substitution]').forEach(function(button){
+        button.addEventListener('click',function(){
+          var dates=(button.dataset.pfSelectSubstitution||'').split(',').filter(Boolean);
+          inputs.forEach(function(input){input.checked=dates.indexOf(input.value)!==-1;});
+          sync();
+        });
+      });
+    });
     form.querySelector('[data-pf-clear]')?.addEventListener('click',function(){inputs.forEach(function(input){input.checked=false;});sync();});sync();
   });
 });
@@ -173,7 +182,7 @@ document.addEventListener('DOMContentLoaded',function(){
                     <small>{{ pf.driver }}</small><strong>{{ crew.current_resource.driver_name }}</strong><span>{{ crew.current_resource.vehicle.registration_identifier }} · {{ crew.current_resource.vehicle.internal_name }}</span>
                     {% if crew.current_resource.absence_dates_label %}<span class="pf-absence">{{ pf.absent_dates }}: {{ crew.current_resource.absence_dates_label }}</span>{% endif %}
                     {% if crew.current_resource.day_off_dates_label %}<span class="pf-absence">{{ pf.day_off }}: {{ crew.current_resource.day_off_dates_label }}</span>{% endif %}
-                    {% if crew.current_substitution_groups %}<div class="pf-substitutions">{% for substitution in crew.current_substitution_groups %}<span class="pf-substitution">{{ pf.substitute_on }} {{ substitution.dates_label }}: {{ substitution.display_name }}</span>{% endfor %}</div>{% endif %}
+                    {% if crew.current_substitution_groups %}<div class="pf-substitutions">{% for substitution in crew.current_substitution_groups %}<span class="pf-substitution">{{ pf.substitute_on }} {{ substitution.dates_label }}: {{ substitution.display_name }} <button class="jh-btn" type="button" data-pf-select-substitution="{{ substitution.dates_value }}">{{ pf.change_substitute }}</button></span>{% endfor %}</div>{% endif %}
                   </div>
                   <div><small>{{ pf.schedule }}</small><strong>{{ project.worker_visible_name }}</strong><span>{% if crew.schedule_example %}{{ crew.schedule_example.starts_at|time:"H:i" }}–{{ crew.schedule_example.ends_at|time:"H:i" }}{% else %}{{ pf.no_shifts }}{% endif %}</span></div>
                   <div class="pf-occupancy"><small>{{ pf.seats }}</small><strong>{{ crew.occupied }}/{{ crew.current_resource.vehicle.seat_capacity }}</strong></div>
@@ -202,7 +211,7 @@ document.addEventListener('DOMContentLoaded',function(){
                 <div class="pf-list">
                   {% for passenger in crew.display_passengers %}
                     <div class="pf-person">
-                      <div class="pf-person-copy"><strong>{{ passenger.display_name }}</strong>{% if passenger.scope == 'selected' %}<span class="pf-muted">{{ passenger.dates_label }}</span>{% elif passenger.excluded_dates %}<span class="pf-absence">{{ pf.absent_dates }}: {{ passenger.excluded_dates_label }}</span>{% endif %}{% if passenger.day_off_dates_label %}<span class="pf-absence">{{ pf.day_off }}: {{ passenger.day_off_dates_label }}</span>{% endif %}</div>
+                      <div class="pf-person-copy"><strong>{{ passenger.display_name }}</strong>{% if passenger.scope == 'selected' %}<span class="pf-muted">{{ passenger.dates_label }}</span>{% elif passenger.excluded_dates %}<span class="pf-absence">{{ pf.absent_dates }}: {{ passenger.excluded_dates_label }}</span>{% endif %}{% if passenger.driver_dates_label %}<span class="pf-substitution">{{ pf.driver_on }}: {{ passenger.driver_dates_label }}</span>{% endif %}{% if passenger.day_off_dates_label %}<span class="pf-absence">{{ pf.day_off }}: {{ passenger.day_off_dates_label }}</span>{% endif %}</div>
                       <form method="post">
                         {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="passenger_remove"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><input type="hidden" name="connection_id" value="{{ passenger.connection.public_id }}"><input type="hidden" name="scope" value="{{ passenger.scope }}"><input type="hidden" name="effective_on" value="{{ today|date:'Y-m-d' }}">{% for work_date in passenger.work_dates %}<input type="hidden" name="work_dates" value="{{ work_date|date:'Y-m-d' }}">{% endfor %}
                         <button class="jh-btn danger" type="submit">{{ pf.remove }}</button>

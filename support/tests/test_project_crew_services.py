@@ -37,6 +37,8 @@ from support.services.project_crews import (
     release_project_crew_shifts,
     remove_project_crew_passenger,
     replace_project_crew_driver,
+    restore_project_crew_member_days,
+    restore_worker_schedule_days_off,
 )
 
 
@@ -219,6 +221,136 @@ class ProjectCrewServiceTests(TestCase):
             self._crew(driver=self.passenger)
         self.assertEqual(self._error_code(error.exception), "driver_licence_not_confirmed")
         self.assertEqual(self.project.project_crews.count(), 0)
+
+    def test_passenger_can_be_planned_while_driver_is_temporarily_absent(self):
+        crew = self._crew()
+        work_date = date(2026, 8, 14)
+        self._publish(crew, [work_date])
+        release_project_crew_member_days(
+            actor=self.owner,
+            connection=self.driver,
+            work_dates=[work_date],
+        )
+
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_SELECTED,
+            selected_dates=[work_date],
+        )
+
+        shift = crew.calendar_shifts.get(work_date=work_date)
+        self.assertFalse(
+            shift.members.filter(role=ProjectCrewShiftMember.ROLE_DRIVER).exists()
+        )
+        self.assertTrue(
+            shift.members.filter(
+                connection=self.passenger,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).exists()
+        )
+
+    def test_releasing_crew_day_removes_obsolete_crew_absences(self):
+        crew = self._crew()
+        work_date = date(2026, 8, 14)
+        self._publish(crew, [work_date])
+        release_project_crew_member_days(
+            actor=self.owner,
+            connection=self.driver,
+            work_dates=[work_date],
+        )
+        self.assertTrue(
+            ProjectCrewMemberAbsence.objects.filter(
+                crew=crew,
+                connection=self.driver,
+                work_date=work_date,
+            ).exists()
+        )
+
+        release_project_crew_shifts(
+            actor=self.owner,
+            crew=crew,
+            work_dates=[work_date],
+        )
+
+        self.assertFalse(
+            ProjectCrewMemberAbsence.objects.filter(
+                crew=crew,
+                work_date=work_date,
+            ).exists()
+        )
+
+    def test_released_passenger_day_can_be_restored(self):
+        crew = self._crew()
+        work_date = date(2026, 8, 14)
+        self._publish(crew, [work_date])
+        assign_project_crew_passenger(
+            actor=self.owner,
+            crew=crew,
+            connection=self.passenger,
+            scope=PASSENGER_SCOPE_FUTURE,
+            effective_on=work_date,
+        )
+        release_project_crew_member_days(
+            actor=self.owner,
+            connection=self.passenger,
+            work_dates=[work_date],
+        )
+
+        restore_project_crew_member_days(
+            actor=self.owner,
+            connection=self.passenger,
+            work_dates=[work_date],
+        )
+
+        self.assertFalse(
+            ProjectCrewMemberAbsence.objects.filter(
+                crew=crew,
+                connection=self.passenger,
+                work_date=work_date,
+            ).exists()
+        )
+        self.assertTrue(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=work_date,
+                connection=self.passenger,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            ).exists()
+        )
+
+    def test_driver_day_off_can_be_cancelled_and_driver_restored(self):
+        crew = self._crew()
+        work_date = date(2026, 8, 14)
+        self._publish(crew, [work_date])
+        mark_worker_schedule_days_off(
+            actor=self.owner,
+            connection=self.driver,
+            work_dates=[work_date],
+        )
+
+        restore_worker_schedule_days_off(
+            actor=self.owner,
+            connection=self.driver,
+            work_dates=[work_date],
+        )
+
+        self.assertFalse(
+            WorkerScheduleDayOff.objects.filter(
+                connection=self.driver,
+                work_date=work_date,
+            ).exists()
+        )
+        self.assertTrue(
+            ProjectCrewShiftMember.objects.filter(
+                shift__crew=crew,
+                shift__work_date=work_date,
+                connection=self.driver,
+                role=ProjectCrewShiftMember.ROLE_DRIVER,
+                vehicle=self.vehicle,
+            ).exists()
+        )
 
     def test_create_crew_rejects_vehicle_still_owned_by_legacy_fleet(self):
         DriverVehicleAssignment.objects.create(
