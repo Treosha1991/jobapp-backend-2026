@@ -178,7 +178,7 @@ document.addEventListener('DOMContentLoaded',function(){
                   <div><small>{{ pf.schedule }}</small><strong>{{ project.worker_visible_name }}</strong><span>{% if crew.schedule_example %}{{ crew.schedule_example.starts_at|time:"H:i" }}–{{ crew.schedule_example.ends_at|time:"H:i" }}{% else %}{{ pf.no_shifts }}{% endif %}</span></div>
                   <div class="pf-occupancy"><small>{{ pf.seats }}</small><strong>{{ crew.occupied }}/{{ crew.current_resource.vehicle.seat_capacity }}</strong></div>
                 </div>
-                {% if crew.future_driver_absence_dates %}
+                {% if crew.substitute_eligible_dates %}
                   <form method="post" class="pf-substitute-form" data-pf-substitute-form>
                     {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="driver_substitute"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><span data-pf-substitute-dates></span>
                     <select class="jh-input" name="driver_id" required data-pf-substitute-select disabled><option value="">{{ pf.substitute_driver }}</option>{% for option in crew.substitute_driver_options %}<option value="{{ option.connection.public_id }}" data-available-dates="{{ option.available_dates_value }}">{{ option.display_name }}{% if option.is_current_crew_passenger %} · {{ pf.passengers }}{% endif %}</option>{% endfor %}</select>

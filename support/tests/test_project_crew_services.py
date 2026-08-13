@@ -531,6 +531,19 @@ class ProjectCrewServiceTests(TestCase):
             "substitution_requires_driver_absence",
         )
 
+    def test_substitute_candidates_accept_red_day_without_legacy_absence_row(self):
+        crew = self._crew()
+        work_date = date(2026, 8, 14)
+        shift = self._publish(crew, [work_date])[0]
+        shift.members.filter(role=ProjectCrewShiftMember.ROLE_DRIVER).delete()
+
+        candidates = project_crew_substitute_driver_candidates(
+            crew=crew,
+            work_dates=[work_date],
+        )
+
+        self.assertEqual([item.id for item in candidates], [self.second_driver.id])
+
     def test_substitute_cannot_be_assigned_to_past_day(self):
         crew = self._crew()
 

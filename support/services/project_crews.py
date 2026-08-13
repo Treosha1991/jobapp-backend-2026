@@ -412,20 +412,42 @@ def project_crew_substitute_driver_candidates(
             "crew_resource_missing",
             "The crew has no primary driver and vehicle for one of the selected dates.",
         )
-    missing_absence_dates = [
-        work_date
-        for work_date, resource in resources_by_date.items()
-        if not ProjectCrewMemberAbsence.objects.filter(
+    shifts_by_date = {
+        shift.work_date: shift
+        for shift in ProjectCrewShift.objects.filter(
             crew=crew,
-            connection=resource.driver_connection,
-            work_date=work_date,
-        ).exists()
+            work_date__in=dates,
+            state=ProjectCrewShift.STATE_PUBLISHED,
+        ).prefetch_related("members")
+    }
+    missing_shift_dates = [item for item in dates if item not in shifts_by_date]
+    if missing_shift_dates:
+        _operation_error(
+            "crew_shift_missing",
+            "A published crew shift is required on every substitution date.",
+            work_dates=[item.isoformat() for item in missing_shift_dates],
+        )
+    active_substitution_dates = set(
+        ProjectCrewDriverSubstitution.objects.filter(
+            crew=crew,
+            work_date__in=dates,
+            state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+        ).values_list("work_date", flat=True)
+    )
+    driver_present_dates = [
+        work_date
+        for work_date, shift in shifts_by_date.items()
+        if work_date not in active_substitution_dates
+        if any(
+            member.role == ProjectCrewShiftMember.ROLE_DRIVER
+            for member in shift.members.all()
+        )
     ]
-    if missing_absence_dates:
+    if driver_present_dates:
         _operation_error(
             "substitution_requires_driver_absence",
-            "A substitute can be selected only for dates when the primary driver is absent.",
-            work_dates=[item.isoformat() for item in missing_absence_dates],
+            "A substitute can be selected only for published crew days without a driver.",
+            work_dates=[item.isoformat() for item in driver_present_dates],
         )
 
     primary_driver_ids = {

@@ -845,7 +845,7 @@ class ProjectFirstWorkspaceTests(TestCase):
 
     def test_owner_assigns_substitute_driver_for_selected_absence_date(self):
         crew = self._create_crew()
-        work_date = date(2026, 8, 12)
+        work_date = date(2026, 8, 14)
         self.client.post(
             self._detail_url(),
             {
@@ -879,6 +879,13 @@ class ProjectFirstWorkspaceTests(TestCase):
                 "return_month": "2026-08",
             },
         )
+        # A red calendar day is authoritative even if an older workflow did
+        # not leave a separate absence row behind.
+        ProjectCrewMemberAbsence.objects.filter(
+            crew=crew,
+            connection=self.driver,
+            work_date=work_date,
+        ).delete()
 
         page = self.client.get(f"{self._detail_url()}&month=2026-08")
         self.assertContains(page, "data-pf-substitute-form", html=False)

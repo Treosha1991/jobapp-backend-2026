@@ -741,12 +741,28 @@ def _project_context(request, organization, project, *, selected_month):
             crew.future_driver_absence_dates = []
             crew.driver_absence_date_values = set()
 
+        crew.driver_missing_dates = sorted(
+            shift.work_date
+            for shift in crew.calendar_shifts.all()
+            if not any(
+                member.role == ProjectCrewShiftMember.ROLE_DRIVER
+                for member in shift.members.all()
+            )
+        )
+        crew.future_driver_missing_dates = [
+            item for item in crew.driver_missing_dates if item >= today
+        ]
+
         active_substitutions = [
             item
             for item in crew.driver_substitutions.all()
             if item.state == ProjectCrewDriverSubstitution.STATE_ACTIVE
             and item.work_date >= today
         ]
+        crew.substitute_eligible_dates = sorted(
+            set(crew.future_driver_missing_dates)
+            | {item.work_date for item in active_substitutions}
+        )
         substitution_groups = {}
         for substitution in active_substitutions:
             group = substitution_groups.setdefault(
@@ -877,7 +893,7 @@ def _project_context(request, organization, project, *, selected_month):
             crew,
             selected_month=selected_month,
             today=today,
-            driver_absence_dates=crew.driver_absence_dates,
+            driver_absence_dates=crew.substitute_eligible_dates,
         )
         crew.schedule_example = (
             crew.month_shifts[0]
@@ -893,7 +909,7 @@ def _project_context(request, organization, project, *, selected_month):
             item for item in crew.display_passengers if item["connection"].has_driving_license
         ]
         substitute_options = {}
-        for work_date in crew.future_driver_absence_dates:
+        for work_date in crew.substitute_eligible_dates:
             try:
                 available = project_crew_substitute_driver_candidates(
                     crew=crew,
