@@ -260,6 +260,7 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertEqual(driver_row["crew_rows"][0]["crew_name"], "Crew One")
         self.assertEqual(driver_row["driver_resource"].vehicle, self.vehicle)
         self.assertFalse(driver_row["is_free"])
+        self.assertEqual(driver_row["stage_label"], "Active worker")
         self.assertEqual(passenger_row["work_next_date"], work_date)
         self.assertTrue(free_row["is_free"])
         self.assertContains(response, "Project / crew")

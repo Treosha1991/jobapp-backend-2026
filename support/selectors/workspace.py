@@ -387,7 +387,7 @@ def workspace_snapshot(*, user, organization_public_id=None):
                 "connection_id": str(item.public_id),
                 "candidate_name": _display_name(item.candidate),
                 "stage_key": (
-                    f"support_stage_{item.stage}"
+                    "support_stage_active_worker"
                     if future_memberships_by_connection[item.id]
                     else "support_stage_free"
                 ),
