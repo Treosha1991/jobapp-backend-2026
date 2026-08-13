@@ -56,6 +56,11 @@ document.addEventListener('DOMContentLoaded',function(){
   });
   document.querySelectorAll('[data-pf-modal-close]').forEach(function(button){button.addEventListener('click',function(){button.closest('dialog')?.close();});});
   document.querySelectorAll('.pf-modal').forEach(function(dialog){dialog.addEventListener('click',function(event){if(event.target===dialog)dialog.close();});});
+  document.querySelectorAll('[data-pf-confirm]').forEach(function(form){
+    form.addEventListener('submit',function(event){
+      if(!window.confirm(form.dataset.pfConfirm||''))event.preventDefault();
+    });
+  });
   document.querySelectorAll('[data-pf-calendar-form]').forEach(function(form){
     var inputs=Array.prototype.slice.call(form.querySelectorAll('[data-pf-date]'));
     var actions=form.querySelector('[data-pf-actions]');
@@ -112,7 +117,7 @@ document.addEventListener('DOMContentLoaded',function(){
       <h1 class="jh-title">{% if project %}{{ project.internal_name }}{% else %}{{ pf.title }}{% endif %}</h1>
       <p class="jh-subtitle">{{ pf.subtitle }}</p>
     </div>
-    {% if project %}<a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>{% else %}<div class="pf-head-actions">{% if permissions.work %}<button class="jh-btn primary" type="button" data-pf-dialog-target="pf-project-add-modal">{{ pf.add_project }}</button>{% endif %}<a class="jh-btn" href="{{ reset_plan_url }}">{{ pf.reset_plan }}</a></div>{% endif %}
+    {% if project %}<div class="pf-head-actions"><a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>{% if permissions.work %}<form method="post" data-pf-confirm="{{ pf.confirm_delete_project }}">{% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="project_delete"><button class="jh-btn danger" type="submit">{{ pf.delete_project }}</button></form>{% endif %}</div>{% else %}<div class="pf-head-actions">{% if permissions.work %}<button class="jh-btn primary" type="button" data-pf-dialog-target="pf-project-add-modal">{{ pf.add_project }}</button>{% endif %}<a class="jh-btn" href="{{ reset_plan_url }}">{{ pf.reset_plan }}</a></div>{% endif %}
   </div>
 
   {% if not project %}
@@ -147,7 +152,7 @@ document.addEventListener('DOMContentLoaded',function(){
             <div><strong>{{ item.internal_name }}</strong><span>{{ item.worker_visible_name }}</span></div>
             <div><strong>{{ pf.project_address }}</strong><span>{{ item.worksite.city }}, {{ item.worksite.street }} {{ item.worksite.building }}</span></div>
             <div><strong>{{ item.crew_count }}</strong><span>{{ pf.crews }}</span></div>
-            <a class="jh-btn primary" href="{% url 'support:project-first-detail' item.public_id %}?organization={{ organization.public_id }}">{{ pf.open }}</a>
+            <div class="pf-head-actions"><a class="jh-btn primary" href="{% url 'support:project-first-detail' item.public_id %}?organization={{ organization.public_id }}">{{ pf.open }}</a>{% if permissions.work %}<form method="post" data-pf-confirm="{{ pf.confirm_delete_project }}">{% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="project_delete"><input type="hidden" name="project_id" value="{{ item.public_id }}"><button class="jh-btn danger" type="submit">{{ pf.delete_project }}</button></form>{% endif %}</div>
           </article>
         {% endfor %}
       </div>
@@ -158,7 +163,7 @@ document.addEventListener('DOMContentLoaded',function(){
     <div class="pf-crews">
       {% for crew in crews %}
         <article class="pf-crew" data-pf-crew>
-          <div class="pf-crew-head"><div><p class="pf-kicker">{{ pf.crew }}</p><h2>{{ crew.internal_name|default:pf.crew }}</h2></div></div>
+          <div class="pf-crew-head"><div><p class="pf-kicker">{{ pf.crew }}</p><h2>{{ crew.internal_name|default:pf.crew }}</h2></div>{% if permissions.work %}<form method="post" data-pf-confirm="{{ pf.confirm_delete_crew }}">{% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="action" value="crew_delete"><input type="hidden" name="crew_id" value="{{ crew.public_id }}"><button class="jh-btn danger" type="submit">{{ pf.delete_crew }}</button></form>{% endif %}</div>
 
           <div class="pf-panels">
             <section class="pf-panel">

@@ -43,6 +43,8 @@ from .selectors.workspace import _permissions_for, _select_membership
 from .services.project_crews import (
     PASSENGER_SCOPE_FUTURE,
     PASSENGER_SCOPE_SELECTED,
+    archive_project,
+    archive_project_crew,
     assign_project_crew_passenger,
     assign_project_crew_substitute_driver,
     create_project_crew,
@@ -141,6 +143,12 @@ COPY = {
         "reset_confirmation_invalid": "Фраза подтверждения не совпадает.",
         "add_project": "Добавить проект",
         "project_created": "Проект создан.",
+        "delete_project": "Удалить проект",
+        "delete_crew": "Удалить экипаж",
+        "project_deleted": "Проект удалён. Все активные привязки его экипажей освобождены.",
+        "crew_deleted": "Экипаж удалён. Водитель, автомобиль и пассажиры освобождены.",
+        "confirm_delete_project": "Удалить проект и освободить всех участников его экипажей? Отменить это действие нельзя.",
+        "confirm_delete_crew": "Удалить экипаж и освободить водителя, автомобиль и пассажиров? Отменить это действие нельзя.",
     },
     "en": {
         "preview": "New workspace · preview",
@@ -186,6 +194,11 @@ COPY = {
         "reset_guard_disabled": "The server-side reset guard is disabled.",
         "reset_confirmation_invalid": "The confirmation phrase does not match.",
         "add_project": "Add project", "project_created": "Project created.",
+        "delete_project": "Delete project", "delete_crew": "Delete crew",
+        "project_deleted": "Project deleted. All active crew assignments were released.",
+        "crew_deleted": "Crew deleted. Driver, vehicle and passengers were released.",
+        "confirm_delete_project": "Delete this project and release every crew member? This action cannot be undone.",
+        "confirm_delete_crew": "Delete this crew and release its driver, vehicle and passengers? This action cannot be undone.",
     },
     "pl": {
         "preview": "Nowy panel · tryb testowy", "title": "Projekty i ekipy",
@@ -230,6 +243,11 @@ COPY = {
         "reset_guard_disabled": "Serwerowa blokada czyszczenia jest wyłączona.",
         "reset_confirmation_invalid": "Fraza potwierdzająca nie pasuje.",
         "add_project": "Dodaj projekt", "project_created": "Projekt został utworzony.",
+        "delete_project": "Usuń projekt", "delete_crew": "Usuń ekipę",
+        "project_deleted": "Projekt został usunięty. Wszystkie aktywne przypisania ekip zostały zwolnione.",
+        "crew_deleted": "Ekipa została usunięta. Kierowca, samochód i pasażerowie zostali zwolnieni.",
+        "confirm_delete_project": "Usunąć projekt i zwolnić wszystkich członków jego ekip? Tej operacji nie można cofnąć.",
+        "confirm_delete_crew": "Usunąć ekipę i zwolnić kierowcę, samochód oraz pasażerów? Tej operacji nie można cofnąć.",
     },
     "uk": {
         "preview": "Новий кабінет · тестовий режим", "title": "Проєкти та екіпажі",
@@ -274,6 +292,11 @@ COPY = {
         "reset_guard_disabled": "Серверний захист очищення вимкнено.",
         "reset_confirmation_invalid": "Фраза підтвердження не збігається.",
         "add_project": "Додати проєкт", "project_created": "Проєкт створено.",
+        "delete_project": "Видалити проєкт", "delete_crew": "Видалити екіпаж",
+        "project_deleted": "Проєкт видалено. Усі активні прив’язки його екіпажів звільнено.",
+        "crew_deleted": "Екіпаж видалено. Водія, автомобіль і пасажирів звільнено.",
+        "confirm_delete_project": "Видалити проєкт і звільнити всіх учасників його екіпажів? Цю дію неможливо скасувати.",
+        "confirm_delete_crew": "Видалити екіпаж і звільнити водія, автомобіль та пасажирів? Цю дію неможливо скасувати.",
     },
 }
 
@@ -922,6 +945,9 @@ def _project_context(request, organization, project, *, selected_month):
 
 def _handle_action(request, *, organization, project, copy):
     action = (request.POST.get("action") or "").strip()
+    if action == "project_delete":
+        archive_project(actor=request.user, project=project)
+        return copy["project_deleted"]
     crew = None
     if request.POST.get("crew_id"):
         crew = get_object_or_404(
@@ -956,6 +982,9 @@ def _handle_action(request, *, organization, project, copy):
         return copy["created"]
     if crew is None:
         raise ValidationError({"message": "Select a crew."})
+    if action == "crew_delete":
+        archive_project_crew(actor=request.user, crew=crew)
+        return copy["crew_deleted"]
     if action == "shifts_publish":
         publish_project_crew_shifts(
             actor=request.user,
@@ -1060,7 +1089,18 @@ def project_first_workspace(request, project_public_id=None):
     project = None
     if project_public_id is None and request.method == "POST":
         try:
-            if (request.POST.get("action") or "").strip() != "project_create":
+            action = (request.POST.get("action") or "").strip()
+            if action == "project_delete":
+                deleted_project = get_object_or_404(
+                    WorkProject,
+                    organization=organization,
+                    public_id=request.POST.get("project_id"),
+                    is_active=True,
+                )
+                archive_project(actor=request.user, project=deleted_project)
+                messages.success(request, copy["project_deleted"])
+                return redirect(_workspace_url(organization))
+            if action != "project_create":
                 raise ValidationError({"message": "Unknown project operation."})
             serializer = ProjectCreateSerializer(
                 data={
@@ -1109,6 +1149,8 @@ def project_first_workspace(request, project_public_id=None):
                 messages.error(request, _validation_message(error, copy))
             else:
                 messages.success(request, success)
+            if (request.POST.get("action") or "").strip() == "project_delete":
+                return redirect(_workspace_url(organization))
             return redirect(
                 _workspace_url(
                     organization,

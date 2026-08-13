@@ -20,9 +20,12 @@ from support.models import (
     ProjectCrewResourceAssignment,
     ProjectCrewShift,
     ProjectCrewShiftMember,
+    ProjectScheduleTemplate,
     ScheduledWorkShift,
     SupportConnection,
+    TransportCrew,
     Vehicle,
+    WorkerProjectAssignment,
     WorkerScheduleDayOff,
     WorkProject,
 )
@@ -819,6 +822,144 @@ def create_project_crew(
         },
     )
     return crew
+
+
+@transaction.atomic
+def archive_project_crew(*, actor, crew):
+    """Archive a crew and release every open worker/vehicle assignment.
+
+    Historical rows remain available for audit, while cancelled crew days are
+    mirrored to worker calendars so nobody remains attached to the deleted
+    crew in the active workspace.
+    """
+
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    organization = crew.organization
+    _require_permissions(actor=actor, organization=organization)
+    if crew.state == ProjectCrew.STATE_ARCHIVED:
+        return crew
+
+    today = timezone.localdate()
+    shifts = list(
+        ProjectCrewShift.objects.select_for_update()
+        .filter(crew=crew)
+        .prefetch_related("members")
+        .order_by("work_date", "id")
+    )
+    _close_active_substitutions(
+        crew=crew,
+        work_dates=[shift.work_date for shift in shifts],
+        actor=actor,
+        state=ProjectCrewDriverSubstitution.STATE_CANCELLED,
+    )
+    cancelled_shifts = 0
+    for shift in shifts:
+        if shift.state != ProjectCrewShift.STATE_CANCELLED:
+            shift.state = ProjectCrewShift.STATE_CANCELLED
+            shift.updated_by = actor
+            shift.save(update_fields=("state", "updated_by", "updated_at"))
+            cancelled_shifts += 1
+        _sync_shift_worker_calendars(shift=shift, actor=actor)
+
+    released_resources = 0
+    for assignment in ProjectCrewResourceAssignment.objects.select_for_update().filter(
+        crew=crew,
+        ends_on__isnull=True,
+    ):
+        assignment.ends_on = max(assignment.starts_on, today)
+        assignment.save(update_fields=("ends_on", "updated_at"))
+        released_resources += 1
+
+    released_passengers = 0
+    for assignment in ProjectCrewPassenger.objects.select_for_update().filter(
+        crew=crew,
+        ends_on__isnull=True,
+    ):
+        assignment.ends_on = max(assignment.starts_on, today)
+        assignment.save(update_fields=("ends_on", "updated_at"))
+        released_passengers += 1
+
+    crew.state = ProjectCrew.STATE_ARCHIVED
+    crew.save(update_fields=("state", "updated_at"))
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.archived",
+        target=crew,
+        details={
+            "project": str(crew.project.public_id),
+            "cancelled_shifts": cancelled_shifts,
+            "released_resources": released_resources,
+            "released_passengers": released_passengers,
+        },
+    )
+    return crew
+
+
+@transaction.atomic
+def archive_project(*, actor, project):
+    """Hide a project and release all active crew and worker assignments."""
+
+    project = (
+        WorkProject.objects.select_for_update()
+        .select_related("organization")
+        .get(pk=project.pk)
+    )
+    organization = project.organization
+    _require_permissions(actor=actor, organization=organization)
+    if not project.is_active:
+        return project
+
+    active_crews = list(
+        ProjectCrew.objects.select_for_update().filter(
+            project=project,
+            state=ProjectCrew.STATE_ACTIVE,
+        )
+    )
+    for crew in active_crews:
+        archive_project_crew(actor=actor, crew=crew)
+
+    now = timezone.now()
+    today = timezone.localdate()
+    legacy_assignments = WorkerProjectAssignment.objects.select_for_update().filter(
+        project=project,
+        state__in=(
+            WorkerProjectAssignment.STATE_DRAFT,
+            WorkerProjectAssignment.STATE_PUBLISHED,
+        ),
+    )
+    released_legacy_workers = legacy_assignments.update(
+        state=WorkerProjectAssignment.STATE_CANCELLED,
+        cancelled_at=now,
+    )
+    for legacy_crew in TransportCrew.objects.select_for_update().filter(
+        project=project,
+        state=TransportCrew.STATE_ACTIVE,
+    ):
+        legacy_crew.state = TransportCrew.STATE_ARCHIVED
+        legacy_crew.ends_on = max(legacy_crew.starts_on, today)
+        legacy_crew.save(update_fields=("state", "ends_on", "updated_at"))
+    ProjectScheduleTemplate.objects.select_for_update().filter(
+        project=project,
+        is_active=True,
+    ).update(is_active=False)
+    project.is_active = False
+    project.save(update_fields=("is_active", "updated_at"))
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="work_project.archived",
+        target=project,
+        details={
+            "archived_crews": len(active_crews),
+            "released_legacy_workers": released_legacy_workers,
+        },
+    )
+    return project
 
 
 @transaction.atomic

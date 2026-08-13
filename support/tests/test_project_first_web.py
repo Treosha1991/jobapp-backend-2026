@@ -10,6 +10,7 @@ from support.models import (
     ProjectCrewDriverSubstitution,
     ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
+    ProjectCrewResourceAssignment,
     ProjectCrewShift,
     ProjectCrewShiftMember,
     ScheduledWorkShift,
@@ -201,6 +202,7 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertContains(response, self._reset_plan_url())
         self.assertContains(response, 'data-pf-dialog-target="pf-project-add-modal"')
         self.assertContains(response, 'id="pf-project-add-modal"')
+        self.assertContains(response, 'value="project_delete"')
         self.assertContains(
             response,
             f'href="{self._list_url()}"',
@@ -237,6 +239,110 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertEqual(project.worker_capacity, 18)
         self.assertEqual(project.worksite.city, "Dronten")
         self.assertIn(str(project.public_id), response["Location"])
+
+    def test_owner_deletes_crew_and_releases_all_active_assignments(self):
+        crew = self._create_crew()
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "shifts_publish",
+                "crew_id": str(crew.public_id),
+                "work_dates": ["2026-08-20"],
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:45",
+                "break_minutes": "30",
+            },
+        )
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "passenger_add",
+                "crew_id": str(crew.public_id),
+                "connection_id": str(self.passenger.public_id),
+                "scope": "future",
+            },
+        )
+
+        response = self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "crew_delete",
+                "crew_id": str(crew.public_id),
+            },
+        )
+
+        crew.refresh_from_db()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(crew.state, ProjectCrew.STATE_ARCHIVED)
+        self.assertFalse(crew.resource_assignments.filter(ends_on__isnull=True).exists())
+        self.assertFalse(crew.passenger_assignments.filter(ends_on__isnull=True).exists())
+        self.assertFalse(crew.calendar_shifts.filter(state=ProjectCrewShift.STATE_PUBLISHED).exists())
+        self.assertFalse(
+            ScheduledWorkShift.objects.filter(
+                project_crew_member__shift__crew=crew,
+                state=ScheduledWorkShift.STATE_PUBLISHED,
+            ).exists()
+        )
+        self.assertEqual(Vehicle.objects.filter(pk=self.vehicle.pk).count(), 1)
+        self.assertEqual(SupportConnection.objects.filter(organization=self.organization).count(), 3)
+
+        recreate_response = self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "crew_create",
+                "internal_name": "Crew Two",
+                "driver_id": str(self.driver.public_id),
+                "vehicle_id": str(self.vehicle.public_id),
+                "starts_on": "2026-08-21",
+            },
+        )
+        self.assertEqual(recreate_response.status_code, 302)
+        self.assertTrue(
+            ProjectCrew.objects.filter(
+                project=self.project,
+                internal_name="Crew Two",
+                state=ProjectCrew.STATE_ACTIVE,
+            ).exists()
+        )
+
+    def test_owner_deletes_project_from_list_and_releases_its_crews(self):
+        crew = self._create_crew()
+
+        response = self.client.post(
+            self._list_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "project_delete",
+                "project_id": str(self.project.public_id),
+            },
+        )
+
+        self.project.refresh_from_db()
+        crew.refresh_from_db()
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(self.project.is_active)
+        self.assertEqual(crew.state, ProjectCrew.STATE_ARCHIVED)
+        self.assertFalse(
+            ProjectCrewResourceAssignment.objects.filter(
+                crew=crew,
+                ends_on__isnull=True,
+            ).exists()
+        )
+        self.assertEqual(Vehicle.objects.filter(pk=self.vehicle.pk).count(), 1)
+        self.assertEqual(SupportConnection.objects.filter(organization=self.organization).count(), 3)
+
+    def test_project_detail_shows_confirmed_delete_buttons(self):
+        self._create_crew()
+
+        response = self.client.get(self._detail_url())
+
+        self.assertContains(response, 'value="project_delete"')
+        self.assertContains(response, 'value="crew_delete"')
+        self.assertContains(response, 'data-pf-confirm="')
 
     @override_settings(SUPPORT_PROJECT_FIRST_ENABLED=False)
     def test_projects_header_keeps_legacy_fallback_when_preview_is_off(self):
