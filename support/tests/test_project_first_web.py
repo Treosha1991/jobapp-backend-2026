@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, time, timedelta
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -209,6 +209,62 @@ class ProjectFirstWorkspaceTests(TestCase):
             f'href="{self._list_url()}"',
             html=False,
         )
+
+    def test_worker_workspace_uses_project_crew_data_and_marks_unscheduled_worker_free(self):
+        today = timezone.localdate()
+        work_date = today + timedelta(days=1)
+        crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=self.project,
+            internal_name="Crew One",
+            created_by=self.owner,
+        )
+        ProjectCrewResourceAssignment.objects.create(
+            crew=crew,
+            driver_connection=self.driver,
+            vehicle=self.vehicle,
+            starts_on=today,
+            created_by=self.owner,
+        )
+        shift = ProjectCrewShift.objects.create(
+            crew=crew,
+            work_date=work_date,
+            starts_at=timezone.make_aware(datetime.combine(work_date, time(6, 0))),
+            ends_at=timezone.make_aware(datetime.combine(work_date, time(14, 45))),
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=shift,
+            connection=self.driver,
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+            vehicle=self.vehicle,
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=shift,
+            connection=self.passenger,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            created_by=self.owner,
+        )
+
+        response = self.client.get(
+            f"{reverse('support:workspace')}?organization={self.organization.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = {row["connection_id"]: row for row in response.context["worker_rows"]}
+        driver_row = rows[str(self.driver.public_id)]
+        passenger_row = rows[str(self.passenger.public_id)]
+        free_row = rows[str(self.second_driver.public_id)]
+        self.assertEqual(driver_row["crew_rows"][0]["project_name"], "Preview project")
+        self.assertEqual(driver_row["crew_rows"][0]["crew_name"], "Crew One")
+        self.assertEqual(driver_row["driver_resource"].vehicle, self.vehicle)
+        self.assertFalse(driver_row["is_free"])
+        self.assertEqual(passenger_row["work_next_date"], work_date)
+        self.assertTrue(free_row["is_free"])
+        self.assertContains(response, "Project / crew")
+        self.assertContains(response, "Driver / vehicle")
+        self.assertContains(response, "Available")
 
     def test_owner_can_create_project_from_project_first_workspace(self):
         response = self.client.post(

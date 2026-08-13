@@ -174,6 +174,18 @@ def workspace_home(request):
             "support:worker-card",
             kwargs={"connection_public_id": item["connection_id"]},
         )
+        for crew in item["crew_rows"]:
+            crew["crew_name"] = crew["crew_name"] or tr(
+                request,
+                "support_workspace_crew_fallback",
+            )
+            crew["project_url"] = (
+                reverse(
+                    "support:project-first-detail",
+                    kwargs={"project_public_id": crew["project_id"]},
+                )
+                + f"?organization={snapshot['organization'].public_id}"
+            )
     for item in snapshot["operation_cards"]:
         item["label"] = tr(request, f"support_workspace_{item['key']}_drafts")
     if snapshot["operation_cards"]:

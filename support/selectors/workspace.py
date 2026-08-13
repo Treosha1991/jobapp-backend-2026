@@ -24,6 +24,7 @@ from support.models import (
     MembershipInvitation,
     OrganizationMembership,
     ProjectCrewMemberAbsence,
+    ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
     ProjectCrewShift,
     ProjectCrewShiftMember,
@@ -324,46 +325,110 @@ def workspace_snapshot(*, user, organization_public_id=None):
             ),
         )
         worker_count = connections.count()
-        connection_ids = list(connections.values_list("id", flat=True)[:8])
-        published_housing_ids = set(
+        visible_connections = list(connections[:8])
+        connection_ids = [item.id for item in visible_connections]
+        today = timezone.localdate()
+        now = timezone.now()
+
+        # The first workspace used to read the legacy work/route tables.  The
+        # project-first workflow now treats a crew roster and its published
+        # calendar days as the source of truth.
+        housing_by_connection = {}
+        for assignment in (
             HousingAssignment.objects.filter(
                 connection_id__in=connection_ids,
                 state=HousingAssignment.STATE_PUBLISHED,
-            ).values_list("connection_id", flat=True)
-        )
-        published_work_ids = set(
-            WorkerProjectAssignment.objects.filter(
-                connection_id__in=connection_ids,
-                state=WorkerProjectAssignment.STATE_PUBLISHED,
-            ).values_list("connection_id", flat=True)
-        )
-        published_passenger_ids = set(
-            TransportPassengerAssignment.objects.filter(
-                connection_id__in=connection_ids,
-                route__state=TransportRoute.STATE_PUBLISHED,
-            ).values_list("connection_id", flat=True)
-        )
-        published_driver_ids = set(
-            DriverVehicleAssignment.objects.filter(
+            )
+            .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gte=now))
+            .order_by("connection_id", "-check_in_at", "-id")
+        ):
+            housing_by_connection.setdefault(assignment.connection_id, assignment)
+
+        permanent_crews_by_connection = {connection_id: {} for connection_id in connection_ids}
+        driver_resource_by_connection = {}
+        for resource in (
+            ProjectCrewResourceAssignment.objects.filter(
                 driver_connection_id__in=connection_ids,
-                state=DriverVehicleAssignment.STATE_PUBLISHED,
-            ).values_list("driver_connection_id", flat=True)
-        )
+                ends_on__isnull=True,
+                crew__state="active",
+            )
+            .select_related("crew__project", "vehicle")
+            .order_by("driver_connection_id", "-starts_on", "-id")
+        ):
+            permanent_crews_by_connection[resource.driver_connection_id][resource.crew_id] = resource.crew
+            driver_resource_by_connection.setdefault(resource.driver_connection_id, resource)
+
+        for passenger in (
+            ProjectCrewPassenger.objects.filter(
+                connection_id__in=connection_ids,
+                ends_on__isnull=True,
+                crew__state="active",
+            )
+            .select_related("crew__project")
+            .order_by("connection_id", "starts_on", "id")
+        ):
+            permanent_crews_by_connection[passenger.connection_id][passenger.crew_id] = passenger.crew
+
+        future_memberships_by_connection = {connection_id: [] for connection_id in connection_ids}
+        for member in (
+            ProjectCrewShiftMember.objects.filter(
+                connection_id__in=connection_ids,
+                shift__state=ProjectCrewShift.STATE_PUBLISHED,
+                shift__work_date__gte=today,
+                shift__crew__state="active",
+            )
+            .select_related("shift__crew__project")
+            .order_by("connection_id", "shift__work_date", "shift_id", "id")
+        ):
+            future_memberships_by_connection[member.connection_id].append(member)
+
         worker_rows = [
             {
                 "connection_id": str(item.public_id),
                 "candidate_name": _display_name(item.candidate),
-                "vacancy_title": item.vacancy.internal_title,
-                "stage_key": f"support_stage_{item.stage}",
-                "housing_ready": item.id in published_housing_ids,
-                "work_ready": item.id in published_work_ids,
-                # The dashboard says only whether transport is assigned. It
-                # never exposes a route, address, passengers or vehicle here.
-                "transport_ready": item.id in published_passenger_ids
-                or item.id in published_driver_ids,
+                "stage_key": (
+                    f"support_stage_{item.stage}"
+                    if future_memberships_by_connection[item.id]
+                    else "support_stage_free"
+                ),
+                "is_free": not future_memberships_by_connection[item.id],
+                "housing_assignment": housing_by_connection.get(item.id),
+                "work_ready": bool(
+                    permanent_crews_by_connection[item.id]
+                    or future_memberships_by_connection[item.id]
+                ),
+                "work_next_date": (
+                    future_memberships_by_connection[item.id][0].shift.work_date
+                    if (
+                        future_memberships_by_connection[item.id]
+                        and not permanent_crews_by_connection[item.id]
+                    )
+                    else None
+                ),
+                "driver_resource": driver_resource_by_connection.get(item.id),
+                "crew_rows": list(permanent_crews_by_connection[item.id].values()),
             }
-            for item in connections[:8]
+            for item in visible_connections
         ]
+
+        # Date-specific passengers may have no permanent roster entry.  Add
+        # each of their upcoming crews once, preserving the nearest-day order.
+        for row, connection in zip(worker_rows, visible_connections):
+            known_crew_ids = {crew.id for crew in row["crew_rows"]}
+            for member in future_memberships_by_connection[connection.id]:
+                crew = member.shift.crew
+                if crew.id not in known_crew_ids:
+                    row["crew_rows"].append(crew)
+                    known_crew_ids.add(crew.id)
+            row["crew_rows"] = [
+                {
+                    "crew_id": str(crew.public_id),
+                    "crew_name": crew.internal_name,
+                    "project_id": str(crew.project.public_id),
+                    "project_name": crew.project.internal_name,
+                }
+                for crew in row["crew_rows"]
+            ]
 
     operation_cards = []
     if permissions["housing"]:

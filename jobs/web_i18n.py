@@ -1761,6 +1761,12 @@ TRANSLATIONS["ru"].update({
     "support_workspace_housing": "Жильё",
     "support_workspace_work": "Работа",
     "support_workspace_transport": "Транспорт",
+    "support_workspace_project_crew": "Проект / экипаж",
+    "support_workspace_driver_vehicle": "Водитель / авто",
+    "support_workspace_driver": "Водитель",
+    "support_workspace_crew_fallback": "Экипаж",
+    "support_workspace_move_out": "Выселение:",
+    "support_workspace_nearest_date": "Ближайшая дата:",
     "support_workspace_ready": "Назначено",
     "support_workspace_waiting": "Пока не назначено",
     "support_workspace_no_candidates": "Заявок, ожидающих рассмотрения, нет.",
@@ -1773,6 +1779,7 @@ TRANSLATIONS["ru"].update({
     "support_application_under_review": "На рассмотрении",
     "support_stage_coordinator_stage": "Подготовка и координация",
     "support_stage_active_worker": "Активный работник",
+    "support_stage_free": "Свободен",
 })
 TRANSLATIONS["en"].update({
     "support_workspace_nav": "JobHub Support",
@@ -1796,6 +1803,12 @@ TRANSLATIONS["en"].update({
     "support_workspace_housing": "Housing",
     "support_workspace_work": "Work",
     "support_workspace_transport": "Transport",
+    "support_workspace_project_crew": "Project / crew",
+    "support_workspace_driver_vehicle": "Driver / vehicle",
+    "support_workspace_driver": "Driver",
+    "support_workspace_crew_fallback": "Crew",
+    "support_workspace_move_out": "Move-out:",
+    "support_workspace_nearest_date": "Nearest date:",
     "support_workspace_ready": "Assigned",
     "support_workspace_waiting": "Not assigned yet",
     "support_workspace_no_candidates": "There are no applications waiting for review.",
@@ -1808,6 +1821,7 @@ TRANSLATIONS["en"].update({
     "support_application_under_review": "Under review",
     "support_stage_coordinator_stage": "Preparation and coordination",
     "support_stage_active_worker": "Active worker",
+    "support_stage_free": "Available",
 })
 TRANSLATIONS["pl"].update({
     "support_workspace_nav": "JobHub Support",
@@ -1831,6 +1845,12 @@ TRANSLATIONS["pl"].update({
     "support_workspace_housing": "Zakwaterowanie",
     "support_workspace_work": "Praca",
     "support_workspace_transport": "Transport",
+    "support_workspace_project_crew": "Projekt / ekipa",
+    "support_workspace_driver_vehicle": "Kierowca / auto",
+    "support_workspace_driver": "Kierowca",
+    "support_workspace_crew_fallback": "Ekipa",
+    "support_workspace_move_out": "Wykwaterowanie:",
+    "support_workspace_nearest_date": "Najbliższa data:",
     "support_workspace_ready": "Przydzielono",
     "support_workspace_waiting": "Jeszcze nie przydzielono",
     "support_workspace_no_candidates": "Nie ma wniosków oczekujących na rozpatrzenie.",
@@ -1843,6 +1863,7 @@ TRANSLATIONS["pl"].update({
     "support_application_under_review": "W trakcie rozpatrywania",
     "support_stage_coordinator_stage": "Przygotowanie i koordynacja",
     "support_stage_active_worker": "Aktywny pracownik",
+    "support_stage_free": "Dostępny",
 })
 TRANSLATIONS["uk"].update({
     "support_workspace_nav": "JobHub Support",
@@ -1866,6 +1887,12 @@ TRANSLATIONS["uk"].update({
     "support_workspace_housing": "Житло",
     "support_workspace_work": "Робота",
     "support_workspace_transport": "Транспорт",
+    "support_workspace_project_crew": "Проєкт / екіпаж",
+    "support_workspace_driver_vehicle": "Водій / авто",
+    "support_workspace_driver": "Водій",
+    "support_workspace_crew_fallback": "Екіпаж",
+    "support_workspace_move_out": "Виселення:",
+    "support_workspace_nearest_date": "Найближча дата:",
     "support_workspace_ready": "Призначено",
     "support_workspace_waiting": "Ще не призначено",
     "support_workspace_no_candidates": "Немає заявок, що очікують на розгляд.",
@@ -1878,6 +1905,7 @@ TRANSLATIONS["uk"].update({
     "support_application_under_review": "На розгляді",
     "support_stage_coordinator_stage": "Підготовка та координація",
     "support_stage_active_worker": "Активний працівник",
+    "support_stage_free": "Вільний",
 })
 
 
