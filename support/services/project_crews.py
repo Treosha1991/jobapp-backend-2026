@@ -1602,7 +1602,11 @@ def restore_worker_schedule_days_off(*, actor, connection, work_dates):
         )
     restored_dates = {item.work_date for item in days_off}
     WorkerScheduleDayOff.objects.filter(pk__in=[item.pk for item in days_off]).delete()
-    shifts = ProjectCrewShift.objects.select_for_update().select_related("crew").filter(
+    # PostgreSQL does not allow SELECT FOR UPDATE together with DISTINCT.
+    # First resolve the matching primary keys, then lock the concrete shift
+    # rows in a separate query.  This keeps the operation atomic without the
+    # production-only NotSupportedError that SQLite does not expose.
+    shift_ids = list(ProjectCrewShift.objects.filter(
         state=ProjectCrewShift.STATE_PUBLISHED,
         work_date__in=restored_dates,
     ).filter(
@@ -1614,7 +1618,13 @@ def restore_worker_schedule_days_off(*, actor, connection, work_dates):
             crew__passenger_assignments__connection=connection,
             crew__passenger_assignments__starts_on__lte=F("work_date"),
         )
-    ).distinct()
+    ).values_list("pk", flat=True).distinct())
+    shifts = (
+        ProjectCrewShift.objects.select_for_update()
+        .select_related("crew")
+        .filter(pk__in=shift_ids)
+        .order_by("work_date", "pk")
+    )
     restored = []
     for shift in shifts:
         member = _restore_connection_to_crew_shift(
