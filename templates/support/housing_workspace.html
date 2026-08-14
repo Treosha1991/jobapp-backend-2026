@@ -18,10 +18,12 @@
   .housing-site-head p { margin:4px 0 0; color:var(--muted); }
   .housing-rooms { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
   .housing-room { padding:14px; border:1px solid var(--line); border-radius:16px; background:rgba(4,28,48,.42); }
+  .housing-room.highlighted { border-color:rgba(76,190,255,.72); box-shadow:0 0 0 2px rgba(76,190,255,.12); }
   .housing-room-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
   .housing-room-head h3 { margin:0; }
   .housing-place { display:grid; gap:8px; padding:11px; border:1px solid rgba(255,255,255,.09); border-radius:12px; margin-top:8px; }
   .housing-place.free { border-color:rgba(24,223,103,.42); }
+  .housing-place.highlighted { border-color:#59c7ff; background:rgba(38,154,219,.18); box-shadow:0 0 0 3px rgba(89,199,255,.16),0 0 24px rgba(89,199,255,.18); }
   .housing-place-top, .housing-person-line { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .housing-person-line { align-items:flex-start; padding-top:7px; border-top:1px solid rgba(255,255,255,.07); }
   .housing-person-line:first-of-type { border-top:0; padding-top:0; }
@@ -83,10 +85,10 @@
     {% if selected_housing_rooms %}
       <div class="housing-rooms">
         {% for room in selected_housing_rooms %}
-          <article class="housing-room">
+          <article class="housing-room{% if room.has_highlighted_place %} highlighted{% endif %}">
             <div class="housing-room-head"><h3>{{ room.label }}</h3><span class="jh-status info">{{ room.capacity }} {{ employer_t.support_housing_places }}</span></div>
             {% for place in room.places_for_layout %}
-              <section class="housing-place{% if place.is_available_now %} free{% endif %}">
+              <section class="housing-place{% if place.is_available_now %} free{% endif %}{% if place.is_highlighted %} highlighted{% endif %}"{% if place.is_highlighted %} data-highlighted-housing-place{% endif %}>
                 <div class="housing-place-top"><strong>{% if room.capacity > 1 %}{{ employer_t.support_housing_place }} {{ place.label }}{% else %}{{ employer_t.support_housing_single_room }}{% endif %}</strong><button class="jh-btn primary" type="button" data-housing-dialog="housing-assign-{{ place.public_id }}">{{ employer_t.support_housing_assign_worker }}</button></div>
                 {% if place.current_assignment %}
                   <div class="housing-person-line"><div class="housing-person-meta"><strong>{{ employer_t.support_housing_occupied }} · {{ place.current_assignment.display_name }}</strong><small>{{ employer_t.support_housing_check_in }}: {{ place.current_assignment.check_in_at|date:"d.m.Y" }}{% if place.current_assignment.check_out_at %} · {{ employer_t.support_housing_check_out }}: {{ place.current_assignment.check_out_at|date:"d.m.Y" }}{% endif %}</small></div><div class="housing-inline-actions"><button class="jh-btn" type="button" data-housing-dialog="housing-checkout-{{ place.current_assignment.public_id }}">{{ employer_t.support_housing_checkout_action }}</button></div></div>
@@ -128,6 +130,26 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+  var highlightedPlace = document.querySelector('[data-highlighted-housing-place]');
+  if (highlightedPlace) {
+    requestAnimationFrame(function () { highlightedPlace.scrollIntoView({ block: 'center', behavior: 'smooth' }); });
+  }
+  function clearHousingHighlight() {
+    document.querySelectorAll('.housing-room.highlighted, .housing-place.highlighted').forEach(function (element) {
+      element.classList.remove('highlighted');
+    });
+    if (window.history && window.history.replaceState) {
+      var cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('highlight_place');
+      window.history.replaceState({}, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+    }
+  }
+  document.addEventListener('click', function (event) {
+    if (event.target.closest('.housing-tab, [data-housing-dialog], .housing-inline-actions button, .housing-room-row button, .housing-footer-actions button')) {
+      clearHousingHighlight();
+    }
+  }, true);
+  document.addEventListener('submit', clearHousingHighlight, true);
   document.querySelectorAll('[data-housing-dialog]').forEach(function (button) {
     button.addEventListener('click', function () { document.getElementById(button.dataset.housingDialog)?.showModal(); });
   });

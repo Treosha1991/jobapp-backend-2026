@@ -582,6 +582,23 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(current_assignment.state, HousingAssignment.STATE_PUBLISHED)
         self.assertContains(assigned, "workspace-active-worker")
 
+        workers_page = self.client.get(
+            f"/employer/support/workers/?organization={self.organization.public_id}"
+        )
+        highlighted_housing_url = (
+            f"/employer/support/housing/?organization={self.organization.public_id}"
+            f"&amp;site={site.public_id}&amp;highlight_place={place.public_id}"
+        )
+        self.assertContains(workers_page, "Housing workspace home")
+        self.assertContains(workers_page, highlighted_housing_url)
+
+        highlighted_housing = self.client.get(
+            f"{site_url}&highlight_place={place.public_id}"
+        )
+        self.assertEqual(highlighted_housing.status_code, 200)
+        self.assertEqual(highlighted_housing.context["highlighted_place"], place)
+        self.assertContains(highlighted_housing, "data-highlighted-housing-place")
+
         checked_out = self.client.post(
             site_url,
             {

@@ -340,6 +340,7 @@ def workspace_snapshot(*, user, organization_public_id=None):
                 state=HousingAssignment.STATE_PUBLISHED,
             )
             .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gte=now))
+            .select_related("place__room__site")
             .order_by("connection_id", "-check_in_at", "-id")
         ):
             housing_by_connection.setdefault(assignment.connection_id, assignment)

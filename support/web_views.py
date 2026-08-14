@@ -223,6 +223,18 @@ def workers_workspace(request):
             "support:worker-card",
             kwargs={"connection_public_id": item["connection_id"]},
         )
+        housing_assignment = item.get("housing_assignment")
+        if housing_assignment is not None:
+            housing_place = housing_assignment.place
+            housing_site = housing_place.room.site
+            item["housing_name"] = housing_site.internal_name
+            item["housing_url"] = reverse("support:housing") + "?" + urlencode(
+                {
+                    "organization": snapshot["organization"].public_id,
+                    "site": housing_site.public_id,
+                    "highlight_place": housing_place.public_id,
+                }
+            )
         for crew in item["crew_rows"]:
             crew["crew_name"] = crew["crew_name"] or tr(
                 request,
@@ -2029,6 +2041,19 @@ def housing_workspace(request):
         snapshot["workspace_url"],
     )
     snapshot["today"] = timezone.localdate()
+    highlight_place_id = (request.GET.get("highlight_place") or "").strip()
+    highlighted_place = None
+    if highlight_place_id and selected_site is not None:
+        for room in snapshot["selected_housing_rooms"]:
+            for place in room.places_for_layout:
+                if str(place.public_id) == highlight_place_id:
+                    highlighted_place = place
+                    place.is_highlighted = True
+                    room.has_highlighted_place = True
+                    break
+            if highlighted_place is not None:
+                break
+    snapshot["highlighted_place"] = highlighted_place
     for site in snapshot["housing_sites"]:
         site.housing_url = (
             f"{reverse('support:housing')}?organization={organization.public_id}"
