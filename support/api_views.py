@@ -273,9 +273,20 @@ def _user_display_name(user):
 
 
 def _application_payload(application, *, include_staff_fields=False):
+    public_vacancy = application.vacancy.public_vacancy
     payload = {
         "id": str(application.public_id),
         "vacancy_id": str(application.vacancy.public_id),
+        "public_vacancy_id": application.vacancy.public_vacancy_id,
+        "vacancy_title": (
+            public_vacancy.title
+            if public_vacancy is not None
+            else application.vacancy.internal_title
+        ),
+        "organization": {
+            "id": str(application.vacancy.organization.public_id),
+            "display_name": application.vacancy.organization.display_name,
+        },
         "status": application.status,
         "preferred_language": application.preferred_language,
         "submitted_at": application.submitted_at,
@@ -298,6 +309,44 @@ def _application_payload(application, *, include_staff_fields=False):
                 "revision": application.revision,
             }
         )
+    return payload
+
+
+def _candidate_application_payload(application):
+    payload = _application_payload(application)
+    connection = getattr(application, "support_connection", None)
+    payload["connection"] = _connection_payload(connection) if connection is not None else None
+    latest_decision = application.decision_events.order_by("-created_at", "-id").first()
+    payload["last_decision"] = (
+        {
+            "action": latest_decision.action,
+            "note": latest_decision.note,
+            "created_at": latest_decision.created_at,
+        }
+        if latest_decision is not None
+        else None
+    )
+    conversation = None
+    if connection is not None:
+        conversation = (
+            SupportConversation.objects.filter(
+                connection=connection,
+                kind=SupportConversation.KIND_MANAGER,
+                state=SupportConversation.STATE_ACTIVE,
+                members__user=application.candidate,
+                members__left_at__isnull=True,
+            )
+            .distinct()
+            .first()
+        )
+    payload["manager_conversation_id"] = (
+        str(conversation.public_id) if conversation is not None else None
+    )
+    payload["can_open_manager_chat"] = bool(
+        connection is not None
+        and connection.stage == SupportConnection.STAGE_MANAGER
+        and not connection.is_archived
+    )
     return payload
 
 
@@ -1625,6 +1674,81 @@ class SupportVacancyBotAPIView(SupportFeatureAPIView):
         )
 
 
+class PublicVacancySupportWorkflowAPIView(SupportFeatureAPIView):
+    """Candidate-facing Support entry point for one public JobHub vacancy."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, public_vacancy_id):
+        language = request.query_params.get(
+            "language", BotContentRevision.LANGUAGE_RU
+        ).lower()
+        if language not in {
+            BotContentRevision.LANGUAGE_RU,
+            BotContentRevision.LANGUAGE_EN,
+            BotContentRevision.LANGUAGE_PL,
+            BotContentRevision.LANGUAGE_UK,
+        }:
+            raise ValidationError({"language": "unsupported_support_language"})
+        vacancy = get_object_or_404(
+            SupportVacancy.objects.select_related(
+                "organization", "public_vacancy"
+            ).filter(
+                public_vacancy_id=public_vacancy_id,
+                status=SupportVacancy.STATUS_PUBLISHED,
+                organization__status=SupportOrganization.STATUS_ACTIVE,
+            )
+        )
+        revision = (
+            BotContentRevision.objects.filter(
+                vacancy=vacancy,
+                status=BotContentRevision.STATUS_PUBLISHED,
+            )
+            .order_by("-version")
+            .first()
+        )
+        application = None
+        if request.user.is_authenticated:
+            application = (
+                SupportApplication.objects.filter(
+                    vacancy=vacancy,
+                    candidate=request.user,
+                )
+                .select_related(
+                    "vacancy__organization",
+                    "vacancy__public_vacancy",
+                    "support_connection__organization",
+                    "support_connection__vacancy",
+                )
+                .prefetch_related("decision_events")
+                .order_by("-revision", "-submitted_at", "-id")
+                .first()
+            )
+        return Response(
+            {
+                "workflow": {
+                    "id": str(vacancy.public_id),
+                    "organization": _organization_payload(vacancy.organization),
+                    "vacancy_title": vacancy.public_vacancy.title,
+                },
+                "bot": (
+                    {
+                        "version": revision.version,
+                        "language": language,
+                        "content": revision.content[language],
+                    }
+                    if revision is not None
+                    else None
+                ),
+                "application": (
+                    _candidate_application_payload(application)
+                    if application is not None
+                    else None
+                ),
+            }
+        )
+
+
 class SupportApplicationCreateAPIView(SupportFeatureAPIView):
     def post(self, request, vacancy_public_id):
         vacancy = get_object_or_404(
@@ -1649,7 +1773,7 @@ class SupportApplicationCreateAPIView(SupportFeatureAPIView):
         applicant_reference = request.user.support_applicant_reference
         return Response(
             {
-                "application": _application_payload(application),
+                "application": _candidate_application_payload(application),
                 "applicant_reference_code": applicant_reference.reference_code,
             },
             status=status.HTTP_201_CREATED,
@@ -1660,10 +1784,18 @@ class MySupportApplicationListAPIView(SupportFeatureAPIView):
     def get(self, request):
         applications = (
             SupportApplication.objects.filter(candidate=request.user)
-            .select_related("vacancy")
+            .select_related(
+                "vacancy__organization",
+                "vacancy__public_vacancy",
+                "support_connection__organization",
+                "support_connection__vacancy",
+            )
+            .prefetch_related("decision_events")
             .order_by("-submitted_at", "-id")
         )
-        return Response({"results": [_application_payload(item) for item in applications]})
+        return Response(
+            {"results": [_candidate_application_payload(item) for item in applications]}
+        )
 
 
 class SupportApplicationQueueAPIView(SupportFeatureAPIView, OrganizationAccessMixin):

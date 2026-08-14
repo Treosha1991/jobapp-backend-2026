@@ -11,7 +11,9 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
+from jobs.models import Vacancy
 from support.models import (
+    BotContentRevision,
     EmploymentExclusivityLock,
     OrganizationMembership,
     SupportAccessGrant,
@@ -30,6 +32,7 @@ from support.services.organizations import activate_organization, create_organiz
 DEMO_OWNER_EMAIL = "support-owner@jobhub.test"
 DEMO_WORKER_EMAIL = "support-worker@jobhub.test"
 DEMO_COORDINATOR_EMAIL = "support-coordinator@jobhub.test"
+DEMO_CANDIDATE_EMAIL = "support-candidate@jobhub.test"
 DEMO_EXTRA_WORKERS = (
     ("support-demo-worker-01@jobhub.test", "Алина", "Бондарь", "coordinator"),
     ("support-demo-worker-02@jobhub.test", "Игорь", "Коваль", "coordinator"),
@@ -44,6 +47,13 @@ DEMO_EXTRA_WORKERS = (
 
 class Command(BaseCommand):
     help = "Seed an isolated JobHub Support demo workspace when explicitly enabled."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--reset-candidate-flow",
+            action="store_true",
+            help="Delete only the demo candidate's application so the public flow can be repeated.",
+        )
 
     @staticmethod
     def _ensure_user(*, user_model, email, first_name, last_name, password, staff=False):
@@ -172,6 +182,13 @@ class Command(BaseCommand):
             last_name="Coordinator",
             password=password,
         )
+        candidate = self._ensure_user(
+            user_model=user_model,
+            email=DEMO_CANDIDATE_EMAIL,
+            first_name="Demo",
+            last_name="Candidate",
+            password=password,
+        )
 
         organization, created = SupportOrganization.objects.get_or_create(
             legal_name="JobHub Support Demo B.V.",
@@ -219,6 +236,139 @@ class Command(BaseCommand):
                 "published_at": timezone.now(),
             },
         )
+        public_vacancy, _ = Vacancy.objects.update_or_create(
+            created_by=owner,
+            title="JobHub Support: работа на складе в Нидерландах",
+            defaults={
+                "country": "NL",
+                "city": "Lelystad",
+                "category": "warehouse",
+                "employment_type": "full",
+                "description": (
+                    "Работа на складе с сопровождением через JobHub Support. "
+                    "Откройте информационный помощник в карточке вакансии, "
+                    "изучите условия и отправьте анкету менеджеру."
+                ),
+                "housing_type": "paid",
+                "source": "agency",
+                "is_approved": True,
+                "is_rejected": False,
+                "approved_at": timezone.now(),
+                "expires_at": timezone.now() + timedelta(days=90),
+                "salary": "По условиям проекта",
+                "email": owner.email,
+            },
+        )
+        vacancy.public_vacancy = public_vacancy
+        vacancy.status = SupportVacancy.STATUS_PUBLISHED
+        vacancy.published_at = vacancy.published_at or timezone.now()
+        vacancy.save(update_fields=["public_vacancy", "status", "published_at", "updated_at"])
+
+        bot_content = {
+            "ru": {
+                "title": "Путь кандидата в JobHub Support",
+                "intro": "Узнайте об оформлении, переезде и поддержке, затем отправьте короткую анкету.",
+                "steps": [
+                    "Прочитайте основную информацию и ответы на частые вопросы.",
+                    "Заполните анкету без паспортов, банковских данных и фотографий документов.",
+                    "Дождитесь решения менеджера и следите за этапом в приложении.",
+                ],
+                "faq": [
+                    {
+                        "question": "Анкета гарантирует трудоустройство?",
+                        "answer": "Нет. Анкета передаёт работодателю ваше желание обсудить вакансию.",
+                    },
+                    {
+                        "question": "Где передавать документы?",
+                        "answer": "Только по инструкции работодателя. В анкету документы загружать не нужно.",
+                    },
+                ],
+            },
+            "en": {
+                "title": "Your JobHub Support candidate journey",
+                "intro": "Review the employment, travel and support information, then send a short application.",
+                "steps": [
+                    "Read the main information and frequently asked questions.",
+                    "Complete the form without passports, bank data or document photos.",
+                    "Wait for the manager's decision and follow your stage in the app.",
+                ],
+                "faq": [
+                    {
+                        "question": "Does an application guarantee employment?",
+                        "answer": "No. It tells the employer that you want to discuss this vacancy.",
+                    },
+                    {
+                        "question": "Where should I send documents?",
+                        "answer": "Only through the employer's instructions. Do not upload documents in this form.",
+                    },
+                ],
+            },
+            "pl": {
+                "title": "Droga kandydata w JobHub Support",
+                "intro": "Sprawdź informacje o zatrudnieniu, przeprowadzce i wsparciu, a następnie wyślij krótką ankietę.",
+                "steps": [
+                    "Przeczytaj główne informacje i odpowiedzi na częste pytania.",
+                    "Wypełnij ankietę bez paszportów, danych bankowych i zdjęć dokumentów.",
+                    "Poczekaj na decyzję menedżera i obserwuj etap w aplikacji.",
+                ],
+                "faq": [
+                    {
+                        "question": "Czy ankieta gwarantuje zatrudnienie?",
+                        "answer": "Nie. Informuje pracodawcę, że chcesz omówić tę ofertę.",
+                    },
+                    {
+                        "question": "Gdzie przekazać dokumenty?",
+                        "answer": "Tylko zgodnie z instrukcją pracodawcy. Nie dodawaj dokumentów do ankiety.",
+                    },
+                ],
+            },
+            "uk": {
+                "title": "Шлях кандидата в JobHub Support",
+                "intro": "Ознайомтеся з оформленням, переїздом і підтримкою, а потім надішліть коротку анкету.",
+                "steps": [
+                    "Прочитайте основну інформацію та відповіді на часті запитання.",
+                    "Заповніть анкету без паспортів, банківських даних і фотографій документів.",
+                    "Дочекайтеся рішення менеджера та стежте за етапом у застосунку.",
+                ],
+                "faq": [
+                    {
+                        "question": "Анкета гарантує працевлаштування?",
+                        "answer": "Ні. Вона повідомляє роботодавцю про ваше бажання обговорити вакансію.",
+                    },
+                    {
+                        "question": "Куди передавати документи?",
+                        "answer": "Лише за інструкцією роботодавця. Не завантажуйте документи в анкету.",
+                    },
+                ],
+            },
+        }
+        BotContentRevision.objects.filter(
+            vacancy=vacancy,
+            status=BotContentRevision.STATUS_PUBLISHED,
+        ).exclude(version=1).update(status=BotContentRevision.STATUS_ARCHIVED)
+        bot_revision, _ = BotContentRevision.objects.update_or_create(
+            vacancy=vacancy,
+            version=1,
+            defaults={
+                "source_language": BotContentRevision.LANGUAGE_RU,
+                "content": bot_content,
+                "status": BotContentRevision.STATUS_PUBLISHED,
+                "created_by": owner,
+                "published_by": owner,
+                "published_at": timezone.now(),
+            },
+        )
+        if bot_revision.status != BotContentRevision.STATUS_PUBLISHED:
+            bot_revision.status = BotContentRevision.STATUS_PUBLISHED
+            bot_revision.published_by = owner
+            bot_revision.published_at = timezone.now()
+            bot_revision.save(
+                update_fields=["status", "published_by", "published_at", "updated_at"]
+            )
+
+        self._ensure_access_grant(user=candidate, organization=organization, owner=owner)
+        if options["reset_candidate_flow"]:
+            SupportApplication.objects.filter(vacancy=vacancy, candidate=candidate).delete()
         application, _ = SupportApplication.objects.get_or_create(
             vacancy=vacancy,
             candidate=worker,
@@ -357,6 +507,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 "JobHub Support demo workspace is ready: "
                 f"owner={DEMO_OWNER_EMAIL}, worker={DEMO_WORKER_EMAIL}, "
-                f"coordinator={DEMO_COORDINATOR_EMAIL}, extra_workers={len(DEMO_EXTRA_WORKERS)}."
+                f"candidate={DEMO_CANDIDATE_EMAIL}, coordinator={DEMO_COORDINATOR_EMAIL}, "
+                f"public_vacancy={public_vacancy.id}, extra_workers={len(DEMO_EXTRA_WORKERS)}."
             )
         )

@@ -1,6 +1,11 @@
+from datetime import timedelta
+
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
+
+from jobs.models import Vacancy
 
 from support.models import (
     EmploymentExclusivityLock,
@@ -80,12 +85,23 @@ class SupportPipelineTests(TestCase):
             )
             self.assertEqual(activated.status_code, 200, activated.data)
 
-    def create_published_vacancy(self, *, organization=None, client=None, title="Warehouse helper"):
+    def create_published_vacancy(
+        self,
+        *,
+        organization=None,
+        client=None,
+        title="Warehouse helper",
+        public_vacancy=None,
+    ):
         organization = organization or self.organization
         client = client or self.owner_client
         created = client.post(
             f"/api/v2/support/organizations/{organization.public_id}/vacancies/",
-            {"internal_title": title, "internal_position_limit": 3},
+            {
+                "internal_title": title,
+                "internal_position_limit": 3,
+                "public_vacancy_id": public_vacancy.id if public_vacancy else None,
+            },
             format="json",
         )
         self.assertEqual(created.status_code, 201, created.data)
@@ -103,6 +119,46 @@ class SupportPipelineTests(TestCase):
         published_vacancy = client.post(f"/api/v2/support/vacancies/{vacancy_id}/publish/")
         self.assertEqual(published_vacancy.status_code, 200, published_vacancy.data)
         return vacancy_id
+
+    def test_public_vacancy_workflow_exposes_bot_and_candidate_status(self):
+        public_vacancy = Vacancy.objects.create(
+            created_by=self.owner,
+            title="Public warehouse vacancy",
+            country="NL",
+            city="Lelystad",
+            category="warehouse",
+            employment_type="full",
+            description="A public vacancy connected to Support.",
+            housing_type="none",
+            source="direct",
+            is_approved=True,
+            published_at=timezone.now(),
+            expires_at=timezone.now() + timedelta(days=30),
+        )
+        support_vacancy_id = self.create_published_vacancy(
+            public_vacancy=public_vacancy,
+        )
+
+        before = self.candidate_client.get(
+            f"/api/v2/support/public-vacancies/{public_vacancy.id}/workflow/?language=ru"
+        )
+        self.assertEqual(before.status_code, 200, before.data)
+        self.assertEqual(before.data["workflow"]["id"], support_vacancy_id)
+        self.assertEqual(before.data["workflow"]["vacancy_title"], public_vacancy.title)
+        self.assertEqual(before.data["bot"]["content"]["title"], "Warehouse helper")
+        self.assertIsNone(before.data["application"])
+
+        submitted = self.submit_application(support_vacancy_id)
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        after = self.candidate_client.get(
+            f"/api/v2/support/public-vacancies/{public_vacancy.id}/workflow/?language=ru"
+        )
+        self.assertEqual(after.status_code, 200, after.data)
+        self.assertEqual(after.data["application"]["status"], "submitted")
+        self.assertEqual(
+            after.data["application"]["public_vacancy_id"],
+            public_vacancy.id,
+        )
 
     def submit_application(self, vacancy_id, *, extra=None):
         payload = {

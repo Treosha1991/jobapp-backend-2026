@@ -1,0 +1,117 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_applications_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .applications-back { margin-bottom:14px; }
+  .applications-kicker { margin:0 0 6px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.1em; text-transform:uppercase; }
+  .applications-note { margin:15px 0; padding:12px 14px; border:1px solid rgba(110,199,255,.28); border-radius:14px; color:#ccecff; background:rgba(110,199,255,.07); line-height:1.45; }
+  .applications-filters { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+  .applications-filter { text-decoration:none; }
+  .applications-filter.active { border-color:rgba(24,223,103,.7); background:rgba(24,223,103,.14); color:#bafbd2; }
+  .applications-list { display:grid; gap:12px; }
+  .application-card { padding:15px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); }
+  .application-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:start; }
+  .application-head h2 { margin:0; font-size:18px; }
+  .application-head p { margin:5px 0 0; color:var(--muted); line-height:1.4; }
+  .application-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:12px; }
+  .application-fact { padding:9px 10px; border:1px solid rgba(183,224,255,.14); border-radius:12px; background:rgba(3,18,30,.25); }
+  .application-fact span { display:block; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+  .application-fact strong { display:block; margin-top:3px; overflow:hidden; text-overflow:ellipsis; }
+  .application-note { margin-top:11px; padding:10px; border-radius:12px; color:#d8efff; background:rgba(110,199,255,.07); line-height:1.4; }
+  .application-pipeline { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:13px; padding-top:13px; border-top:1px solid rgba(183,224,255,.15); }
+  .application-form { margin-top:13px; padding-top:13px; border-top:1px solid rgba(183,224,255,.15); }
+  .application-form textarea { min-height:68px; }
+  .application-history { margin-top:12px; }
+  .application-history summary { cursor:pointer; color:var(--muted); font-weight:800; }
+  .application-history ul { margin:9px 0 0; padding-left:20px; color:var(--muted); }
+  .application-empty { padding:32px 18px; border:1px dashed var(--line); border-radius:16px; text-align:center; color:var(--muted); }
+  @media (max-width:900px) { .application-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width:620px) { .application-head { grid-template-columns:1fr; } .application-grid { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions applications-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_card_back }}</a></div>
+  <section class="jh-card">
+    <p class="applications-kicker">JobHub Support · {{ organization.display_name }}</p>
+    <h1 class="jh-title">{{ employer_t.support_applications_title }}</h1>
+    <p class="jh-subtitle">{{ employer_t.support_applications_subtitle }}</p>
+    <div class="applications-note">{{ employer_t.support_applications_notice }}</div>
+
+    <nav class="applications-filters" aria-label="{{ employer_t.support_applications_filters }}">
+      <a class="jh-btn applications-filter{% if status_filter == 'open' %} active{% endif %}" href="{{ filter_base_url }}&filter=open">{{ employer_t.support_applications_open }}</a>
+      <a class="jh-btn applications-filter{% if status_filter == 'approved' %} active{% endif %}" href="{{ filter_base_url }}&filter=approved">{{ employer_t.support_applications_approved_filter }}</a>
+      <a class="jh-btn applications-filter{% if status_filter == 'closed' %} active{% endif %}" href="{{ filter_base_url }}&filter=closed">{{ employer_t.support_applications_closed }}</a>
+      <a class="jh-btn applications-filter{% if status_filter == 'all' %} active{% endif %}" href="{{ filter_base_url }}&filter=all">{{ employer_t.support_applications_all }}</a>
+    </nav>
+
+    <div class="applications-list">
+      {% for item in applications %}
+        <article class="application-card">
+          <div class="application-head">
+            <div>
+              <h2>{{ item.candidate_display_name }}</h2>
+              <p>{{ item.vacancy.internal_title }} · {{ item.submitted_at|date:'d.m.Y H:i' }}</p>
+            </div>
+            <span class="jh-status {% if item.status == 'approved' %}success{% elif item.status == 'declined' or item.status == 'cancelled' %}danger{% else %}info{% endif %}">{{ item.status_label }}</span>
+          </div>
+
+          <div class="application-grid">
+            <div class="application-fact"><span>{{ employer_t.support_applications_language }}</span><strong>{{ item.language_label }}</strong></div>
+            <div class="application-fact"><span>{{ employer_t.support_applications_citizenship }}</span><strong>{{ item.citizenship_country_code|default:'—' }}</strong></div>
+            <div class="application-fact"><span>{{ employer_t.support_applications_location }}</span><strong>{{ item.current_country_code|default:'—' }}</strong></div>
+            <div class="application-fact"><span>{{ employer_t.support_applications_subscription }}</span><strong>{% if item.support_access.state == 'active' %}{{ employer_t.support_applications_subscription_active }}{% else %}{{ employer_t.support_applications_subscription_inactive }}{% endif %}</strong></div>
+          </div>
+          {% if item.availability_note %}<div class="application-note"><strong>{{ employer_t.support_applications_candidate_note }}:</strong><br>{{ item.availability_note|linebreaksbr }}</div>{% endif %}
+
+          {% if item.connection_record %}
+            <div class="application-pipeline">
+              <strong>{{ employer_t.support_applications_current_stage }}:</strong>
+              <span class="jh-status info">{{ item.connection_record.stage_label }}</span>
+              {% if item.conversation_url %}<a class="jh-btn" href="{{ item.conversation_url }}">{{ employer_t.support_applications_open_chat }}</a>{% elif item.connection_record.stage == 'manager_stage' or item.connection_record.stage == 'awaiting_support' %}<span class="jh-muted">{{ employer_t.support_applications_chat_waiting }}</span>{% endif %}
+              {% if item.worker_url %}<a class="jh-btn" href="{{ item.worker_url }}">{{ employer_t.support_applications_open_worker }}</a>{% endif %}
+            </div>
+            {% if item.may_move_to_documents or item.may_move_to_coordinator or item.may_move_to_active_worker %}
+              <form class="application-pipeline" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="connection_id" value="{{ item.connection_record.public_id }}">
+                <input type="hidden" name="filter" value="{{ status_filter }}">
+                {% if item.may_move_to_documents %}<button class="jh-btn primary" name="action" value="connection_documents" type="submit">{{ employer_t.support_applications_to_documents }}</button>{% endif %}
+                {% if item.may_move_to_coordinator %}<button class="jh-btn primary" name="action" value="connection_coordinator" type="submit">{{ employer_t.support_applications_to_coordinator }}</button>{% endif %}
+                {% if item.may_move_to_active_worker %}<button class="jh-btn primary" name="action" value="connection_active_worker" type="submit">{{ employer_t.support_applications_to_active }}</button>{% endif %}
+              </form>
+            {% endif %}
+          {% endif %}
+
+          {% if item.is_open %}
+            <form class="application-form" method="post">
+              {% csrf_token %}
+              <input type="hidden" name="application_id" value="{{ item.public_id }}">
+              <input type="hidden" name="filter" value="{{ status_filter }}">
+              <label class="jh-field"><span>{{ employer_t.support_applications_manager_note }}</span><textarea class="jh-input" name="note" maxlength="500" placeholder="{{ employer_t.support_applications_note_hint }}"></textarea></label>
+              <div class="jh-actions">
+                <button class="jh-btn" name="action" value="application_clarify" type="submit">{{ employer_t.support_applications_clarify }}</button>
+                <button class="jh-btn primary" name="action" value="application_approve" type="submit">{{ employer_t.support_applications_approve }}</button>
+                <button class="jh-btn danger" name="action" value="application_decline" type="submit">{{ employer_t.support_applications_decline }}</button>
+              </div>
+            </form>
+          {% endif %}
+
+          {% if item.decision_events.all or item.connection_record %}
+            <details class="application-history">
+              <summary>{{ employer_t.support_applications_history }}</summary>
+              <ul>
+                {% for event in item.decision_events.all %}<li>{{ event.created_at|date:'d.m.Y H:i' }} · {{ event.action_label }}{% if event.note %} — {{ event.note }}{% endif %}</li>{% endfor %}
+                {% if item.connection_record %}{% for event in item.connection_record.stage_events.all %}<li>{{ event.created_at|date:'d.m.Y H:i' }} · {{ event.previous_stage_label }} → {{ event.next_stage_label }}{% if event.reason %} — {{ event.reason }}{% endif %}</li>{% endfor %}{% endif %}
+              </ul>
+            </details>
+          {% endif %}
+        </article>
+      {% empty %}
+        <div class="application-empty">{{ employer_t.support_applications_empty }}</div>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

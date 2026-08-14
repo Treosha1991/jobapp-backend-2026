@@ -6,11 +6,14 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from support.management.commands.seed_support_demo import (
+    DEMO_CANDIDATE_EMAIL,
     DEMO_EXTRA_WORKERS,
     DEMO_OWNER_EMAIL,
 )
 from support.models import (
+    BotContentRevision,
     SupportAccessGrant,
+    SupportApplication,
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
@@ -33,9 +36,40 @@ class SupportDemoSeedTests(TestCase):
         self.assertEqual(SupportConversation.objects.count(), expected_worker_count)
         self.assertEqual(
             SupportAccessGrant.objects.filter(status=SupportAccessGrant.STATUS_ACTIVE).count(),
-            expected_worker_count,
+            expected_worker_count + 1,
         )
         self.assertEqual(
             SupportConversationMember.objects.filter(user=owner).count(),
             expected_worker_count,
+        )
+        candidate = get_user_model().objects.get(username=DEMO_CANDIDATE_EMAIL)
+        revision = BotContentRevision.objects.get(status=BotContentRevision.STATUS_PUBLISHED)
+        self.assertIsNotNone(revision.vacancy.public_vacancy_id)
+        self.assertEqual(set(revision.content), {"ru", "en", "pl", "uk"})
+        self.assertFalse(
+            SupportApplication.objects.filter(
+                vacancy=revision.vacancy,
+                candidate=candidate,
+            ).exists()
+        )
+
+        with patch.dict(
+            environ,
+            {"SUPPORT_DEMO_SEED": "1", "SUPPORT_DEMO_PASSWORD": "demo-password-123"},
+            clear=False,
+        ):
+            SupportApplication.objects.create(
+                vacancy=revision.vacancy,
+                candidate=candidate,
+                revision=1,
+                preferred_language="ru",
+                consent_version="demo-v1",
+                consented_at=revision.published_at,
+            )
+            call_command("seed_support_demo", "--reset-candidate-flow")
+        self.assertFalse(
+            SupportApplication.objects.filter(
+                vacancy=revision.vacancy,
+                candidate=candidate,
+            ).exists()
         )

@@ -72,6 +72,111 @@ from support.permissions import (
 from support.permission_groups import TEAM_PERMISSION_GROUPS
 
 
+def candidate_applications_snapshot(*, user, organization_public_id=None, status_filter="open"):
+    """Return the employer candidate queue and the approved hand-off pipeline.
+
+    Candidate applications deliberately live outside ``WorkerRequest``.  The
+    latter is an operational request made by somebody who is already working;
+    this selector covers the earlier vacancy -> questionnaire -> manager path.
+    """
+
+    memberships, membership = _select_membership(
+        user=user,
+        organization_public_id=organization_public_id,
+    )
+    organization = membership.organization
+    permissions = _permissions_for(user=user, organization=organization)
+    if not permissions["pipeline"]:
+        raise Http404("support_candidate_applications_not_found")
+
+    supported_filters = {
+        "open": (
+            SupportApplication.STATUS_SUBMITTED,
+            SupportApplication.STATUS_UNDER_REVIEW,
+        ),
+        "approved": (SupportApplication.STATUS_APPROVED,),
+        "closed": (
+            SupportApplication.STATUS_DECLINED,
+            SupportApplication.STATUS_CANCELLED,
+        ),
+        "all": None,
+    }
+    normalized_filter = (status_filter or "open").strip()
+    if normalized_filter not in supported_filters:
+        raise Http404("support_candidate_applications_invalid_filter")
+
+    queryset = SupportApplication.objects.filter(vacancy__organization=organization)
+    statuses = supported_filters[normalized_filter]
+    if statuses is not None:
+        queryset = queryset.filter(status__in=statuses)
+    applications = list(
+        queryset.select_related(
+            "candidate",
+            "vacancy",
+            "support_connection__assigned_manager__user",
+        )
+        .prefetch_related("decision_events__actor", "support_connection__stage_events__actor")
+        .order_by("-submitted_at", "-id")[:250]
+    )
+
+    connection_ids = [
+        item.support_connection.id
+        for item in applications
+        if hasattr(item, "support_connection")
+    ]
+    conversations_by_connection = {
+        item.connection_id: item
+        for item in SupportConversation.objects.filter(
+            organization=organization,
+            connection_id__in=connection_ids,
+            kind=SupportConversation.KIND_MANAGER,
+            state=SupportConversation.STATE_ACTIVE,
+            members__user=user,
+            members__left_at__isnull=True,
+        )
+        .distinct()
+        .order_by("-updated_at", "-id")
+    }
+    from support.services.entitlements import support_access_snapshot_for
+
+    for item in applications:
+        item.candidate_display_name = _display_name(item.candidate)
+        item.connection_record = (
+            item.support_connection if hasattr(item, "support_connection") else None
+        )
+        item.manager_conversation = (
+            conversations_by_connection.get(item.connection_record.id)
+            if item.connection_record is not None
+            else None
+        )
+        item.support_access = support_access_snapshot_for(item.candidate)
+        item.is_open = item.status in {
+            SupportApplication.STATUS_SUBMITTED,
+            SupportApplication.STATUS_UNDER_REVIEW,
+        }
+        item.may_move_to_documents = (
+            item.connection_record is not None
+            and item.connection_record.stage == SupportConnection.STAGE_MANAGER
+        )
+        item.may_move_to_coordinator = (
+            item.connection_record is not None
+            and item.connection_record.stage == SupportConnection.STAGE_DOCUMENTS
+        )
+        item.may_move_to_active_worker = (
+            item.connection_record is not None
+            and item.connection_record.stage == SupportConnection.STAGE_COORDINATOR
+        )
+
+    return {
+        "organization": organization,
+        "membership": membership,
+        "memberships": memberships,
+        "permissions": permissions,
+        "status_filter": normalized_filter,
+        "applications": applications,
+    }
+
+
 def _display_name(user):
     return user.get_full_name().strip() or user.username
 
@@ -316,6 +421,7 @@ def workspace_snapshot(*, user, organization_public_id=None, worker_limit=8):
                 SupportConnection.objects.filter(
                     is_archived=False,
                     stage__in=(
+                        SupportConnection.STAGE_DOCUMENTS,
                         SupportConnection.STAGE_COORDINATOR,
                         SupportConnection.STAGE_ACTIVE_WORKER,
                     ),

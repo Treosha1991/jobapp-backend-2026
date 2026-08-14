@@ -1,0 +1,208 @@
+from datetime import timedelta
+
+from django.contrib.auth.models import User
+from django.test import TestCase, override_settings
+from django.urls import reverse
+from django.utils import timezone
+
+from support.models import (
+    ApplicationDecisionEvent,
+    SupportAccessGrant,
+    SupportApplication,
+    SupportConnection,
+    SupportVacancy,
+)
+from support.services.conversations import open_manager_conversation
+from support.services.organizations import activate_organization, create_organization
+from support.services.pipeline import submit_application
+
+
+@override_settings(SUPPORT_FEATURE_ENABLED=True)
+class CandidateApplicationsWorkspaceTests(TestCase):
+    """The employer can take one real application through the whole pipeline."""
+
+    def setUp(self):
+        self.operator = User.objects.create_user(
+            username="candidate-web-operator",
+            email="candidate-web-operator@example.com",
+            password="password",
+            is_staff=True,
+        )
+        self.owner = User.objects.create_user(
+            username="candidate-web-owner",
+            email="candidate-web-owner@example.com",
+            password="password",
+            first_name="Maria",
+            last_name="Manager",
+        )
+        self.candidate = User.objects.create_user(
+            username="candidate-web-candidate",
+            email="candidate-web-candidate@example.com",
+            password="password",
+            first_name="Pavel",
+            last_name="Candidate",
+        )
+        self.organization, _ = create_organization(
+            jobhub_operator=self.operator,
+            legal_name="Candidate Flow Agency sp. z o.o.",
+            display_name="Candidate Flow Agency",
+            owner_email=self.owner.email,
+        )
+        activate_organization(
+            jobhub_operator=self.operator,
+            organization=self.organization,
+        )
+        self.vacancy = SupportVacancy.objects.create(
+            organization=self.organization,
+            internal_title="Warehouse worker in the Netherlands",
+            status=SupportVacancy.STATUS_PUBLISHED,
+            published_at=timezone.now(),
+            created_by=self.owner,
+        )
+        SupportAccessGrant.objects.create(
+            user=self.candidate,
+            organization=self.organization,
+            granted_by=self.operator,
+            ends_at=timezone.now() + timedelta(days=30),
+            reason=SupportAccessGrant.REASON_TECHNICAL,
+        )
+        self.application = submit_application(
+            candidate=self.candidate,
+            vacancy=self.vacancy,
+            preferred_language="ru",
+            citizenship_country_code="BY",
+            current_country_code="PL",
+            availability_note="Готов приступить в следующем месяце.",
+            partner_reference_code="",
+            consent_version="support-application-v1",
+        )
+        self.client.force_login(self.owner)
+        self.client.cookies["jobhub_employer_lang"] = "ru"
+        self.url = (
+            reverse("support:candidate-applications")
+            + f"?organization={self.organization.public_id}"
+        )
+
+    def post_action(self, payload, *, status_filter="open"):
+        data = {"filter": status_filter, **payload}
+        return self.client.post(self.url, data=data, follow=True)
+
+    def test_manager_reviews_and_moves_candidate_to_active_worker(self):
+        opened = self.client.get(self.url)
+        self.assertEqual(opened.status_code, 200)
+        self.assertContains(opened, "Pavel Candidate")
+        self.assertContains(opened, "Заявки кандидатов")
+        self.assertContains(opened, "Запросы работников")
+
+        clarified = self.post_action(
+            {
+                "action": "application_clarify",
+                "application_id": self.application.public_id,
+                "note": "Уточните дату приезда.",
+            }
+        )
+        self.assertEqual(clarified.status_code, 200)
+        self.application.refresh_from_db()
+        self.assertEqual(self.application.status, SupportApplication.STATUS_UNDER_REVIEW)
+        self.assertTrue(
+            ApplicationDecisionEvent.objects.filter(
+                application=self.application,
+                action=ApplicationDecisionEvent.ACTION_CLARIFICATION_REQUESTED,
+                note="Уточните дату приезда.",
+            ).exists()
+        )
+
+        approved = self.post_action(
+            {
+                "action": "application_approve",
+                "application_id": self.application.public_id,
+            },
+            status_filter="approved",
+        )
+        self.assertEqual(approved.status_code, 200)
+        self.application.refresh_from_db()
+        connection = self.application.support_connection
+        self.assertEqual(self.application.status, SupportApplication.STATUS_APPROVED)
+        self.assertEqual(connection.stage, SupportConnection.STAGE_MANAGER)
+
+        conversation, created = open_manager_conversation(
+            candidate=self.candidate,
+            connection=connection,
+        )
+        self.assertTrue(created)
+        approved_page = self.client.get(f"{self.url}&filter=approved")
+        self.assertContains(approved_page, "Открыть чат")
+        self.assertContains(approved_page, str(conversation.public_id))
+
+        documents = self.post_action(
+            {
+                "action": "connection_documents",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+        self.assertEqual(documents.status_code, 200)
+        connection.refresh_from_db()
+        self.assertEqual(connection.stage, SupportConnection.STAGE_DOCUMENTS)
+
+        workers_url = (
+            reverse("support:workers")
+            + f"?organization={self.organization.public_id}"
+        )
+        workers_page = self.client.get(workers_url)
+        self.assertEqual(workers_page.status_code, 200)
+        self.assertContains(workers_page, "Pavel Candidate")
+
+        coordinator = self.post_action(
+            {
+                "action": "connection_coordinator",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+        self.assertEqual(coordinator.status_code, 200)
+        connection.refresh_from_db()
+        self.assertEqual(connection.stage, SupportConnection.STAGE_COORDINATOR)
+
+        active = self.post_action(
+            {
+                "action": "connection_active_worker",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+        self.assertEqual(active.status_code, 200)
+        connection.refresh_from_db()
+        self.assertEqual(connection.stage, SupportConnection.STAGE_ACTIVE_WORKER)
+
+        final_page = self.client.get(f"{self.url}&filter=approved")
+        self.assertContains(final_page, "Активный работник")
+        self.assertContains(final_page, "История заявки и этапов")
+
+    def test_clarification_and_decline_require_manager_note(self):
+        missing_note = self.post_action(
+            {
+                "action": "application_decline",
+                "application_id": self.application.public_id,
+                "note": "",
+            }
+        )
+        self.assertContains(
+            missing_note,
+            "Для уточнения или отказа укажите комментарий менеджера.",
+        )
+        self.application.refresh_from_db()
+        self.assertEqual(self.application.status, SupportApplication.STATUS_SUBMITTED)
+
+        declined = self.post_action(
+            {
+                "action": "application_decline",
+                "application_id": self.application.public_id,
+                "note": "Сейчас нет подходящего места.",
+            },
+            status_filter="closed",
+        )
+        self.assertEqual(declined.status_code, 200)
+        self.application.refresh_from_db()
+        self.assertEqual(self.application.status, SupportApplication.STATUS_DECLINED)
+        self.assertContains(declined, "Заявка отклонена.")

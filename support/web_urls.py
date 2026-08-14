@@ -19,6 +19,11 @@ urlpatterns = [
         name="project-first-detail",
     ),
     path("", web_views.workspace_home, name="workspace"),
+    path(
+        "applications/",
+        web_views.candidate_applications_workspace,
+        name="candidate-applications",
+    ),
     path("workers/", web_views.workers_workspace, name="workers"),
     path("team/", web_views.team_management, name="team"),
     path("time/", web_views.timekeeping_workspace, name="time"),

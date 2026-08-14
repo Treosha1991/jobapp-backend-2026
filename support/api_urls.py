@@ -27,6 +27,7 @@ from .api_views import (
     MyAnnouncementAcknowledgeAPIView,
     MyAnnouncementListAPIView,
     PermissionGrantCreateAPIView,
+    PublicVacancySupportWorkflowAPIView,
     MySupportApplicationListAPIView,
     MySupportConnectionListAPIView,
     MySupportOperationSummaryAPIView,
@@ -362,6 +363,11 @@ urlpatterns = [
         "operator/temporary-access-grants/",
         TemporarySupportAccessGrantCreateAPIView.as_view(),
         name="support-temporary-access-grant-create",
+    ),
+    path(
+        "public-vacancies/<int:public_vacancy_id>/workflow/",
+        PublicVacancySupportWorkflowAPIView.as_view(),
+        name="support-public-vacancy-workflow",
     ),
     path(
         "organizations/<uuid:organization_public_id>/vacancies/",

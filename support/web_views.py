@@ -30,6 +30,7 @@ from .models import (
     ProjectScheduleTemplate,
     RouteStop,
     ScheduledWorkShift,
+    SupportApplication,
     SupportConnection,
     SupportConversation,
     TransportCrew,
@@ -44,6 +45,7 @@ from .models import (
     Worksite,
 )
 from .selectors.workspace import (
+    candidate_applications_snapshot,
     registry_snapshot,
     housing_workspace_snapshot,
     projects_snapshot,
@@ -120,6 +122,12 @@ from .services.timekeeping import (
     request_work_time_correction,
 )
 from .services.worker_requests import decide_worker_request
+from .services.pipeline import (
+    approve_application,
+    decline_application,
+    request_application_clarification,
+    transition_connection,
+)
 from .services.documents import (
     DOCUMENT_TYPE_KEYS,
     create_document_request_package,
@@ -203,6 +211,160 @@ def workspace_home(request):
     if snapshot["permissions"]["organization_manage"]:
         snapshot["team_url"] = reverse("support:team")
     return render(request, "support/workspace.html", snapshot)
+
+
+def _candidate_applications_redirect(organization, *, status_filter):
+    query = urlencode(
+        {
+            "organization": organization.public_id,
+            "filter": status_filter,
+        }
+    )
+    return redirect(f"{reverse('support:candidate-applications')}?{query}")
+
+
+def _candidate_application_operation(request, *, snapshot):
+    """Run candidate review and pipeline transitions through domain services."""
+
+    organization = snapshot["organization"]
+    action = (request.POST.get("action") or "").strip()
+    selected_filter = request.POST.get("filter") or snapshot["status_filter"]
+    try:
+        if action in {"application_clarify", "application_approve", "application_decline"}:
+            application = get_object_or_404(
+                SupportApplication.objects.select_related(
+                    "vacancy__organization",
+                    "candidate",
+                ),
+                public_id=request.POST.get("application_id"),
+                vacancy__organization=organization,
+            )
+            note = (request.POST.get("note") or "").strip()
+            if action == "application_clarify":
+                if not note:
+                    raise ValidationError({"note": "application_review_note_required"})
+                request_application_clarification(
+                    actor=request.user,
+                    application=application,
+                    note=note,
+                )
+                message_key = "support_applications_clarification_sent"
+            elif action == "application_decline":
+                if not note:
+                    raise ValidationError({"note": "application_review_note_required"})
+                decline_application(
+                    actor=request.user,
+                    application=application,
+                    note=note,
+                )
+                message_key = "support_applications_declined"
+            else:
+                approve_application(actor=request.user, application=application)
+                message_key = "support_applications_approved"
+        elif action in {
+            "connection_documents",
+            "connection_coordinator",
+            "connection_active_worker",
+            "connection_close",
+        }:
+            connection = get_object_or_404(
+                SupportConnection.objects.select_related("organization", "candidate"),
+                public_id=request.POST.get("connection_id"),
+                organization=organization,
+                is_archived=False,
+            )
+            next_stage = {
+                "connection_documents": SupportConnection.STAGE_DOCUMENTS,
+                "connection_coordinator": SupportConnection.STAGE_COORDINATOR,
+                "connection_active_worker": SupportConnection.STAGE_ACTIVE_WORKER,
+                "connection_close": SupportConnection.STAGE_CLOSED,
+            }[action]
+            transition_connection(
+                actor=request.user,
+                connection=connection,
+                next_stage=next_stage,
+                reason=(request.POST.get("note") or "").strip(),
+            )
+            message_key = "support_applications_stage_changed"
+        else:
+            raise ValueError("candidate_application_operation_unknown")
+    except (APIException, ValueError) as error:
+        error_text = str(getattr(error, "detail", error))
+        if "candidate_has_active_support_assignment" in error_text:
+            message_key = "support_applications_error_already_employed"
+        elif "unsupported_connection_transition" in error_text:
+            message_key = "support_applications_error_wrong_stage"
+        elif "application_review_note_required" in error_text:
+            message_key = "support_applications_error_note_required"
+        else:
+            message_key = "support_applications_operation_error"
+        messages.error(request, tr(request, message_key))
+    else:
+        messages.success(request, tr(request, message_key))
+    return _candidate_applications_redirect(
+        organization,
+        status_filter=selected_filter,
+    )
+
+
+@login_required(login_url="employer:login")
+def candidate_applications_workspace(request):
+    """Employer queue from a vacancy questionnaire to active employment."""
+
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = candidate_applications_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+        status_filter=request.GET.get("filter") or "open",
+    )
+    if request.method == "POST":
+        return _candidate_application_operation(request, snapshot=snapshot)
+
+    for item in snapshot["applications"]:
+        item.status_label = tr(request, f"support_application_{item.status}")
+        item.language_label = item.preferred_language.upper()
+        for event in item.decision_events.all():
+            event.action_label = tr(
+                request,
+                f"support_application_event_{event.action}",
+            )
+        if item.connection_record is not None:
+            item.connection_record.stage_label = tr(
+                request,
+                f"support_stage_{item.connection_record.stage}",
+            )
+            for event in item.connection_record.stage_events.all():
+                event.previous_stage_label = tr(
+                    request,
+                    f"support_stage_{event.previous_stage}",
+                )
+                event.next_stage_label = tr(
+                    request,
+                    f"support_stage_{event.next_stage}",
+                )
+            if snapshot["permissions"]["workers"] and item.connection_record.stage in {
+                SupportConnection.STAGE_DOCUMENTS,
+                SupportConnection.STAGE_COORDINATOR,
+                SupportConnection.STAGE_ACTIVE_WORKER,
+            }:
+                item.worker_url = reverse(
+                    "support:worker-card",
+                    kwargs={"connection_public_id": item.connection_record.public_id},
+                )
+        if item.manager_conversation is not None:
+            item.conversation_url = reverse(
+                "support:conversation-detail",
+                kwargs={"conversation_public_id": item.manager_conversation.public_id},
+            )
+
+    snapshot["workspace_url"] = (
+        f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
+    )
+    snapshot["filter_base_url"] = (
+        f"{reverse('support:candidate-applications')}?organization={snapshot['organization'].public_id}"
+    )
+    return render(request, "support/candidate_applications_workspace.html", snapshot)
 
 
 @login_required(login_url="employer:login")
