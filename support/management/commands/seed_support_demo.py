@@ -33,6 +33,7 @@ DEMO_OWNER_EMAIL = "support-owner@jobhub.test"
 DEMO_WORKER_EMAIL = "support-worker@jobhub.test"
 DEMO_COORDINATOR_EMAIL = "support-coordinator@jobhub.test"
 DEMO_CANDIDATE_EMAIL = "support-candidate@jobhub.test"
+DEMO_SECOND_CANDIDATE_EMAIL = "support-candidate-02@jobhub.test"
 DEMO_EXTRA_WORKERS = (
     ("support-demo-worker-01@jobhub.test", "Алина", "Бондарь", "coordinator"),
     ("support-demo-worker-02@jobhub.test", "Игорь", "Коваль", "coordinator"),
@@ -187,6 +188,13 @@ class Command(BaseCommand):
             email=DEMO_CANDIDATE_EMAIL,
             first_name="Demo",
             last_name="Candidate",
+            password=password,
+        )
+        second_candidate = self._ensure_user(
+            user_model=user_model,
+            email=DEMO_SECOND_CANDIDATE_EMAIL,
+            first_name="Demo",
+            last_name="Candidate Two",
             password=password,
         )
 
@@ -367,8 +375,16 @@ class Command(BaseCommand):
             )
 
         self._ensure_access_grant(user=candidate, organization=organization, owner=owner)
+        self._ensure_access_grant(
+            user=second_candidate,
+            organization=organization,
+            owner=owner,
+        )
         if options["reset_candidate_flow"]:
-            SupportApplication.objects.filter(vacancy=vacancy, candidate=candidate).delete()
+            SupportApplication.objects.filter(
+                vacancy=vacancy,
+                candidate__in=(candidate, second_candidate),
+            ).delete()
         application, _ = SupportApplication.objects.get_or_create(
             vacancy=vacancy,
             candidate=worker,
@@ -507,7 +523,9 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 "JobHub Support demo workspace is ready: "
                 f"owner={DEMO_OWNER_EMAIL}, worker={DEMO_WORKER_EMAIL}, "
-                f"candidate={DEMO_CANDIDATE_EMAIL}, coordinator={DEMO_COORDINATOR_EMAIL}, "
+                f"candidate={DEMO_CANDIDATE_EMAIL}, "
+                f"second_candidate={DEMO_SECOND_CANDIDATE_EMAIL}, "
+                f"coordinator={DEMO_COORDINATOR_EMAIL}, "
                 f"public_vacancy={public_vacancy.id}, extra_workers={len(DEMO_EXTRA_WORKERS)}."
             )
         )

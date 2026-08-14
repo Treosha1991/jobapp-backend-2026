@@ -9,6 +9,7 @@ from support.management.commands.seed_support_demo import (
     DEMO_CANDIDATE_EMAIL,
     DEMO_EXTRA_WORKERS,
     DEMO_OWNER_EMAIL,
+    DEMO_SECOND_CANDIDATE_EMAIL,
 )
 from support.models import (
     BotContentRevision,
@@ -36,7 +37,7 @@ class SupportDemoSeedTests(TestCase):
         self.assertEqual(SupportConversation.objects.count(), expected_worker_count)
         self.assertEqual(
             SupportAccessGrant.objects.filter(status=SupportAccessGrant.STATUS_ACTIVE).count(),
-            expected_worker_count + 1,
+            expected_worker_count + 2,
         )
         self.assertEqual(
             SupportConversationMember.objects.filter(user=owner).count(),
@@ -50,6 +51,15 @@ class SupportDemoSeedTests(TestCase):
             SupportApplication.objects.filter(
                 vacancy=revision.vacancy,
                 candidate=candidate,
+            ).exists()
+        )
+        second_candidate = get_user_model().objects.get(
+            username=DEMO_SECOND_CANDIDATE_EMAIL
+        )
+        self.assertFalse(
+            SupportApplication.objects.filter(
+                vacancy=revision.vacancy,
+                candidate=second_candidate,
             ).exists()
         )
 
@@ -66,10 +76,24 @@ class SupportDemoSeedTests(TestCase):
                 consent_version="demo-v1",
                 consented_at=revision.published_at,
             )
+            SupportApplication.objects.create(
+                vacancy=revision.vacancy,
+                candidate=second_candidate,
+                revision=1,
+                preferred_language="ru",
+                consent_version="demo-v1",
+                consented_at=revision.published_at,
+            )
             call_command("seed_support_demo", "--reset-candidate-flow")
         self.assertFalse(
             SupportApplication.objects.filter(
                 vacancy=revision.vacancy,
                 candidate=candidate,
+            ).exists()
+        )
+        self.assertFalse(
+            SupportApplication.objects.filter(
+                vacancy=revision.vacancy,
+                candidate=second_candidate,
             ).exists()
         )
