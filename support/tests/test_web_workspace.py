@@ -841,6 +841,89 @@ class SupportWorkspaceWebTests(TestCase):
             DriverVehicleAssignment.objects.filter(vehicle=vehicle).exists()
         )
 
+    def test_fleet_shows_nearest_future_project_crew_assignment_immediately(self):
+        old_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Returned fleet car",
+            registration_identifier="RETURNED-1",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Tomorrow crew car",
+            registration_identifier="TOMORROW-1",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        self.worker_connection.has_driving_license = True
+        self.worker_connection.save(update_fields=["has_driving_license", "updated_at"])
+        DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            vehicle=old_vehicle,
+            driver_connection=self.worker_connection,
+            starts_on=date.today() - timedelta(days=5),
+            state=DriverVehicleAssignment.STATE_CANCELLED,
+            cancelled_at=timezone.now(),
+            created_by=self.owner,
+        )
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Future worksite",
+            country_code="NL",
+            city="Amsterdam",
+            street="Tomorrowstraat",
+            building="15",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Future project",
+            worker_visible_name="Tomorrow project",
+            starts_on=date.today() + timedelta(days=1),
+            created_by=self.owner,
+        )
+        crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=project,
+            internal_name="Tomorrow crew",
+            created_by=self.owner,
+        )
+        resource = ProjectCrewResourceAssignment.objects.create(
+            crew=crew,
+            driver_connection=self.worker_connection,
+            vehicle=vehicle,
+            starts_on=date.today() + timedelta(days=1),
+            created_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+
+        response = self.client.get(
+            f"/employer/support/fleet/?organization={self.organization.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rendered_vehicle = next(
+            item for item in response.context["vehicles"] if item.id == vehicle.id
+        )
+        returned_vehicle = next(
+            item for item in response.context["vehicles"] if item.id == old_vehicle.id
+        )
+        self.assertEqual(rendered_vehicle.current_project_resource, resource)
+        self.assertEqual(
+            rendered_vehicle.current_driver_connection,
+            self.worker_connection,
+        )
+        self.assertEqual(rendered_vehicle.fleet_project_name, "Tomorrow project")
+        self.assertEqual(rendered_vehicle.occupancy_label, "3/4")
+        self.assertContains(
+            response,
+            (date.today() + timedelta(days=1)).strftime("%d.%m.%Y"),
+        )
+        self.assertIsNone(returned_vehicle.current_driver_connection)
+        self.assertFalse(returned_vehicle.driver_absent)
+
     def test_owner_can_add_vehicle_from_fleet_workspace(self):
         self.client.force_login(self.owner)
         fleet_url = (

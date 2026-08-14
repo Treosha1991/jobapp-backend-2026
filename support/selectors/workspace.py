@@ -2626,6 +2626,21 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
         )
         for vehicle_id, resources in project_resources_by_vehicle_id.items()
     }
+    # The fleet is also a planning screen.  When a vehicle has no assignment
+    # effective today, show its nearest future project assignment immediately
+    # instead of making it look free until the start date arrives.
+    displayed_project_resources = {}
+    for vehicle_id, resources in project_resources_by_vehicle_id.items():
+        current = current_project_resources.get(vehicle_id)
+        if current is not None:
+            displayed_project_resources[vehicle_id] = current
+            continue
+        future = [resource for resource in resources if resource.starts_on > today]
+        displayed_project_resources[vehicle_id] = (
+            min(future, key=lambda item: (item.starts_on, item.id))
+            if future
+            else None
+        )
     active_project_resource_ids = {
         resource.id
         for resource in current_project_resources.values()
@@ -2760,7 +2775,7 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
         ]
         active.sort(key=lambda item: (item.state == DriverVehicleAssignment.STATE_PUBLISHED, item.starts_on), reverse=True)
         vehicle.current_assignment = active[0] if active else None
-        vehicle.current_project_resource = current_project_resources.get(vehicle.id)
+        vehicle.current_project_resource = displayed_project_resources.get(vehicle.id)
         # Project crews are the canonical operational assignment. Legacy
         # assignments remain visible only as migration history/fallback.
         if vehicle.current_project_resource is not None:
@@ -2823,10 +2838,20 @@ def fleet_snapshot(*, user, organization_public_id=None, vehicle_public_id=None)
         if vehicle.current_project_resource is None and vehicle.current_route is not None:
             vehicle.fleet_project_name = vehicle.current_route.fleet_project_name
             vehicle.fleet_address_label = vehicle.current_route.fleet_address_label
-        vehicle.driver_absent = vehicle.current_assignment is None and any(
-            item.state == DriverVehicleAssignment.STATE_CANCELLED
-            and item.starts_on <= today
-            for item in assignments
+        vehicle.driver_absent = (
+            vehicle.current_project_resource is None
+            and vehicle.current_assignment is None
+            and any(
+                route.state in (
+                    TransportRoute.STATE_DRAFT,
+                    TransportRoute.STATE_PUBLISHED,
+                )
+                and route.starts_on <= today
+                and (route.ends_on is None or route.ends_on >= today)
+                for item in assignments
+                if item.state == DriverVehicleAssignment.STATE_CANCELLED
+                for route in item.routes.all()
+            )
         )
         if vehicle.current_project_resource is not None:
             today_shift = today_shifts_by_crew_id.get(
