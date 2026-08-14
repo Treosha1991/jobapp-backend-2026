@@ -6,6 +6,7 @@
 <style>
   .housing-shell { display:grid; gap:18px; }
   .housing-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+  .housing-head-copy { display:flex; align-items:flex-start; gap:12px; min-width:0; }
   .housing-head h1 { margin:0; font-size:36px; }
   .housing-head p { margin:6px 0 0; color:var(--muted); }
   .housing-tabs { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; }
@@ -42,15 +43,15 @@
   .housing-history-list { max-height:52vh; overflow:auto; }
   .housing-search { margin-bottom:8px; }
   .housing-empty { padding:30px 18px; text-align:center; color:var(--muted); border:1px dashed var(--line); border-radius:16px; }
-  @media (max-width:760px) { .housing-head,.housing-site-head,.housing-place-top,.housing-person-line { align-items:flex-start; flex-direction:column; } .housing-form-grid { grid-template-columns:1fr; } .housing-form-grid .wide { grid-column:auto; } }
+  @media (max-width:760px) { .housing-head,.housing-head-copy,.housing-site-head,.housing-place-top,.housing-person-line { align-items:flex-start; flex-direction:column; } .housing-form-grid { grid-template-columns:1fr; } .housing-form-grid .wide { grid-column:auto; } }
 </style>
 {% endblock %}
 
 {% block content %}
 <section class="jh-card housing-shell">
   <header class="housing-head">
-    <div><h1>{{ employer_t.support_housing_title }}</h1><p>{{ employer_t.support_housing_subtitle }}</p></div>
-    <a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_housing_back }}</a>
+    <div class="housing-head-copy"><a class="jh-btn" href="{{ housing_return_url }}">← {{ employer_t.support_housing_back }}</a><div><h1>{{ employer_t.support_housing_title }}</h1><p>{{ employer_t.support_housing_subtitle }}</p></div></div>
+    <button class="jh-btn primary" type="button" data-housing-dialog="housing-site-create">{{ employer_t.support_housing_add_object }}</button>
   </header>
 
   {% if housing_sites %}
@@ -99,7 +100,6 @@
   {% else %}<div class="housing-empty">{{ employer_t.support_housing_no_objects }}</div>{% endif %}
 
   <footer class="housing-footer-actions">
-    <button class="jh-btn primary" type="button" data-housing-dialog="housing-site-create">{{ employer_t.support_housing_add_object }}</button>
     {% if selected_housing_site and selected_housing_rooms %}<button class="jh-btn" type="button" data-housing-dialog="housing-draft-create">{{ employer_t.support_housing_create_draft }}</button>{% endif %}
     <button class="jh-btn" type="button" data-housing-dialog="housing-drafts">{{ employer_t.support_housing_drafts }} · {{ housing_drafts|length }}</button>
     <button class="jh-btn" type="button" data-housing-dialog="housing-history">{{ employer_t.support_housing_history }}</button>

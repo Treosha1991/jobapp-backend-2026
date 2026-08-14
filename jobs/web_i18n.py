@@ -1011,7 +1011,7 @@ TRANSLATIONS["ru"].update({
     "support_nav_housing": "Жильё",
     "support_housing_title": "Жильё",
     "support_housing_subtitle": "Объекты, комнаты, заселение и очередь работников в одном месте.",
-    "support_housing_back": "К работникам",
+    "support_housing_back": "Назад",
     "support_housing_objects": "Объекты жилья",
     "support_housing_edit": "Редактировать",
     "support_housing_places": "мест",
@@ -1079,7 +1079,7 @@ TRANSLATIONS["ru"].update({
 
 TRANSLATIONS["en"].update({
     "support_nav_housing": "Housing", "support_housing_title": "Housing",
-    "support_housing_subtitle": "Properties, rooms, stays and worker queues in one place.", "support_housing_back": "Back to workers",
+    "support_housing_subtitle": "Properties, rooms, stays and worker queues in one place.", "support_housing_back": "Back",
     "support_housing_objects": "Housing properties", "support_housing_edit": "Edit", "support_housing_places": "places",
     "support_housing_place": "Place", "support_housing_single_room": "Room", "support_housing_assign_worker": "Assign worker",
     "support_housing_occupied": "Occupied", "support_housing_free": "Available", "support_housing_queue": "Queued",
@@ -1116,7 +1116,7 @@ TRANSLATIONS["en"].update({
 
 TRANSLATIONS["pl"].update({
     "support_nav_housing": "Zakwaterowanie", "support_housing_title": "Zakwaterowanie",
-    "support_housing_subtitle": "Obiekty, pokoje, zakwaterowanie i kolejka pracowników w jednym miejscu.", "support_housing_back": "Do pracowników",
+    "support_housing_subtitle": "Obiekty, pokoje, zakwaterowanie i kolejka pracowników w jednym miejscu.", "support_housing_back": "Wstecz",
     "support_housing_objects": "Obiekty zakwaterowania", "support_housing_edit": "Edytuj", "support_housing_places": "miejsc",
     "support_housing_place": "Miejsce", "support_housing_single_room": "Pokój", "support_housing_assign_worker": "Przypisz pracownika",
     "support_housing_occupied": "Zajęte", "support_housing_free": "Wolne", "support_housing_queue": "W kolejce",
@@ -1152,7 +1152,7 @@ TRANSLATIONS["pl"].update({
 
 TRANSLATIONS["uk"].update({
     "support_nav_housing": "Житло", "support_housing_title": "Житло",
-    "support_housing_subtitle": "Об’єкти, кімнати, заселення та черга працівників в одному місці.", "support_housing_back": "До працівників",
+    "support_housing_subtitle": "Об’єкти, кімнати, заселення та черга працівників в одному місці.", "support_housing_back": "Назад",
     "support_housing_objects": "Об’єкти житла", "support_housing_edit": "Редагувати", "support_housing_places": "місць",
     "support_housing_place": "Місце", "support_housing_single_room": "Кімната", "support_housing_assign_worker": "Призначити працівнику",
     "support_housing_occupied": "Зайнято", "support_housing_free": "Вільно", "support_housing_queue": "У черзі",

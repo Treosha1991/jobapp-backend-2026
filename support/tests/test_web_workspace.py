@@ -482,11 +482,19 @@ class SupportWorkspaceWebTests(TestCase):
         housing_url = (
             f"/employer/support/housing/?organization={self.organization.public_id}"
         )
+        workspace_url = (
+            f"/employer/support/?organization={self.organization.public_id}"
+        )
 
-        empty_page = self.client.get(housing_url)
+        empty_page = self.client.get(
+            housing_url,
+            HTTP_REFERER=f"http://testserver{workspace_url}",
+        )
         self.assertEqual(empty_page.status_code, 200)
         self.assertContains(empty_page, "Add housing")
         self.assertContains(empty_page, 'href="/employer/support/housing/')
+        self.assertEqual(empty_page.context["housing_return_url"], workspace_url)
+        self.assertContains(empty_page, "Back")
 
         self.client.post(
             housing_url,
@@ -502,6 +510,11 @@ class SupportWorkspaceWebTests(TestCase):
         )
         site = HousingSite.objects.get(internal_name="Housing workspace home")
         site_url = f"{housing_url}&site={site.public_id}"
+        site_page = self.client.get(
+            site_url,
+            HTTP_REFERER=f"http://testserver{housing_url}",
+        )
+        self.assertEqual(site_page.context["housing_return_url"], workspace_url)
         room_response = self.client.post(
             site_url,
             {

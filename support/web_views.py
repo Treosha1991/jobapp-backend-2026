@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import urlencode, urlsplit
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -8,9 +9,9 @@ from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from urllib.parse import urlencode
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime, parse_time
+from django.utils.http import url_has_allowed_host_and_scheme
 from rest_framework.exceptions import APIException, ValidationError
 
 from jobs.web_i18n import get_lang, tr
@@ -1835,6 +1836,19 @@ def housing_workspace(request):
 
     if not is_support_feature_enabled():
         raise Http404("support_not_available")
+    housing_path = reverse("support:housing")
+    referrer = request.META.get("HTTP_REFERER", "")
+    if referrer and url_has_allowed_host_and_scheme(
+        referrer,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        referrer_parts = urlsplit(referrer)
+        if referrer_parts.path != housing_path:
+            return_url = referrer_parts.path or "/"
+            if referrer_parts.query:
+                return_url = f"{return_url}?{referrer_parts.query}"
+            request.session["support_housing_return_url"] = return_url
     snapshot = housing_workspace_snapshot(
         user=request.user,
         organization_public_id=request.GET.get("organization"),
@@ -1979,6 +1993,10 @@ def housing_workspace(request):
 
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={organization.public_id}"
+    )
+    snapshot["housing_return_url"] = request.session.get(
+        "support_housing_return_url",
+        snapshot["workspace_url"],
     )
     snapshot["today"] = timezone.localdate()
     for site in snapshot["housing_sites"]:
