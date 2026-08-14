@@ -18,6 +18,15 @@ from jobs.web_i18n import get_lang, tr
 
 from .feature_flags import is_support_feature_enabled
 from .permissions import worker_connection_queryset_for
+from .questionnaire import (
+    DURATION_CHOICES,
+    EXPERIENCE_SECTORS,
+    LANGUAGE_LEVELS,
+    LEGAL_STATUSES,
+    label as questionnaire_label,
+    questionnaire_is_complete,
+    questionnaire_tags,
+)
 from .models import (
     DocumentRequestPackage,
     DriverVehicleAssignment,
@@ -313,17 +322,44 @@ def candidate_applications_workspace(request):
 
     if not is_support_feature_enabled():
         raise Http404("support_not_available")
+    questionnaire_filters = {
+        key: (request.GET.get(key) or "").strip()
+        for key in (
+            "legal_status",
+            "duration",
+            "experience",
+            "english_level",
+            "license",
+            "needs_housing",
+            "needs_transport",
+            "travelling_with_partner",
+            "complete",
+            "available_by",
+        )
+    }
     snapshot = candidate_applications_snapshot(
         user=request.user,
         organization_public_id=request.GET.get("organization"),
         status_filter=request.GET.get("filter") or "open",
+        questionnaire_filters=questionnaire_filters,
+        sort=request.GET.get("sort") or "newest",
     )
     if request.method == "POST":
         return _candidate_application_operation(request, snapshot=snapshot)
 
+    page_language = get_lang(request)
     for item in snapshot["applications"]:
         item.status_label = tr(request, f"support_application_{item.status}")
         item.language_label = item.preferred_language.upper()
+        answers = item.questionnaire_answers or {}
+        item.questionnaire_complete = questionnaire_is_complete(answers)
+        item.questionnaire_tags = questionnaire_tags(item, language=page_language)
+        item.questionnaire_facts = _candidate_questionnaire_facts(
+            answers,
+            language=page_language,
+        )
+        for fact in item.questionnaire_facts:
+            fact["label"] = tr(request, f"support_questionnaire_{fact['key']}")
         for event in item.decision_events.all():
             event.action_label = tr(
                 request,
@@ -364,7 +400,62 @@ def candidate_applications_workspace(request):
     snapshot["filter_base_url"] = (
         f"{reverse('support:candidate-applications')}?organization={snapshot['organization'].public_id}"
     )
+    snapshot["questionnaire_filter_options"] = {
+        "legal_statuses": [
+            (value, questionnaire_label(value, page_language)) for value in LEGAL_STATUSES
+        ],
+        "durations": [
+            (value, questionnaire_label(value, page_language)) for value in DURATION_CHOICES
+        ],
+        "experience": [
+            (value, questionnaire_label(value, page_language)) for value in EXPERIENCE_SECTORS
+        ],
+        "language_levels": [
+            (value, questionnaire_label(value, page_language)) for value in LANGUAGE_LEVELS
+        ],
+    }
     return render(request, "support/candidate_applications_workspace.html", snapshot)
+
+
+def _candidate_questionnaire_facts(answers, *, language):
+    """Compact, safe presentation of the structured screening answers."""
+
+    if not answers:
+        return []
+
+    def joined(key):
+        return ", ".join(questionnaire_label(value, language) for value in answers.get(key, [])) or "—"
+
+    yes_no = lambda value: questionnaire_label("yes" if value else "no", language)
+    conditions = answers.get("work_conditions") or {}
+    values = [
+        ("legal_status", questionnaire_label(answers.get("legal_status"), language)),
+        ("document_valid_until", answers.get("document_valid_until") or "—"),
+        ("current_city", answers.get("current_city") or "—"),
+        ("available_from", answers.get("available_from") or "—"),
+        ("planned_duration", questionnaire_label(answers.get("planned_duration"), language)),
+        ("experience_sectors", joined("experience_sectors")),
+        ("experience_duration", questionnaire_label(answers.get("experience_duration"), language)),
+        ("work_countries", ", ".join(answers.get("work_countries", [])) or "—"),
+        ("last_position", answers.get("last_position") or "—"),
+        ("english_level", questionnaire_label(answers.get("english_level"), language)),
+        ("polish_level", questionnaire_label(answers.get("polish_level"), language)),
+        ("dutch_level", questionnaire_label(answers.get("dutch_level"), language)),
+        ("driving_license", yes_no(answers.get("has_driving_license"))),
+        ("driving_categories", joined("driving_license_categories")),
+        ("qualifications", joined("qualifications")),
+        ("work_conditions", "; ".join(
+            f"{questionnaire_label(key, language)}: {questionnaire_label(value, language)}"
+            for key, value in conditions.items()
+        ) or "—"),
+        ("shift_preferences", joined("shift_preferences")),
+        ("needs_housing", yes_no(answers.get("needs_housing"))),
+        ("needs_transport", yes_no(answers.get("needs_transport"))),
+        ("travelling_with_partner", yes_no(answers.get("travelling_with_partner"))),
+        ("safety_policy_accepted", yes_no(answers.get("safety_policy_accepted"))),
+        ("additional_note", answers.get("additional_note") or "—"),
+    ]
+    return [{"key": key, "value": value} for key, value in values]
 
 
 @login_required(login_url="employer:login")

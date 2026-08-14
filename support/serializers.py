@@ -4,6 +4,21 @@ import uuid
 from rest_framework import serializers
 
 from .permission_codes import ALL_PERMISSION_CODES
+from .questionnaire import (
+    CONDITION_ANSWERS,
+    DRIVING_CATEGORIES,
+    DRIVING_EXPERIENCE,
+    DURATION_CHOICES,
+    EXPERIENCE_DURATIONS,
+    EXPERIENCE_SECTORS,
+    LANGUAGE_LEVELS,
+    LEGAL_STATUSES,
+    QUALIFICATIONS,
+    QUESTIONNAIRE_VERSION,
+    SHIFT_PREFERENCES,
+    THREE_WAY_ANSWERS,
+    WORK_CONDITIONS,
+)
 
 
 class SupportOrganizationCreateSerializer(serializers.Serializer):
@@ -62,14 +77,18 @@ class TemporarySupportAccessGrantSerializer(serializers.Serializer):
 class StrictInputSerializer(serializers.Serializer):
     """Reject unknown JSON keys instead of silently ignoring unsafe fields."""
 
-    def validate(self, attrs):
-        if isinstance(self.initial_data, dict):
-            unknown_fields = sorted(set(self.initial_data) - set(self.fields))
+    def to_internal_value(self, data):
+        # Nested serializers do not always receive ``initial_data`` as an
+        # attribute, but ``to_internal_value`` always receives the raw value.
+        # Checking here keeps strict validation working both at the request
+        # root and inside the structured questionnaire.
+        if isinstance(data, dict):
+            unknown_fields = sorted(set(data) - set(self.fields))
             if unknown_fields:
                 raise serializers.ValidationError(
                     {"non_field_errors": "unsupported_support_field"}
                 )
-        return attrs
+        return super().to_internal_value(data)
 
 
 class WorkerAccessScopeCreateSerializer(StrictInputSerializer):
@@ -452,6 +471,88 @@ class BotContentRevisionCreateSerializer(StrictInputSerializer):
         return value
 
 
+class SupportQuestionnaireSerializer(StrictInputSerializer):
+    adult_confirmed = serializers.BooleanField()
+    legal_status = serializers.ChoiceField(choices=LEGAL_STATUSES)
+    document_valid_until = serializers.DateField(required=False, allow_null=True, default=None)
+    current_city = serializers.CharField(max_length=120)
+    available_from = serializers.DateField()
+    planned_duration = serializers.ChoiceField(choices=DURATION_CHOICES)
+    experience_sectors = serializers.ListField(
+        child=serializers.ChoiceField(choices=EXPERIENCE_SECTORS), allow_empty=False, max_length=12
+    )
+    experience_duration = serializers.ChoiceField(choices=EXPERIENCE_DURATIONS)
+    work_countries = serializers.ListField(
+        child=serializers.CharField(max_length=2), required=False, allow_empty=True, max_length=10, default=list
+    )
+    last_position = serializers.CharField(max_length=120, required=False, allow_blank=True, default="")
+    english_level = serializers.ChoiceField(choices=LANGUAGE_LEVELS)
+    polish_level = serializers.ChoiceField(choices=LANGUAGE_LEVELS)
+    dutch_level = serializers.ChoiceField(choices=LANGUAGE_LEVELS)
+    has_driving_license = serializers.BooleanField()
+    driving_license_categories = serializers.ListField(
+        child=serializers.ChoiceField(choices=DRIVING_CATEGORIES), required=False, allow_empty=True, default=list
+    )
+    driving_license_valid_in_eu = serializers.BooleanField(required=False, allow_null=True, default=None)
+    driving_experience = serializers.ChoiceField(choices=DRIVING_EXPERIENCE)
+    willing_crew_driver = serializers.BooleanField()
+    has_own_car = serializers.BooleanField()
+    qualifications = serializers.ListField(
+        child=serializers.ChoiceField(choices=QUALIFICATIONS), required=False, allow_empty=True, default=list
+    )
+    work_conditions = serializers.DictField(child=serializers.ChoiceField(choices=CONDITION_ANSWERS))
+    shift_preferences = serializers.ListField(
+        child=serializers.ChoiceField(choices=SHIFT_PREFERENCES), allow_empty=False
+    )
+    overtime_willing = serializers.ChoiceField(choices=THREE_WAY_ANSWERS)
+    unavailable_dates_note = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+    needs_housing = serializers.BooleanField()
+    needs_transport = serializers.BooleanField()
+    travelling_with_partner = serializers.BooleanField()
+    shared_room_preference = serializers.ChoiceField(choices=THREE_WAY_ANSWERS)
+    planned_move_in = serializers.DateField(required=False, allow_null=True, default=None)
+    safety_policy_accepted = serializers.BooleanField()
+    additional_note = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+    def validate_current_city(self, value):
+        normalized = value.strip()
+        if not normalized:
+            raise serializers.ValidationError("current_city_required")
+        return normalized
+
+    def validate_work_countries(self, values):
+        normalized = []
+        for value in values:
+            code = value.strip().upper()
+            if not re.fullmatch(r"[A-Z]{2}", code):
+                raise serializers.ValidationError("country_code_must_be_iso_alpha_2")
+            if code not in normalized:
+                normalized.append(code)
+        return normalized
+
+    def validate_work_conditions(self, value):
+        if set(value) != set(WORK_CONDITIONS):
+            raise serializers.ValidationError("all_work_conditions_required")
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        for key in (
+            "experience_sectors", "driving_license_categories", "qualifications", "shift_preferences"
+        ):
+            attrs[key] = list(dict.fromkeys(attrs.get(key, [])))
+        if not attrs["adult_confirmed"]:
+            raise serializers.ValidationError({"adult_confirmed": "adult_candidate_required"})
+        if not attrs["safety_policy_accepted"]:
+            raise serializers.ValidationError({"safety_policy_accepted": "safety_policy_required"})
+        if not attrs["has_driving_license"]:
+            attrs["driving_license_categories"] = []
+            attrs["driving_license_valid_in_eu"] = None
+            attrs["driving_experience"] = "none"
+            attrs["willing_crew_driver"] = False
+        return attrs
+
+
 class SupportApplicationCreateSerializer(StrictInputSerializer):
     LANGUAGE_CHOICES = ("ru", "en", "pl", "uk")
 
@@ -480,6 +581,13 @@ class SupportApplicationCreateSerializer(StrictInputSerializer):
         allow_blank=True,
         default="",
     )
+    questionnaire_version = serializers.CharField(
+        max_length=32,
+        required=False,
+        allow_blank=True,
+        default="",
+    )
+    questionnaire = SupportQuestionnaireSerializer(required=False, default=dict)
     consent_version = serializers.CharField(max_length=32)
     consent_accepted = serializers.BooleanField()
 
@@ -508,6 +616,15 @@ class SupportApplicationCreateSerializer(StrictInputSerializer):
         attrs = super().validate(attrs)
         if not attrs.get("consent_accepted"):
             raise serializers.ValidationError({"consent_accepted": "consent_required"})
+        questionnaire_version = attrs.get("questionnaire_version", "")
+        if questionnaire_version and questionnaire_version != QUESTIONNAIRE_VERSION:
+            raise serializers.ValidationError({"questionnaire_version": "unsupported_questionnaire_version"})
+        if questionnaire_version == QUESTIONNAIRE_VERSION and not attrs.get("questionnaire"):
+            raise serializers.ValidationError({"questionnaire": "questionnaire_required"})
+        questionnaire = attrs.get("questionnaire") or {}
+        for key in ("document_valid_until", "available_from", "planned_move_in"):
+            if questionnaire.get(key) is not None:
+                questionnaire[key] = questionnaire[key].isoformat()
         return attrs
 
 

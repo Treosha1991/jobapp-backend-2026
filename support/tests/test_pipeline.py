@@ -191,6 +191,104 @@ class SupportPipelineTests(TestCase):
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(SupportApplication.objects.count(), 0)
 
+    def test_structured_questionnaire_is_validated_and_returned_to_staff(self):
+        vacancy_id = self.create_published_vacancy()
+        questionnaire = {
+            "adult_confirmed": True,
+            "legal_status": "polish_work_visa",
+            "document_valid_until": "2027-05-01",
+            "current_city": "Warsaw",
+            "available_from": "2026-09-01",
+            "planned_duration": "6_12m",
+            "experience_sectors": ["warehouse", "logistics"],
+            "experience_duration": "1_3y",
+            "work_countries": ["PL", "NL"],
+            "last_position": "Picker",
+            "english_level": "instructions",
+            "polish_level": "conversation",
+            "dutch_level": "none",
+            "has_driving_license": True,
+            "driving_license_categories": ["B"],
+            "driving_license_valid_in_eu": True,
+            "driving_experience": "over_3y",
+            "willing_crew_driver": True,
+            "has_own_car": False,
+            "qualifications": ["forklift"],
+            "work_conditions": {
+                key: "yes"
+                for key in (
+                    "standing", "repetitive", "lifting", "cold", "outdoor",
+                    "night", "long_shift", "height",
+                )
+            },
+            "shift_preferences": ["day", "rotating"],
+            "overtime_willing": "discuss",
+            "unavailable_dates_note": "",
+            "needs_housing": True,
+            "needs_transport": True,
+            "travelling_with_partner": False,
+            "shared_room_preference": "yes",
+            "planned_move_in": "2026-08-31",
+            "safety_policy_accepted": True,
+            "additional_note": "Ready for cold storage.",
+        }
+
+        response = self.submit_application(
+            vacancy_id,
+            extra={
+                "questionnaire_version": "support-questionnaire-v2",
+                "questionnaire": questionnaire,
+                "consent_version": "support-application-v2",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        application = SupportApplication.objects.get(public_id=response.data["application"]["id"])
+        self.assertEqual(application.questionnaire_version, "support-questionnaire-v2")
+        self.assertEqual(application.questionnaire_answers["available_from"], "2026-09-01")
+        queue = self.owner_client.get(
+            f"/api/v2/support/organizations/{self.organization.public_id}/applications/"
+        )
+        self.assertEqual(queue.status_code, 200, queue.data)
+        self.assertEqual(queue.data["results"][0]["questionnaire"]["english_level"], "instructions")
+
+    def test_structured_questionnaire_rejects_sensitive_shortcut_and_missing_conditions(self):
+        vacancy_id = self.create_published_vacancy()
+        response = self.submit_application(
+            vacancy_id,
+            extra={
+                "questionnaire_version": "support-questionnaire-v2",
+                "questionnaire": {
+                    "adult_confirmed": True,
+                    "legal_status": "visa_free",
+                    "current_city": "Minsk",
+                    "available_from": "2026-09-01",
+                    "planned_duration": "3_6m",
+                    "experience_sectors": ["no_experience"],
+                    "experience_duration": "none",
+                    "english_level": "none",
+                    "polish_level": "none",
+                    "dutch_level": "none",
+                    "has_driving_license": False,
+                    "driving_experience": "none",
+                    "willing_crew_driver": False,
+                    "has_own_car": False,
+                    "work_conditions": {"standing": "yes"},
+                    "shift_preferences": ["day"],
+                    "overtime_willing": "no",
+                    "needs_housing": True,
+                    "needs_transport": True,
+                    "travelling_with_partner": False,
+                    "shared_room_preference": "discuss",
+                    "safety_policy_accepted": True,
+                    "alcohol_problem": False,
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(SupportApplication.objects.count(), 0)
+
     def test_approval_never_creates_chat_and_candidate_opens_it_only_after_support_access(self):
         vacancy_id = self.create_published_vacancy()
         application_response = self.submit_application(vacancy_id)

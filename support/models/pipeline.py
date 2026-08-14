@@ -194,6 +194,8 @@ class SupportApplication(models.Model):
     current_country_code = models.CharField(max_length=2, blank=True, default="")
     availability_note = models.CharField(max_length=500, blank=True, default="")
     partner_reference_code = models.CharField(max_length=24, blank=True, default="")
+    questionnaire_version = models.CharField(max_length=32, blank=True, default="")
+    questionnaire_answers = models.JSONField(blank=True, default=dict)
     consent_version = models.CharField(max_length=32)
     consented_at = models.DateTimeField()
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_SUBMITTED)

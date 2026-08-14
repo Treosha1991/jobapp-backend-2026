@@ -248,3 +248,42 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         manager_page = self.client.get(self.url)
         self.assertContains(manager_page, "Кандидат ответил на уточнение")
         self.assertContains(manager_page, "Мне 34 года.")
+
+    def test_manager_sees_structured_answers_and_can_filter_them(self):
+        self.application.questionnaire_version = "support-questionnaire-v2"
+        self.application.questionnaire_answers = {
+            "adult_confirmed": True,
+            "legal_status": "polish_work_visa",
+            "current_city": "Warszawa",
+            "available_from": "2026-09-01",
+            "planned_duration": "6_12m",
+            "experience_sectors": ["warehouse", "logistics"],
+            "experience_duration": "1_3y",
+            "english_level": "instructions",
+            "polish_level": "conversation",
+            "dutch_level": "none",
+            "has_driving_license": True,
+            "driving_license_categories": ["B"],
+            "qualifications": ["forklift"],
+            "work_conditions": {
+                "standing": "yes", "repetitive": "yes", "lifting": "discuss",
+                "cold": "no", "outdoor": "discuss", "night": "yes",
+                "long_shift": "discuss", "height": "no",
+            },
+            "shift_preferences": ["day", "night"],
+            "needs_housing": True,
+            "needs_transport": False,
+            "travelling_with_partner": False,
+            "safety_policy_accepted": True,
+        }
+        self.application.save(update_fields=["questionnaire_version", "questionnaire_answers"])
+
+        matching = self.client.get(f"{self.url}&experience=warehouse&license=B&needs_housing=yes")
+        self.assertEqual(matching.status_code, 200)
+        self.assertContains(matching, "Pavel Candidate")
+        self.assertContains(matching, "Польская рабочая виза")
+        self.assertContains(matching, "Погрузчик")
+        self.assertContains(matching, "Ответы анкеты")
+
+        excluded = self.client.get(f"{self.url}&experience=construction")
+        self.assertNotContains(excluded, "Pavel Candidate")

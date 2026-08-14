@@ -10,6 +10,11 @@
   .applications-filters { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
   .applications-filter { text-decoration:none; }
   .applications-filter.active { border-color:rgba(24,223,103,.7); background:rgba(24,223,103,.14); color:#bafbd2; }
+  .questionnaire-filters { margin:12px 0 18px; padding:12px; border:1px solid rgba(183,224,255,.16); border-radius:15px; background:rgba(3,18,30,.22); }
+  .questionnaire-filters h2 { margin:0 0 10px; font-size:15px; }
+  .questionnaire-filter-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+  .questionnaire-filter-grid label { display:grid; gap:4px; color:var(--muted); font-size:11px; font-weight:800; }
+  .questionnaire-filter-grid .jh-input { min-width:0; }
   .applications-list { display:grid; gap:12px; }
   .application-card { padding:15px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); }
   .application-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:start; }
@@ -20,6 +25,11 @@
   .application-fact span { display:block; color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
   .application-fact strong { display:block; margin-top:3px; overflow:hidden; text-overflow:ellipsis; }
   .application-note { margin-top:11px; padding:10px; border-radius:12px; color:#d8efff; background:rgba(110,199,255,.07); line-height:1.4; }
+  .application-tags { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .application-tag { padding:5px 8px; border:1px solid rgba(24,223,103,.27); border-radius:999px; color:#c8f8dc; background:rgba(24,223,103,.08); font-size:11px; font-weight:800; }
+  .questionnaire-details { margin-top:11px; padding:10px; border:1px solid rgba(183,224,255,.14); border-radius:13px; }
+  .questionnaire-details summary { cursor:pointer; font-weight:900; }
+  .questionnaire-details-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; margin-top:10px; }
   .application-pipeline { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:13px; padding-top:13px; border-top:1px solid rgba(183,224,255,.15); }
   .application-form { margin-top:13px; padding-top:13px; border-top:1px solid rgba(183,224,255,.15); }
   .application-form textarea { min-height:68px; }
@@ -27,8 +37,9 @@
   .application-history summary { cursor:pointer; color:var(--muted); font-weight:800; }
   .application-history ul { margin:9px 0 0; padding-left:20px; color:var(--muted); }
   .application-empty { padding:32px 18px; border:1px dashed var(--line); border-radius:16px; text-align:center; color:var(--muted); }
+  @media (max-width:1000px) { .questionnaire-filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .questionnaire-details-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width:900px) { .application-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-  @media (max-width:620px) { .application-head { grid-template-columns:1fr; } .application-grid { grid-template-columns:1fr; } }
+  @media (max-width:620px) { .application-head { grid-template-columns:1fr; } .application-grid,.questionnaire-filter-grid,.questionnaire-details-grid { grid-template-columns:1fr; } }
 </style>
 {% endblock %}
 
@@ -47,6 +58,48 @@
       <a class="jh-btn applications-filter{% if status_filter == 'all' %} active{% endif %}" href="{{ filter_base_url }}&filter=all">{{ employer_t.support_applications_all }}</a>
     </nav>
 
+    <form class="questionnaire-filters" method="get">
+      <input type="hidden" name="organization" value="{{ organization.public_id }}">
+      <input type="hidden" name="filter" value="{{ status_filter }}">
+      <h2>{{ employer_t.support_questionnaire_filters_title }}</h2>
+      <div class="questionnaire-filter-grid">
+        <label>{{ employer_t.support_questionnaire_legal_status }}
+          <select class="jh-input" name="legal_status"><option value="">{{ employer_t.support_questionnaire_any }}</option>{% for value,label in questionnaire_filter_options.legal_statuses %}<option value="{{ value }}"{% if questionnaire_filters.legal_status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_planned_duration }}
+          <select class="jh-input" name="duration"><option value="">{{ employer_t.support_questionnaire_any }}</option>{% for value,label in questionnaire_filter_options.durations %}<option value="{{ value }}"{% if questionnaire_filters.duration == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_experience_sectors }}
+          <select class="jh-input" name="experience"><option value="">{{ employer_t.support_questionnaire_any }}</option>{% for value,label in questionnaire_filter_options.experience %}<option value="{{ value }}"{% if questionnaire_filters.experience == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_english_level }}
+          <select class="jh-input" name="english_level"><option value="">{{ employer_t.support_questionnaire_any }}</option>{% for value,label in questionnaire_filter_options.language_levels %}<option value="{{ value }}"{% if questionnaire_filters.english_level == value %} selected{% endif %}>{{ label }}+</option>{% endfor %}</select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_driving_license }}
+          <select class="jh-input" name="license"><option value="">{{ employer_t.support_questionnaire_any }}</option><option value="any"{% if questionnaire_filters.license == 'any' %} selected{% endif %}>B+</option><option value="B"{% if questionnaire_filters.license == 'B' %} selected{% endif %}>B</option><option value="C"{% if questionnaire_filters.license == 'C' %} selected{% endif %}>C</option><option value="CE"{% if questionnaire_filters.license == 'CE' %} selected{% endif %}>CE</option></select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_available_from }}
+          <input class="jh-input" type="date" name="available_by" value="{{ questionnaire_filters.available_by }}">
+        </label>
+        <label>{{ employer_t.support_questionnaire_answers }}
+          <select class="jh-input" name="complete"><option value="">{{ employer_t.support_questionnaire_any }}</option><option value="yes"{% if questionnaire_filters.complete == 'yes' %} selected{% endif %}>{{ employer_t.support_questionnaire_complete }}</option><option value="no"{% if questionnaire_filters.complete == 'no' %} selected{% endif %}>{{ employer_t.support_questionnaire_incomplete }}</option></select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_needs_housing }}
+          <select class="jh-input" name="needs_housing"><option value="">{{ employer_t.support_questionnaire_any }}</option><option value="yes"{% if questionnaire_filters.needs_housing == 'yes' %} selected{% endif %}>{{ employer_t.support_questionnaire_filter_yes }}</option><option value="no"{% if questionnaire_filters.needs_housing == 'no' %} selected{% endif %}>{{ employer_t.support_questionnaire_filter_no }}</option></select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_needs_transport }}
+          <select class="jh-input" name="needs_transport"><option value="">{{ employer_t.support_questionnaire_any }}</option><option value="yes"{% if questionnaire_filters.needs_transport == 'yes' %} selected{% endif %}>{{ employer_t.support_questionnaire_filter_yes }}</option><option value="no"{% if questionnaire_filters.needs_transport == 'no' %} selected{% endif %}>{{ employer_t.support_questionnaire_filter_no }}</option></select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_travelling_with_partner }}
+          <select class="jh-input" name="travelling_with_partner"><option value="">{{ employer_t.support_questionnaire_any }}</option><option value="yes"{% if questionnaire_filters.travelling_with_partner == 'yes' %} selected{% endif %}>{{ employer_t.support_questionnaire_filter_yes }}</option><option value="no"{% if questionnaire_filters.travelling_with_partner == 'no' %} selected{% endif %}>{{ employer_t.support_questionnaire_filter_no }}</option></select>
+        </label>
+        <label>{{ employer_t.support_questionnaire_sort }}
+          <select class="jh-input" name="sort"><option value="newest"{% if application_sort == 'newest' %} selected{% endif %}>{{ employer_t.support_questionnaire_sort_newest }}</option><option value="available"{% if application_sort == 'available' %} selected{% endif %}>{{ employer_t.support_questionnaire_sort_available }}</option><option value="name"{% if application_sort == 'name' %} selected{% endif %}>{{ employer_t.support_questionnaire_sort_name }}</option></select>
+        </label>
+      </div>
+      <div class="jh-actions" style="margin-top:10px"><button class="jh-btn primary" type="submit">{{ employer_t.support_questionnaire_apply_filters }}</button><a class="jh-btn" href="{{ filter_base_url }}&filter={{ status_filter }}">{{ employer_t.support_questionnaire_reset_filters }}</a></div>
+    </form>
+
     <div class="applications-list">
       {% for item in applications %}
         <article class="application-card">
@@ -64,6 +117,13 @@
             <div class="application-fact"><span>{{ employer_t.support_applications_location }}</span><strong>{{ item.current_country_code|default:'—' }}</strong></div>
             <div class="application-fact"><span>{{ employer_t.support_applications_subscription }}</span><strong>{% if item.support_access.state == 'active' %}{{ employer_t.support_applications_subscription_active }}{% else %}{{ employer_t.support_applications_subscription_inactive }}{% endif %}</strong></div>
           </div>
+          {% if item.questionnaire_tags %}<div class="application-tags">{% for tag in item.questionnaire_tags %}<span class="application-tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
+          {% if item.questionnaire_facts %}
+            <details class="questionnaire-details">
+              <summary>{{ employer_t.support_questionnaire_answers }} · {% if item.questionnaire_complete %}{{ employer_t.support_questionnaire_complete }}{% else %}{{ employer_t.support_questionnaire_incomplete }}{% endif %}</summary>
+              <div class="questionnaire-details-grid">{% for fact in item.questionnaire_facts %}<div class="application-fact"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div>
+            </details>
+          {% endif %}
           {% if item.availability_note %}<div class="application-note"><strong>{{ employer_t.support_applications_candidate_note }}:</strong><br>{{ item.availability_note|linebreaksbr }}</div>{% endif %}
 
           {% if item.connection_record %}

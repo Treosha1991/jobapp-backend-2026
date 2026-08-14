@@ -309,6 +309,8 @@ def _application_payload(application, *, include_staff_fields=False):
                 "current_country_code": application.current_country_code,
                 "availability_note": application.availability_note,
                 "partner_reference_code": application.partner_reference_code,
+                "questionnaire_version": application.questionnaire_version,
+                "questionnaire": application.questionnaire_answers,
                 "revision": application.revision,
             }
         )
@@ -1806,6 +1808,8 @@ class SupportApplicationCreateAPIView(SupportFeatureAPIView):
             availability_note=serializer.validated_data["availability_note"],
             partner_reference_code=serializer.validated_data["partner_reference_code"],
             consent_version=serializer.validated_data["consent_version"],
+            questionnaire_version=serializer.validated_data["questionnaire_version"],
+            questionnaire_answers=serializer.validated_data["questionnaire"],
         )
         applicant_reference = request.user.support_applicant_reference
         return Response(

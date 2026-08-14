@@ -70,9 +70,17 @@ from support.permissions import (
     worker_connection_queryset_for,
 )
 from support.permission_groups import TEAM_PERMISSION_GROUPS
+from support.questionnaire import application_matches_filters
 
 
-def candidate_applications_snapshot(*, user, organization_public_id=None, status_filter="open"):
+def candidate_applications_snapshot(
+    *,
+    user,
+    organization_public_id=None,
+    status_filter="open",
+    questionnaire_filters=None,
+    sort="newest",
+):
     """Return the employer candidate queue and the approved hand-off pipeline.
 
     Candidate applications deliberately live outside ``WorkerRequest``.  The
@@ -118,6 +126,22 @@ def candidate_applications_snapshot(*, user, organization_public_id=None, status
         .prefetch_related("decision_events__actor", "support_connection__stage_events__actor")
         .order_by("-submitted_at", "-id")[:250]
     )
+    questionnaire_filters = questionnaire_filters or {}
+    if any(questionnaire_filters.values()):
+        applications = [
+            item for item in applications
+            if application_matches_filters(item, questionnaire_filters)
+        ]
+    normalized_sort = sort if sort in {"newest", "available", "name"} else "newest"
+    if normalized_sort == "available":
+        applications.sort(
+            key=lambda item: (
+                (item.questionnaire_answers or {}).get("available_from") or "9999-12-31",
+                -item.id,
+            )
+        )
+    elif normalized_sort == "name":
+        applications.sort(key=lambda item: _display_name(item.candidate).casefold())
 
     connection_ids = [
         item.support_connection.id
@@ -173,6 +197,8 @@ def candidate_applications_snapshot(*, user, organization_public_id=None, status
         "memberships": memberships,
         "permissions": permissions,
         "status_filter": normalized_filter,
+        "questionnaire_filters": questionnaire_filters,
+        "application_sort": normalized_sort,
         "applications": applications,
     }
 

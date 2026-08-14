@@ -178,6 +178,8 @@ def submit_application(
     availability_note,
     partner_reference_code,
     consent_version,
+    questionnaire_version="",
+    questionnaire_answers=None,
 ):
     if vacancy.status != SupportVacancy.STATUS_PUBLISHED:
         raise PermissionDenied("support_vacancy_not_available")
@@ -216,6 +218,8 @@ def submit_application(
             current_country_code=(current_country_code or "").upper(),
             availability_note=(availability_note or "").strip(),
             partner_reference_code=partner_code,
+            questionnaire_version=(questionnaire_version or "").strip(),
+            questionnaire_answers=questionnaire_answers or {},
             consent_version=consent_version,
             consented_at=timezone.now(),
         )
