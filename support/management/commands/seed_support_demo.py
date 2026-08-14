@@ -156,7 +156,7 @@ class Command(BaseCommand):
             return
 
         password = environ.get("SUPPORT_DEMO_PASSWORD", "")
-        if len(password) < 12:
+        if len(password) < 8:
             raise CommandError("support_demo_password_is_missing_or_too_short")
 
         user_model = get_user_model()
