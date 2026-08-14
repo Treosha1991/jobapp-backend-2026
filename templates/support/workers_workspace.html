@@ -21,6 +21,17 @@
   .support-driver { display:grid; gap:2px; min-width:155px; }
   .support-driver strong { color:#a8ffc7; font-size:12px; }
   .support-driver small { color:var(--muted); font-weight:750; }
+  .worker-sort-head { display:grid; gap:7px; min-width:145px; }
+  .worker-sort-head > span { white-space:nowrap; }
+  .worker-sort {
+    width:100%; min-width:0; height:30px; padding:4px 28px 4px 9px;
+    border:1px solid rgba(142,190,226,.25); border-radius:9px;
+    background:#0b2d45; color:#dceefa; font-size:11px; font-weight:700; line-height:1.2;
+  }
+  .worker-sort:focus { outline:2px solid rgba(20,221,103,.45); outline-offset:1px; }
+  @media (max-width:900px) {
+    .worker-sort-head { min-width:132px; }
+  }
 </style>
 {% endblock %}
 
@@ -33,14 +44,21 @@
   {% if worker_rows %}
     <div class="jh-table-wrap">
       <table class="jh-table">
-        <thead><tr><th>{{ employer_t.support_workspace_candidate_name }}</th><th>{{ employer_t.support_workspace_project_crew }}</th><th>{{ employer_t.support_workspace_stage }}</th><th>{{ employer_t.support_workspace_housing }}</th><th>{{ employer_t.support_workspace_work }}</th><th>{{ employer_t.support_workspace_driver_vehicle }}</th></tr></thead>
-        <tbody>{% for item in worker_rows %}<tr>
+        <thead><tr>
+          <th><label class="worker-sort-head"><span>{{ employer_t.support_workspace_candidate_name }}</span><select class="worker-sort" aria-label="{{ employer_t.support_workspace_candidate_name }} — {{ employer_t.support_sort_label }}"><option value="">{{ employer_t.support_sort_label }}</option><option value="name">{{ employer_t.support_sort_alphabetical }}</option><option value="newest">{{ employer_t.support_sort_newest }}</option></select></label></th>
+          <th><label class="worker-sort-head"><span>{{ employer_t.support_workspace_project_crew }}</span><select class="worker-sort" aria-label="{{ employer_t.support_workspace_project_crew }} — {{ employer_t.support_sort_label }}"><option value="">{{ employer_t.support_sort_label }}</option><option value="project:desc">{{ employer_t.support_sort_assigned_first }}</option><option value="project:asc">{{ employer_t.support_sort_unassigned_first }}</option></select></label></th>
+          <th><label class="worker-sort-head"><span>{{ employer_t.support_workspace_stage }}</span><select class="worker-sort" aria-label="{{ employer_t.support_workspace_stage }} — {{ employer_t.support_sort_label }}"><option value="">{{ employer_t.support_sort_label }}</option><option value="stage:asc">{{ employer_t.support_sort_free_first }}</option><option value="stage:desc">{{ employer_t.support_sort_active_first }}</option></select></label></th>
+          <th><label class="worker-sort-head"><span>{{ employer_t.support_workspace_housing }}</span><select class="worker-sort" aria-label="{{ employer_t.support_workspace_housing }} — {{ employer_t.support_sort_label }}"><option value="">{{ employer_t.support_sort_label }}</option><option value="housing:desc">{{ employer_t.support_sort_assigned_first }}</option><option value="housing:asc">{{ employer_t.support_sort_unassigned_first }}</option></select></label></th>
+          <th><label class="worker-sort-head"><span>{{ employer_t.support_workspace_work }}</span><select class="worker-sort" aria-label="{{ employer_t.support_workspace_work }} — {{ employer_t.support_sort_label }}"><option value="">{{ employer_t.support_sort_label }}</option><option value="work:desc">{{ employer_t.support_sort_assigned_first }}</option><option value="work:asc">{{ employer_t.support_sort_unassigned_first }}</option></select></label></th>
+          <th><label class="worker-sort-head"><span>{{ employer_t.support_workspace_driver_vehicle }}</span><select class="worker-sort" aria-label="{{ employer_t.support_workspace_driver_vehicle }} — {{ employer_t.support_sort_label }}"><option value="">{{ employer_t.support_sort_label }}</option><option value="transport:driver">{{ employer_t.support_sort_driver_only_first }}</option><option value="transport:driver_vehicle">{{ employer_t.support_sort_driver_vehicle_first }}</option><option value="transport:passenger">{{ employer_t.support_sort_passenger_first }}</option></select></label></th>
+        </tr></thead>
+        <tbody data-worker-rows>{% for item in worker_rows %}<tr data-worker-row data-name="{{ item.candidate_name|lower }}" data-created="{{ item.created_sort }}" data-project="{% if item.crew_rows %}1{% else %}0{% endif %}" data-stage="{{ item.stage_sort }}" data-housing="{% if item.housing_assignment %}1{% else %}0{% endif %}" data-work="{% if item.work_ready %}1{% else %}0{% endif %}" data-transport="{{ item.transport_role }}">
           <td><strong><a href="{{ item.detail_url }}">{{ item.candidate_name }}</a></strong></td>
           <td>{% if item.crew_rows %}<div class="support-crew-list">{% for crew in item.crew_rows %}<span class="support-crew-item"><a href="{{ crew.project_url }}">{{ crew.project_name }}</a><small>{{ crew.crew_name }}</small></span>{% endfor %}</div>{% else %}<span class="support-waiting">{{ employer_t.support_workspace_waiting }}</span>{% endif %}</td>
           <td><span class="jh-status {% if item.is_free %}danger{% else %}success{% endif %}">{{ item.stage_label }}</span></td>
           <td class="support-readiness"><span class="{% if item.housing_assignment %}support-ready{% else %}support-waiting{% endif %}">{% if item.housing_assignment %}<a class="support-housing-link" href="{{ item.housing_url }}">{{ item.housing_name }}</a>{% if item.housing_assignment.check_out_at %}<small>{{ employer_t.support_workspace_move_out }} {{ item.housing_assignment.check_out_at|date:"d.m.Y" }}</small>{% endif %}{% else %}{{ employer_t.support_workspace_waiting }}{% endif %}</span></td>
           <td class="support-readiness"><span class="{% if item.work_ready %}support-ready{% else %}support-waiting{% endif %}">{% if item.work_ready %}{{ employer_t.support_workspace_ready }}{% if item.work_next_date %}<small>{{ employer_t.support_workspace_nearest_date }} {{ item.work_next_date|date:"d.m.Y" }}</small>{% endif %}{% else %}{{ employer_t.support_workspace_waiting }}{% endif %}</span></td>
-          <td>{% if item.driver_resource %}<span class="support-driver"><strong>{{ employer_t.support_workspace_driver }}</strong><small>{{ item.driver_resource.vehicle.internal_name }} · {{ item.driver_resource.vehicle.registration_identifier }}</small></span>{% else %}<span class="support-waiting">—</span>{% endif %}</td>
+          <td>{% if item.driver_resource %}<span class="support-driver"><strong>{{ item.transport_role_label }}</strong><small>{{ item.driver_resource.vehicle.internal_name }} · {{ item.driver_resource.vehicle.registration_identifier }}</small></span>{% elif item.has_driving_license %}<span class="support-driver"><strong>{{ item.transport_role_label }}</strong></span>{% else %}<span class="support-waiting">{{ item.transport_role_label }}</span>{% endif %}</td>
         </tr>{% endfor %}</tbody>
       </table>
     </div>
@@ -48,4 +66,39 @@
     <div class="jh-empty">{{ employer_t.support_workspace_no_workers }}</div>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block extra_body %}
+<script>
+(() => {
+  const body = document.querySelector('[data-worker-rows]');
+  if (!body) return;
+  const controls = [...document.querySelectorAll('.worker-sort')];
+  const rows = [...body.querySelectorAll('[data-worker-row]')].map((row, index) => ({ row, index }));
+  const nameCompare = (a, b) => a.row.dataset.name.localeCompare(b.row.dataset.name, document.documentElement.lang || undefined, { sensitivity: 'base' });
+
+  function applySort(control) {
+    controls.forEach((other) => { if (other !== control) other.value = ''; });
+    const mode = control.value;
+    if (!mode) {
+      rows.sort((a, b) => a.index - b.index);
+    } else if (mode === 'name') {
+      rows.sort((a, b) => nameCompare(a, b) || a.index - b.index);
+    } else if (mode === 'newest') {
+      rows.sort((a, b) => Date.parse(b.row.dataset.created) - Date.parse(a.row.dataset.created) || nameCompare(a, b));
+    } else if (mode.startsWith('transport:')) {
+      const selected = mode.split(':')[1];
+      const order = [selected, ...['driver', 'driver_vehicle', 'passenger'].filter((role) => role !== selected)];
+      rows.sort((a, b) => order.indexOf(a.row.dataset.transport) - order.indexOf(b.row.dataset.transport) || nameCompare(a, b));
+    } else {
+      const [key, direction] = mode.split(':');
+      const multiplier = direction === 'desc' ? -1 : 1;
+      rows.sort((a, b) => (Number(a.row.dataset[key]) - Number(b.row.dataset[key])) * multiplier || nameCompare(a, b));
+    }
+    rows.forEach(({ row }) => body.appendChild(row));
+  }
+
+  controls.forEach((control) => control.addEventListener('change', () => applySort(control)));
+})();
+</script>
 {% endblock %}

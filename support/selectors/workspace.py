@@ -271,7 +271,7 @@ def worker_requests_snapshot(*, user, organization_public_id=None, status_filter
     }
 
 
-def workspace_snapshot(*, user, organization_public_id=None):
+def workspace_snapshot(*, user, organization_public_id=None, worker_limit=8):
     """Return a safe snapshot for the first staff workspace page."""
 
     memberships, membership = _select_membership(
@@ -325,7 +325,9 @@ def workspace_snapshot(*, user, organization_public_id=None):
             ),
         )
         worker_count = connections.count()
-        visible_connections = list(connections[:8])
+        visible_connections = list(
+            connections if worker_limit is None else connections[:worker_limit]
+        )
         connection_ids = [item.id for item in visible_connections]
         today = timezone.localdate()
         now = timezone.now()
@@ -387,12 +389,17 @@ def workspace_snapshot(*, user, organization_public_id=None):
             {
                 "connection_id": str(item.public_id),
                 "candidate_name": _display_name(item.candidate),
+                "created_sort": item.created_at.isoformat(),
+                "has_driving_license": item.has_driving_license,
                 "stage_key": (
                     "support_stage_active_worker"
                     if future_memberships_by_connection[item.id]
                     else "support_stage_free"
                 ),
                 "is_free": not future_memberships_by_connection[item.id],
+                "stage_sort": (
+                    0 if not future_memberships_by_connection[item.id] else 1
+                ),
                 "housing_assignment": housing_by_connection.get(item.id),
                 "work_ready": bool(
                     permanent_crews_by_connection[item.id]

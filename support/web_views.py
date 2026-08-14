@@ -214,11 +214,30 @@ def workers_workspace(request):
     snapshot = workspace_snapshot(
         user=request.user,
         organization_public_id=request.GET.get("organization"),
+        worker_limit=None,
     )
     if not snapshot["permissions"]["workers"]:
         raise Http404("support_workers_not_available")
     for item in snapshot["worker_rows"]:
         item["stage_label"] = tr(request, item.pop("stage_key"))
+        if item.get("driver_resource") is not None:
+            item["transport_role"] = "driver_vehicle"
+            item["transport_role_label"] = tr(
+                request,
+                "support_workspace_driver_with_vehicle",
+            )
+        elif item.get("has_driving_license"):
+            item["transport_role"] = "driver"
+            item["transport_role_label"] = tr(
+                request,
+                "support_workspace_driver_only",
+            )
+        else:
+            item["transport_role"] = "passenger"
+            item["transport_role_label"] = tr(
+                request,
+                "support_workspace_passenger",
+            )
         item["detail_url"] = reverse(
             "support:worker-card",
             kwargs={"connection_public_id": item["connection_id"]},

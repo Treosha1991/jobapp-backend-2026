@@ -267,6 +267,39 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertContains(response, "Driver / vehicle")
         self.assertContains(response, "Available")
 
+    def test_workers_page_sorts_every_worker_and_displays_transport_roles(self):
+        today = timezone.localdate()
+        crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=self.project,
+            internal_name="Sorting Crew",
+            created_by=self.owner,
+        )
+        ProjectCrewResourceAssignment.objects.create(
+            crew=crew,
+            driver_connection=self.driver,
+            vehicle=self.vehicle,
+            starts_on=today,
+            created_by=self.owner,
+        )
+        for index in range(6):
+            self._connection(f"sorting-{index}", f"Sorting {index}")
+
+        response = self.client.get(
+            f"{reverse('support:workers')}?organization={self.organization.public_id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["worker_rows"]), 9)
+        self.assertContains(response, 'class="worker-sort"', count=6)
+        self.assertContains(response, 'data-transport="driver_vehicle"')
+        self.assertContains(response, 'data-transport="driver"')
+        self.assertContains(response, 'data-transport="passenger"')
+        self.assertContains(response, "Driver with vehicle")
+        self.assertContains(response, "Passenger")
+        self.assertContains(response, "Newest")
+        self.assertContains(response, "Available first")
+
     def test_owner_can_create_project_from_project_first_workspace(self):
         response = self.client.post(
             self._list_url(),
