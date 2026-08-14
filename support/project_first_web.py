@@ -97,6 +97,9 @@ COPY = {
         "release": "Освободить выбранные дни",
         "passengers": "Пассажиры",
         "add_passenger": "Добавить пассажира",
+        "passenger_free": "Свободен",
+        "passenger_busy_crew": "Занят",
+        "passenger_busy_dates": "Занят на",
         "scope": "Применить",
         "future": "На весь график экипажа",
         "selected": "Только к выбранным дням",
@@ -173,6 +176,8 @@ COPY = {
         "clear_selection": "Clear selection", "month_shifts": "This month's shifts", "published": "Published",
         "break": "Break, minutes", "publish": "Publish selected days", "release": "Release selected days",
         "passengers": "Passengers", "add_passenger": "Add passenger", "scope": "Apply to",
+        "passenger_free": "Available", "passenger_busy_crew": "Assigned",
+        "passenger_busy_dates": "Assigned on",
         "future": "Entire crew schedule", "selected": "Selected days only",
         "select_dates_hint": "Select dates in the calendar.", "remove": "Remove",
         "absent_dates": "Absent",
@@ -227,6 +232,8 @@ COPY = {
         "clear_selection": "Wyczyść wybór", "month_shifts": "Zmiany w tym miesiącu", "published": "Opublikowano",
         "break": "Przerwa, minuty", "publish": "Opublikuj wybrane dni", "release": "Zwolnij wybrane dni",
         "passengers": "Pasażerowie", "add_passenger": "Dodaj pasażera", "scope": "Zastosuj do",
+        "passenger_free": "Wolny", "passenger_busy_crew": "Przypisany",
+        "passenger_busy_dates": "Przypisany na",
         "future": "Całego grafiku ekipy", "selected": "Tylko wybranych dni",
         "select_dates_hint": "Wybierz daty w kalendarzu.", "remove": "Usuń",
         "absent_dates": "Nieobecny/a",
@@ -281,6 +288,8 @@ COPY = {
         "clear_selection": "Зняти вибір", "month_shifts": "Зміни цього місяця", "published": "Опубліковано",
         "break": "Перерва, хвилин", "publish": "Опублікувати вибрані дні", "release": "Звільнити вибрані дні",
         "passengers": "Пасажири", "add_passenger": "Додати пасажира", "scope": "Застосувати до",
+        "passenger_free": "Вільний", "passenger_busy_crew": "Зайнятий",
+        "passenger_busy_dates": "Зайнятий на",
         "future": "Усього графіка екіпажу", "selected": "Лише вибраних днів",
         "select_dates_hint": "Виберіть дати в календарі.", "remove": "Виключити",
         "absent_dates": "Відсутній/я",
@@ -777,6 +786,66 @@ def _project_context(request, organization, project, *, selected_month):
         for crew in crews
         for shift in crew.calendar_shifts.all()
     }
+    permanent_crew_names_by_connection = {}
+    for connection_id, crew_name in ProjectCrewPassenger.objects.filter(
+        crew__organization=organization,
+        crew__state=ProjectCrew.STATE_ACTIVE,
+        ends_on__isnull=True,
+    ).values_list("connection_id", "crew__internal_name"):
+        permanent_crew_names_by_connection.setdefault(connection_id, set()).add(
+            crew_name or copy["crew"]
+        )
+    for connection_id, crew_name in ProjectCrewResourceAssignment.objects.filter(
+        crew__organization=organization,
+        crew__state=ProjectCrew.STATE_ACTIVE,
+        ends_on__isnull=True,
+    ).values_list("driver_connection_id", "crew__internal_name"):
+        permanent_crew_names_by_connection.setdefault(connection_id, set()).add(
+            crew_name or copy["crew"]
+        )
+    assigned_dates_by_connection = {}
+    for connection_id, work_date in ProjectCrewShiftMember.objects.filter(
+        shift__crew__organization=organization,
+        shift__crew__state=ProjectCrew.STATE_ACTIVE,
+        shift__state=ProjectCrewShift.STATE_PUBLISHED,
+        shift__work_date__gte=today,
+    ).values_list("connection_id", "shift__work_date"):
+        assigned_dates_by_connection.setdefault(connection_id, set()).add(work_date)
+
+    for connection in connections:
+        crew_names = sorted(
+            permanent_crew_names_by_connection.get(connection.id, set()),
+            key=str.casefold,
+        )
+        assigned_dates = sorted(assigned_dates_by_connection.get(connection.id, set()))
+        if crew_names:
+            connection.passenger_availability_rank = 2
+            connection.passenger_status = copy["passenger_busy_crew"]
+            connection.passenger_status_detail = ", ".join(crew_names)
+        elif assigned_dates:
+            connection.passenger_availability_rank = 1
+            connection.passenger_status = copy["passenger_busy_dates"]
+            connection.passenger_status_detail = ", ".join(
+                item.strftime("%d.%m") for item in assigned_dates
+            )
+        else:
+            connection.passenger_availability_rank = 0
+            connection.passenger_status = copy["passenger_free"]
+            connection.passenger_status_detail = ""
+        if connection.passenger_availability_rank == 2:
+            connection.passenger_option_label = (
+                f"{connection.display_name} · {connection.passenger_status} · "
+                f"{connection.passenger_status_detail}"
+            )
+        elif connection.passenger_availability_rank == 1:
+            connection.passenger_option_label = (
+                f"{connection.display_name} · {connection.passenger_status} "
+                f"{connection.passenger_status_detail}"
+            )
+        else:
+            connection.passenger_option_label = (
+                f"{connection.display_name} · {connection.passenger_status}"
+            )
     days_off_by_connection = {}
     if crew_shift_dates:
         for connection_id, work_date in WorkerScheduleDayOff.objects.filter(
@@ -1002,6 +1071,13 @@ def _project_context(request, organization, project, *, selected_month):
             for connection in connections
             if connection.id not in unavailable_passenger_ids
         ]
+        crew.available_passengers.sort(
+            key=lambda connection: (
+                connection.passenger_availability_rank,
+                connection.display_name.casefold(),
+                connection.id,
+            )
+        )
         crew.published_shifts = list(crew.calendar_shifts.all())
         driver_conflict_dates = []
         if crew.current_resource:

@@ -1486,6 +1486,74 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertContains(response, response.context["pf"]["create_crew"])
         self.assertNotIn("first", response.context["pf"]["create_crew"].lower())
 
+    def test_passenger_picker_labels_and_sorts_worker_availability(self):
+        crew = self._create_crew()
+        work_date = timezone.localdate() + timedelta(days=2)
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "shifts_publish",
+                "crew_id": str(crew.public_id),
+                "work_dates": [work_date.isoformat()],
+                "starts_at_time": "06:00",
+                "ends_at_time": "14:45",
+                "break_minutes": "0",
+            },
+        )
+        self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "passenger_add",
+                "crew_id": str(crew.public_id),
+                "connection_id": str(self.passenger.public_id),
+                "scope": "selected",
+                "work_dates": [work_date.isoformat()],
+                "effective_on": timezone.localdate().isoformat(),
+            },
+        )
+        assigned_to_crew = self._connection("assigned-passenger", "Assigned")
+        other_crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=self.project,
+            internal_name="Crew Two",
+            created_by=self.owner,
+        )
+        ProjectCrewPassenger.objects.create(
+            crew=other_crew,
+            connection=assigned_to_crew,
+            starts_on=timezone.localdate(),
+            created_by=self.owner,
+        )
+
+        response = self.client.get(
+            f"{self._detail_url()}&month={work_date:%Y-%m}"
+        )
+        rendered_crew = next(
+            item for item in response.context["crews"] if item.id == crew.id
+        )
+        copy = response.context["pf"]
+        options = rendered_crew.available_passengers
+        labels = {item.id: item.passenger_option_label for item in options}
+
+        self.assertEqual(options[0].id, self.second_driver.id)
+        self.assertEqual(
+            labels[self.second_driver.id],
+            f"Second Worker · {copy['passenger_free']}",
+        )
+        self.assertEqual(
+            labels[self.passenger.id],
+            f"Passenger Worker · {copy['passenger_busy_dates']} {work_date:%d.%m}",
+        )
+        self.assertEqual(
+            labels[assigned_to_crew.id],
+            f"Assigned Worker · {copy['passenger_busy_crew']} · Crew Two",
+        )
+        self.assertContains(response, labels[self.second_driver.id])
+        self.assertContains(response, labels[self.passenger.id])
+        self.assertContains(response, labels[assigned_to_crew.id])
+
     def test_validation_message_is_shown_instead_of_generic_error(self):
         crew = self._create_crew()
         response = self.client.post(
