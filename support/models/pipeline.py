@@ -226,12 +226,14 @@ class SupportApplication(models.Model):
 class ApplicationDecisionEvent(models.Model):
     ACTION_SUBMITTED = "submitted"
     ACTION_CLARIFICATION_REQUESTED = "clarification_requested"
+    ACTION_CLARIFICATION_ANSWERED = "clarification_answered"
     ACTION_APPROVED = "approved"
     ACTION_DECLINED = "declined"
     ACTION_CANCELLED = "cancelled"
     ACTION_CHOICES = [
         (ACTION_SUBMITTED, "Submitted"),
         (ACTION_CLARIFICATION_REQUESTED, "Clarification requested"),
+        (ACTION_CLARIFICATION_ANSWERED, "Clarification answered"),
         (ACTION_APPROVED, "Approved"),
         (ACTION_DECLINED, "Declined"),
         (ACTION_CANCELLED, "Cancelled"),

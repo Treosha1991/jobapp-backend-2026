@@ -4,6 +4,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from support.models import (
     ApplicationDecisionEvent,
@@ -206,3 +207,44 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.application.refresh_from_db()
         self.assertEqual(self.application.status, SupportApplication.STATUS_DECLINED)
         self.assertContains(declined, "Заявка отклонена.")
+
+    def test_candidate_can_answer_manager_clarification_once(self):
+        self.post_action(
+            {
+                "action": "application_clarify",
+                "application_id": self.application.public_id,
+                "note": "Сколько вам полных лет?",
+            }
+        )
+
+        api_client = APIClient()
+        api_client.force_authenticate(self.candidate)
+        response = api_client.post(
+            f"/api/v2/support/applications/{self.application.public_id}/clarification-response/",
+            {"answer": "Мне 34 года."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["application"]["clarification"]["question"], "Сколько вам полных лет?")
+        self.assertEqual(response.data["application"]["clarification"]["answer"], "Мне 34 года.")
+        self.assertFalse(response.data["application"]["clarification"]["requires_response"])
+        self.assertTrue(
+            ApplicationDecisionEvent.objects.filter(
+                application=self.application,
+                action=ApplicationDecisionEvent.ACTION_CLARIFICATION_ANSWERED,
+                actor=self.candidate,
+                note="Мне 34 года.",
+            ).exists()
+        )
+
+        duplicate = api_client.post(
+            f"/api/v2/support/applications/{self.application.public_id}/clarification-response/",
+            {"answer": "Повторный ответ."},
+            format="json",
+        )
+        self.assertEqual(duplicate.status_code, 400)
+
+        manager_page = self.client.get(self.url)
+        self.assertContains(manager_page, "Кандидат ответил на уточнение")
+        self.assertContains(manager_page, "Мне 34 года.")

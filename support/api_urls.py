@@ -29,6 +29,7 @@ from .api_views import (
     PermissionGrantCreateAPIView,
     PublicVacancySupportWorkflowAPIView,
     MySupportApplicationListAPIView,
+    MySupportApplicationClarificationResponseAPIView,
     MySupportConnectionListAPIView,
     MySupportOperationSummaryAPIView,
     MySupportDriverManifestAPIView,
@@ -405,6 +406,11 @@ urlpatterns = [
         name="support-application-create",
     ),
     path("applications/mine/", MySupportApplicationListAPIView.as_view(), name="support-my-applications"),
+    path(
+        "applications/<uuid:application_public_id>/clarification-response/",
+        MySupportApplicationClarificationResponseAPIView.as_view(),
+        name="support-my-application-clarification-response",
+    ),
     path(
         "applications/<uuid:application_public_id>/clarification/",
         SupportApplicationClarificationAPIView.as_view(),

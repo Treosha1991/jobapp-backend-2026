@@ -14,6 +14,7 @@ from .feature_flags import is_support_feature_enabled
 from .models import (
     Announcement,
     AnnouncementAcknowledgement,
+    ApplicationDecisionEvent,
     BotContentRevision,
     CalendarMarkBatch,
     CalendarMarkBatchItem,
@@ -78,6 +79,7 @@ from .selectors.workspace import transport_workspace_snapshot
 from .serializers import (
     AnnouncementCreateSerializer,
     ApplicationReviewSerializer,
+    ApplicationClarificationResponseSerializer,
     BotContentRevisionCreateSerializer,
     CalendarMarkBatchCreateSerializer,
     CalendarMarkTemplateCreateSerializer,
@@ -203,6 +205,7 @@ from .services.registries import (
     create_worksite,
 )
 from .services.pipeline import (
+    answer_application_clarification,
     approve_application,
     create_bot_revision,
     create_support_vacancy,
@@ -316,7 +319,13 @@ def _candidate_application_payload(application):
     payload = _application_payload(application)
     connection = getattr(application, "support_connection", None)
     payload["connection"] = _connection_payload(connection) if connection is not None else None
-    latest_decision = application.decision_events.order_by("-created_at", "-id").first()
+    latest_decision = (
+        application.decision_events.exclude(
+            action=ApplicationDecisionEvent.ACTION_CLARIFICATION_ANSWERED
+        )
+        .order_by("-created_at", "-id")
+        .first()
+    )
     payload["last_decision"] = (
         {
             "action": latest_decision.action,
@@ -324,6 +333,34 @@ def _candidate_application_payload(application):
             "created_at": latest_decision.created_at,
         }
         if latest_decision is not None
+        else None
+    )
+    latest_question = (
+        application.decision_events.filter(
+            action=ApplicationDecisionEvent.ACTION_CLARIFICATION_REQUESTED
+        )
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    latest_answer = None
+    if latest_question is not None:
+        latest_answer = (
+            application.decision_events.filter(
+                action=ApplicationDecisionEvent.ACTION_CLARIFICATION_ANSWERED,
+                created_at__gte=latest_question.created_at,
+            )
+            .order_by("-created_at", "-id")
+            .first()
+        )
+    payload["clarification"] = (
+        {
+            "question": latest_question.note,
+            "requested_at": latest_question.created_at,
+            "answer": latest_answer.note if latest_answer is not None else "",
+            "answered_at": latest_answer.created_at if latest_answer is not None else None,
+            "requires_response": latest_answer is None,
+        }
+        if latest_question is not None
         else None
     )
     conversation = None
@@ -1833,6 +1870,25 @@ class SupportApplicationClarificationAPIView(SupportFeatureAPIView):
             note=serializer.validated_data["note"],
         )
         return Response({"application": _application_payload(application, include_staff_fields=True)})
+
+
+class MySupportApplicationClarificationResponseAPIView(SupportFeatureAPIView):
+    def post(self, request, application_public_id):
+        application = get_object_or_404(
+            SupportApplication.objects.select_related(
+                "vacancy__organization", "candidate"
+            ),
+            public_id=application_public_id,
+            candidate=request.user,
+        )
+        serializer = ApplicationClarificationResponseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        application = answer_application_clarification(
+            candidate=request.user,
+            application=application,
+            answer=serializer.validated_data["answer"],
+        )
+        return Response({"application": _candidate_application_payload(application)})
 
 
 class SupportApplicationApproveAPIView(SupportFeatureAPIView):

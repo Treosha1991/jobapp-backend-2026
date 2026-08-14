@@ -305,6 +305,44 @@ def request_application_clarification(*, actor, application, note):
     return application
 
 
+def answer_application_clarification(*, candidate, application, answer):
+    """Save a text-only candidate answer to the latest unanswered question."""
+
+    normalized_answer = (answer or "").strip()
+    if not normalized_answer:
+        raise ValidationError({"answer": "clarification_answer_required"})
+
+    with transaction.atomic():
+        application = _locked_application_for_review(application)
+        if application.candidate_id != candidate.id:
+            raise PermissionDenied("application_candidate_required")
+        if application.status != SupportApplication.STATUS_UNDER_REVIEW:
+            raise ValidationError({"application": "application_not_waiting_for_clarification"})
+
+        latest_event = application.decision_events.order_by("-created_at", "-id").first()
+        if (
+            latest_event is None
+            or latest_event.action
+            != ApplicationDecisionEvent.ACTION_CLARIFICATION_REQUESTED
+        ):
+            raise ValidationError({"application": "clarification_not_pending"})
+
+        ApplicationDecisionEvent.objects.create(
+            application=application,
+            action=ApplicationDecisionEvent.ACTION_CLARIFICATION_ANSWERED,
+            actor=candidate,
+            note=normalized_answer,
+        )
+        record_audit_event(
+            organization=application.vacancy.organization,
+            actor=candidate,
+            action="application.clarification_answered",
+            target=application,
+            details={},
+        )
+    return application
+
+
 def decline_application(*, actor, application, note):
     organization = application.vacancy.organization
     require_permission(user=actor, organization=organization, permission_code=PIPELINE_REVIEW)

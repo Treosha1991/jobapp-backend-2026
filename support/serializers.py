@@ -515,6 +515,10 @@ class ApplicationReviewSerializer(StrictInputSerializer):
     note = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
 
 
+class ApplicationClarificationResponseSerializer(StrictInputSerializer):
+    answer = serializers.CharField(max_length=500, allow_blank=False, trim_whitespace=True)
+
+
 class ConnectionTransitionSerializer(StrictInputSerializer):
     next_stage = serializers.ChoiceField(
         choices=("documents_stage", "coordinator_stage", "active_worker", "closed")
