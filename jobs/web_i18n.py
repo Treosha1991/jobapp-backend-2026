@@ -3584,7 +3584,6 @@ def employer_i18n(request):
         "active": {},
         "workers": False,
         "requests": False,
-        "registries": False,
         "staff_chats": False,
         "time": False,
         "transport": False,
@@ -3643,7 +3642,7 @@ def employer_i18n(request):
                     "project_first_projects": is_project_first_workspace_enabled(),
                     "active": {
                         "workers": resolver_namespace == "support"
-                        and resolver_name in {"workspace", "worker-card"},
+                        and resolver_name in {"workers", "worker-card"},
                         "projects": resolver_namespace == "support"
                         and resolver_name
                         in {
@@ -3655,8 +3654,6 @@ def employer_i18n(request):
                         },
                         "requests": resolver_namespace == "support"
                         and resolver_name == "worker-requests",
-                        "registries": resolver_namespace == "support"
-                        and resolver_name == "registries",
                         "fleet": resolver_namespace == "support"
                         and resolver_name == "fleet",
                         "housing": resolver_namespace == "support"
@@ -3680,14 +3677,6 @@ def employer_i18n(request):
                         user=request.user,
                         organization=organization,
                         permission_code=REQUEST_DECIDE,
-                    ),
-                    "registries": any(
-                        has_permission(
-                            user=request.user,
-                            organization=organization,
-                            permission_code=code,
-                        )
-                        for code in (HOUSING_MANAGE, SCHEDULE_MANAGE, TRANSPORT_MANAGE)
                     ),
                     "staff_chats": has_permission(
                         user=request.user,

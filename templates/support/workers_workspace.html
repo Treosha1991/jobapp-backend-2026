@@ -1,0 +1,49 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_nav_workers }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .workers-head { margin-bottom:18px; }
+  .workers-head h1 { margin:0 0 5px; font-size:32px; }
+  .workers-head p { margin:0; color:var(--muted); }
+  .support-readiness { min-width:132px; }
+  .support-readiness > span { display:grid; gap:5px; font-size:11px; font-weight:800; }
+  .support-readiness small { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
+  .support-ready { color:#a8ffc7; }
+  .support-waiting { color:var(--muted); }
+  .support-crew-list { display:grid; gap:7px; min-width:190px; }
+  .support-crew-item { display:grid; gap:2px; }
+  .support-crew-item a { color:#fff; font-weight:850; }
+  .support-crew-item small { color:var(--muted); font-weight:750; }
+  .support-driver { display:grid; gap:2px; min-width:155px; }
+  .support-driver strong { color:#a8ffc7; font-size:12px; }
+  .support-driver small { color:var(--muted); font-weight:750; }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="jh-card">
+  <header class="workers-head">
+    <h1>{{ employer_t.support_nav_workers }}</h1>
+    <p>{{ employer_t.support_workspace_workers_subtitle }}</p>
+  </header>
+  {% if worker_rows %}
+    <div class="jh-table-wrap">
+      <table class="jh-table">
+        <thead><tr><th>{{ employer_t.support_workspace_candidate_name }}</th><th>{{ employer_t.support_workspace_project_crew }}</th><th>{{ employer_t.support_workspace_stage }}</th><th>{{ employer_t.support_workspace_housing }}</th><th>{{ employer_t.support_workspace_work }}</th><th>{{ employer_t.support_workspace_driver_vehicle }}</th></tr></thead>
+        <tbody>{% for item in worker_rows %}<tr>
+          <td><strong><a href="{{ item.detail_url }}">{{ item.candidate_name }}</a></strong></td>
+          <td>{% if item.crew_rows %}<div class="support-crew-list">{% for crew in item.crew_rows %}<span class="support-crew-item"><a href="{{ crew.project_url }}">{{ crew.project_name }}</a><small>{{ crew.crew_name }}</small></span>{% endfor %}</div>{% else %}<span class="support-waiting">{{ employer_t.support_workspace_waiting }}</span>{% endif %}</td>
+          <td><span class="jh-status {% if item.is_free %}danger{% else %}success{% endif %}">{{ item.stage_label }}</span></td>
+          <td class="support-readiness"><span class="{% if item.housing_assignment %}support-ready{% else %}support-waiting{% endif %}">{% if item.housing_assignment %}{{ employer_t.support_workspace_ready }}{% if item.housing_assignment.check_out_at %}<small>{{ employer_t.support_workspace_move_out }} {{ item.housing_assignment.check_out_at|date:"d.m.Y" }}</small>{% endif %}{% else %}{{ employer_t.support_workspace_waiting }}{% endif %}</span></td>
+          <td class="support-readiness"><span class="{% if item.work_ready %}support-ready{% else %}support-waiting{% endif %}">{% if item.work_ready %}{{ employer_t.support_workspace_ready }}{% if item.work_next_date %}<small>{{ employer_t.support_workspace_nearest_date }} {{ item.work_next_date|date:"d.m.Y" }}</small>{% endif %}{% else %}{{ employer_t.support_workspace_waiting }}{% endif %}</span></td>
+          <td>{% if item.driver_resource %}<span class="support-driver"><strong>{{ employer_t.support_workspace_driver }}</strong><small>{{ item.driver_resource.vehicle.internal_name }} · {{ item.driver_resource.vehicle.registration_identifier }}</small></span>{% else %}<span class="support-waiting">—</span>{% endif %}</td>
+        </tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="jh-empty">{{ employer_t.support_workspace_no_workers }}</div>
+  {% endif %}
+</section>
+{% endblock %}

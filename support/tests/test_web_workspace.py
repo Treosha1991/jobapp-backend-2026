@@ -177,8 +177,16 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "Packing helper")
         self.assertContains(response, "JobHub Support")
         self.assertNotContains(response, "Blauwe Slank")
-        self.assertContains(
+        self.assertNotContains(
             response,
+            f"/employer/support/workers/{self.worker_connection.public_id}/",
+        )
+
+        workers_response = self.client.get(
+            f"/employer/support/workers/?organization={self.organization.public_id}"
+        )
+        self.assertContains(
+            workers_response,
             f"/employer/support/workers/{self.worker_connection.public_id}/",
         )
 
@@ -219,10 +227,32 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(workspace.status_code, 200)
         self.assertContains(workspace, "Workers")
         self.assertContains(workspace, "Requests")
-        self.assertContains(workspace, "Registry")
+        self.assertNotContains(workspace, ">Registry<")
         self.assertContains(workspace, "Staff chat")
         self.assertContains(workspace, "General chat")
         self.assertContains(workspace, "Menu")
+        self.assertNotContains(
+            workspace,
+            f"/employer/support/workers/{self.worker_connection.public_id}/",
+        )
+
+        workers_url = (
+            f"/employer/support/workers/?organization={self.organization.public_id}"
+        )
+        workers = self.client.get(workers_url)
+        self.assertEqual(workers.status_code, 200)
+        self.assertContains(workers, "workspace-active-worker")
+        self.assertContains(
+            workers,
+            f"/employer/support/workers/{self.worker_connection.public_id}/",
+        )
+        self.assertNotContains(workers, "Work workspace")
+        self.assertNotContains(workers, "Applications to review")
+
+        old_registry = self.client.get(
+            f"/employer/support/registries/?organization={self.organization.public_id}"
+        )
+        self.assertRedirects(old_registry, workspace_url)
 
         conversations_url = (
             f"/employer/support/conversations/?organization={self.organization.public_id}"

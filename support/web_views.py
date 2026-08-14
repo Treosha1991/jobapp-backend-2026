@@ -192,8 +192,6 @@ def workspace_home(request):
             )
     for item in snapshot["operation_cards"]:
         item["label"] = tr(request, f"support_workspace_{item['key']}_drafts")
-    if snapshot["operation_cards"]:
-        snapshot["registry_url"] = reverse("support:registries")
     if snapshot["permissions"]["transport"]:
         snapshot["transport_url"] = reverse("support:transport")
     if snapshot["permissions"]["time_view"] or snapshot["permissions"]["schedule"]:
@@ -205,6 +203,39 @@ def workspace_home(request):
     if snapshot["permissions"]["organization_manage"]:
         snapshot["team_url"] = reverse("support:team")
     return render(request, "support/workspace.html", snapshot)
+
+
+@login_required(login_url="employer:login")
+def workers_workspace(request):
+    """Dedicated worker list without dashboard and candidate summary blocks."""
+
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = workspace_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+    )
+    if not snapshot["permissions"]["workers"]:
+        raise Http404("support_workers_not_available")
+    for item in snapshot["worker_rows"]:
+        item["stage_label"] = tr(request, item.pop("stage_key"))
+        item["detail_url"] = reverse(
+            "support:worker-card",
+            kwargs={"connection_public_id": item["connection_id"]},
+        )
+        for crew in item["crew_rows"]:
+            crew["crew_name"] = crew["crew_name"] or tr(
+                request,
+                "support_workspace_crew_fallback",
+            )
+            crew["project_url"] = (
+                reverse(
+                    "support:project-first-detail",
+                    kwargs={"project_public_id": crew["project_id"]},
+                )
+                + f"?organization={snapshot['organization'].public_id}"
+            )
+    return render(request, "support/workers_workspace.html", snapshot)
 
 
 @login_required(login_url="employer:login")
@@ -1601,7 +1632,7 @@ def worker_card(request, connection_public_id):
         f"support_stage_{snapshot['connection'].stage}",
     )
     snapshot["workspace_url"] = (
-        f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
+        f"{reverse('support:workers')}?organization={snapshot['organization'].public_id}"
     )
     requested_tab = (request.GET.get("tab") or "work_transport").strip()
     if requested_tab in {"company", "transport"}:
@@ -1798,10 +1829,9 @@ def registries(request):
     )
     if request.method == "POST":
         return _registry_operation(request, snapshot=snapshot)
-    snapshot["workspace_url"] = (
+    return redirect(
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
-    return render(request, "support/registries.html", snapshot)
 
 
 def _housing_redirect(organization, *, site=None):
@@ -2435,9 +2465,6 @@ def transport_workspace(request):
             stop.kind_label = tr(request, f"support_transport_stop_{stop.kind}")
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
-    )
-    snapshot["registry_url"] = (
-        f"{reverse('support:registries')}?organization={snapshot['organization'].public_id}"
     )
     return render(request, "support/transport_workspace.html", snapshot)
 

@@ -19,6 +19,7 @@ urlpatterns = [
         name="project-first-detail",
     ),
     path("", web_views.workspace_home, name="workspace"),
+    path("workers/", web_views.workers_workspace, name="workers"),
     path("team/", web_views.team_management, name="team"),
     path("time/", web_views.timekeeping_workspace, name="time"),
     path("conversations/", web_views.conversations_workspace, name="conversations"),
@@ -28,6 +29,7 @@ urlpatterns = [
         name="conversation-detail",
     ),
     path("requests/", web_views.worker_requests_workspace, name="worker-requests"),
+    # Compatibility endpoint for old forms. GET no longer exposes a registry page.
     path("registries/", web_views.registries, name="registries"),
     path("projects/", web_views.projects_workspace, name="projects"),
     path(
