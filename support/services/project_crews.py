@@ -800,22 +800,70 @@ def create_project_crew(
     if vehicle.organization_id != organization.id or not vehicle.is_active:
         _operation_error("vehicle_not_available", "The selected vehicle is not available in this organization.")
     today = timezone.localdate()
-    legacy_conflict = DriverVehicleAssignment.objects.select_for_update().filter(
+    starts_on = starts_on or today
+    other_project_resources = list(
+        ProjectCrewResourceAssignment.objects.select_for_update()
+        .select_related("crew__project", "vehicle")
+        .filter(
+            crew__organization=organization,
+            crew__state=ProjectCrew.STATE_ACTIVE,
+            driver_connection=driver_connection,
+            ends_on__isnull=True,
+        )
+        .order_by("-starts_on", "-id")
+    )
+    if other_project_resources:
+        # A driver who already works in another project keeps the same car.
+        # Whether the person can work for both projects is decided later from
+        # the actual published shift dates, not while creating the crew.
+        assigned_vehicle_ids = {item.vehicle_id for item in other_project_resources}
+        if vehicle.id not in assigned_vehicle_ids:
+            _operation_error(
+                "driver_project_vehicle_locked",
+                "A driver assigned to another project must keep the vehicle already attached to them.",
+                vehicle=str(other_project_resources[0].vehicle.public_id),
+            )
+
+    vehicle_project_conflict = (
+        ProjectCrewResourceAssignment.objects.select_for_update()
+        .filter(
+            crew__organization=organization,
+            crew__state=ProjectCrew.STATE_ACTIVE,
+            vehicle=vehicle,
+            ends_on__isnull=True,
+        )
+        .exclude(driver_connection=driver_connection)
+        .exists()
+    )
+    if vehicle_project_conflict:
+        _operation_error(
+            "driver_or_vehicle_already_assigned",
+            "The selected vehicle is attached to another driver.",
+        )
+
+    legacy_resources = DriverVehicleAssignment.objects.select_for_update().filter(
         organization=organization,
         state__in=(
             DriverVehicleAssignment.STATE_DRAFT,
             DriverVehicleAssignment.STATE_PUBLISHED,
         ),
-    ).filter(
-        Q(vehicle=vehicle) | Q(driver_connection=driver_connection)
-    ).filter(
-        Q(ends_on__isnull=True) | Q(ends_on__gte=starts_on or today)
+    ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=starts_on))
+    legacy_vehicle_conflict = legacy_resources.filter(vehicle=vehicle).exclude(
+        driver_connection=driver_connection,
     ).exists()
-    if legacy_conflict:
+    if legacy_vehicle_conflict:
         _operation_error(
             "legacy_driver_or_vehicle_already_assigned",
-            "The selected driver or vehicle is still assigned in the previous fleet workflow.",
+            "The selected vehicle is attached to another driver in the fleet.",
         )
+
+    # A fleet-only driver becomes a project driver. Their previous fleet row
+    # is historical after this point; selecting another free car therefore
+    # returns the old car to the fleet automatically.
+    legacy_resources.filter(driver_connection=driver_connection).update(
+        state=DriverVehicleAssignment.STATE_CANCELLED,
+        cancelled_at=timezone.now(),
+    )
 
     crew = ProjectCrew(
         organization=organization,
@@ -829,7 +877,7 @@ def create_project_crew(
         crew=crew,
         driver_connection=driver_connection,
         vehicle=vehicle,
-        starts_on=starts_on or timezone.localdate(),
+        starts_on=starts_on,
         created_by=actor,
     )
     resource.full_clean()

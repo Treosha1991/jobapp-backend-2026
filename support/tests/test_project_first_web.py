@@ -6,6 +6,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from support.models import (
+    DriverVehicleAssignment,
     ProjectCrew,
     ProjectCrewDriverSubstitution,
     ProjectCrewMemberAbsence,
@@ -166,6 +167,7 @@ class ProjectFirstWorkspaceTests(TestCase):
             "error_crew_shift_missing",
             "error_driver_licence_not_confirmed",
             "error_driver_or_vehicle_already_assigned",
+            "error_driver_project_vehicle_locked",
             "error_driver_shift_conflict",
             "error_legacy_driver_or_vehicle_already_assigned",
             "error_passenger_scope_invalid",
@@ -209,6 +211,138 @@ class ProjectFirstWorkspaceTests(TestCase):
             f'href="{self._list_url()}"',
             html=False,
         )
+
+    def test_fleet_driver_and_vehicle_are_available_and_promoted_to_project_crew(self):
+        today = timezone.localdate()
+        fleet_assignment = DriverVehicleAssignment.objects.create(
+            organization=self.organization,
+            driver_connection=self.driver,
+            vehicle=self.vehicle,
+            starts_on=today,
+            state=DriverVehicleAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+
+        response = self.client.get(self._detail_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'value="{self.driver.public_id}"')
+        self.assertContains(
+            response,
+            f'data-vehicle-id="{self.vehicle.public_id}"',
+        )
+        self.assertContains(response, 'data-vehicle-locked="0"')
+
+        response = self.client.post(
+            self._detail_url(),
+            {
+                "organization": str(self.organization.public_id),
+                "action": "crew_create",
+                "internal_name": "Fleet crew",
+                "driver_id": str(self.driver.public_id),
+                "vehicle_id": str(self.vehicle.public_id),
+                "starts_on": today.isoformat(),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        resource = ProjectCrewResourceAssignment.objects.get(
+            crew__project=self.project,
+        )
+        self.assertEqual(resource.driver_connection, self.driver)
+        self.assertEqual(resource.vehicle, self.vehicle)
+        fleet_assignment.refresh_from_db()
+        self.assertEqual(
+            fleet_assignment.state,
+            DriverVehicleAssignment.STATE_CANCELLED,
+        )
+
+    def test_driver_from_another_project_is_listed_with_locked_vehicle_and_busy_day(self):
+        today = timezone.localdate()
+        first_crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=self.project,
+            internal_name="First project crew",
+            created_by=self.owner,
+        )
+        ProjectCrewResourceAssignment.objects.create(
+            crew=first_crew,
+            driver_connection=self.driver,
+            vehicle=self.vehicle,
+            starts_on=today,
+            created_by=self.owner,
+        )
+        first_shift = ProjectCrewShift.objects.create(
+            crew=first_crew,
+            work_date=today,
+            starts_at=timezone.make_aware(datetime.combine(today, time(6, 0))),
+            ends_at=timezone.make_aware(datetime.combine(today, time(14, 45))),
+            state=ProjectCrewShift.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=first_shift,
+            connection=self.driver,
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+            vehicle=self.vehicle,
+            created_by=self.owner,
+        )
+        second_worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Second worksite",
+            country_code="NL",
+            city="Urk",
+            street="Secondstraat",
+            building="2",
+            created_by=self.owner,
+        )
+        second_project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=second_worksite,
+            internal_name="Second project",
+            worker_visible_name="Second project",
+            worker_capacity=8,
+            created_by=self.owner,
+        )
+        second_url = (
+            reverse(
+                "support:project-first-detail",
+                kwargs={"project_public_id": second_project.public_id},
+            )
+            + f"?organization={self.organization.public_id}"
+            + f"&month={today:%Y-%m}"
+        )
+
+        response = self.client.get(second_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Project: Preview project")
+        self.assertContains(response, 'data-vehicle-locked="1"')
+
+        response = self.client.post(
+            second_url,
+            {
+                "organization": str(self.organization.public_id),
+                "action": "crew_create",
+                "internal_name": "Second project crew",
+                "driver_id": str(self.driver.public_id),
+                "vehicle_id": str(self.vehicle.public_id),
+                "starts_on": today.isoformat(),
+                "return_month": f"{today:%Y-%m}",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            ProjectCrewResourceAssignment.objects.filter(
+                driver_connection=self.driver,
+                ends_on__isnull=True,
+            ).count(),
+            2,
+        )
+
+        response = self.client.get(second_url)
+        self.assertContains(response, "is-today has-driver-conflict")
 
     def test_worker_workspace_uses_project_crew_data_and_marks_unscheduled_worker_free(self):
         today = timezone.localdate()

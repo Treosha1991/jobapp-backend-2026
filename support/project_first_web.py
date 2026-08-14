@@ -76,6 +76,8 @@ COPY = {
         "create_crew": "Добавить экипаж",
         "name": "Название экипажа",
         "driver": "Водитель",
+        "project_marker": "Проект",
+        "driver_busy_other_project": "Водитель занят в другом проекте",
         "vehicle": "Автомобиль",
         "start_date": "Дата начала",
         "create": "Создать экипаж",
@@ -164,7 +166,7 @@ COPY = {
         "subtitle": "Manage work, transport and crew composition from the project page.",
         "projects": "Projects", "open": "Open", "back": "All projects", "crews": "Crews", "crew": "Crew",
         "no_crews": "This project has no crews yet.", "create_crew": "Add crew", "name": "Crew name",
-        "driver": "Driver", "vehicle": "Vehicle", "start_date": "Start date", "create": "Create crew",
+        "driver": "Driver", "project_marker": "Project", "driver_busy_other_project": "Driver busy in another project", "vehicle": "Vehicle", "start_date": "Start date", "create": "Create crew",
         "schedule": "Crew schedule", "dates": "Dates", "shift_start": "Start", "shift_end": "End",
         "schedule_hint": "Click once to view a day; double-click to select it for changes.",
         "month_navigation": "Month navigation", "today": "Today", "selected_days": "Selected days",
@@ -218,7 +220,7 @@ COPY = {
         "subtitle": "Zarządzaj pracą, transportem i składem ekipy na stronie projektu.",
         "projects": "Projekty", "open": "Otwórz", "back": "Wszystkie projekty", "crews": "Ekipy", "crew": "Ekipa",
         "no_crews": "Ten projekt nie ma jeszcze ekip.", "create_crew": "Dodaj ekipę", "name": "Nazwa ekipy",
-        "driver": "Kierowca", "vehicle": "Samochód", "start_date": "Data rozpoczęcia", "create": "Utwórz ekipę",
+        "driver": "Kierowca", "project_marker": "Projekt", "driver_busy_other_project": "Kierowca zajęty w innym projekcie", "vehicle": "Samochód", "start_date": "Data rozpoczęcia", "create": "Utwórz ekipę",
         "schedule": "Grafik ekipy", "dates": "Daty", "shift_start": "Początek", "shift_end": "Koniec",
         "schedule_hint": "Jedno kliknięcie pokazuje dzień, podwójne wybiera go do zmiany.",
         "month_navigation": "Nawigacja miesiąca", "today": "Dzisiaj", "selected_days": "Wybrane dni",
@@ -272,7 +274,7 @@ COPY = {
         "subtitle": "Керуйте роботою, транспортом і складом екіпажів на сторінці проєкту.",
         "projects": "Проєкти", "open": "Відкрити", "back": "Усі проєкти", "crews": "Екіпажі", "crew": "Екіпаж",
         "no_crews": "У проєкту ще немає екіпажів.", "create_crew": "Додати екіпаж", "name": "Назва екіпажу",
-        "driver": "Водій", "vehicle": "Автомобіль", "start_date": "Дата початку", "create": "Створити екіпаж",
+        "driver": "Водій", "project_marker": "Проєкт", "driver_busy_other_project": "Водій зайнятий в іншому проєкті", "vehicle": "Автомобіль", "start_date": "Дата початку", "create": "Створити екіпаж",
         "schedule": "Графік екіпажу", "dates": "Дати", "shift_start": "Початок", "shift_end": "Кінець",
         "schedule_hint": "Один клік показує день, подвійний вибирає його для зміни.",
         "month_navigation": "Керування місяцем", "today": "Сьогодні", "selected_days": "Вибрано днів",
@@ -345,6 +347,7 @@ PROJECT_CREW_ERROR_COPY = {
         "error_driver_shift_conflict": "У водителя уже есть другая смена в выбранное время.",
         "error_legacy_driver_or_vehicle_already_assigned": "Водитель или автомобиль всё ещё занят в прежнем транспортном назначении.",
         "error_driver_or_vehicle_already_assigned": "Водитель или автомобиль уже закреплён за другим экипажем.",
+        "error_driver_project_vehicle_locked": "Водитель уже участвует в другом проекте. Для нового экипажа нужно использовать закреплённый за ним автомобиль.",
         "error_passenger_scope_invalid": "Выберите: весь график экипажа или только отмеченные дни.",
         "error_selected_schedule_days_have_no_shifts": "В выбранных днях нет смен, которые можно изменить.",
         "error_replacement_driver_not_in_crew": "Нового постоянного водителя можно выбрать только из пассажиров этого экипажа.",
@@ -370,6 +373,7 @@ PROJECT_CREW_ERROR_COPY = {
         "error_driver_shift_conflict": "The driver already has another overlapping shift.",
         "error_legacy_driver_or_vehicle_already_assigned": "The driver or vehicle is still occupied by a legacy transport assignment.",
         "error_driver_or_vehicle_already_assigned": "The driver or vehicle is already assigned to another crew.",
+        "error_driver_project_vehicle_locked": "The driver already works in another project. Use the vehicle already attached to that driver.",
         "error_passenger_scope_invalid": "Choose the entire crew schedule or selected days only.",
         "error_selected_schedule_days_have_no_shifts": "The selected days contain no shifts to change.",
         "error_replacement_driver_not_in_crew": "A permanent replacement driver must be a passenger of this crew.",
@@ -395,6 +399,7 @@ PROJECT_CREW_ERROR_COPY = {
         "error_driver_shift_conflict": "Kierowca ma już inną nakładającą się zmianę.",
         "error_legacy_driver_or_vehicle_already_assigned": "Kierowca lub samochód jest nadal zajęty w poprzednim przypisaniu transportowym.",
         "error_driver_or_vehicle_already_assigned": "Kierowca lub samochód jest już przypisany do innej ekipy.",
+        "error_driver_project_vehicle_locked": "Kierowca pracuje już w innym projekcie. Użyj samochodu już przypisanego do tego kierowcy.",
         "error_passenger_scope_invalid": "Wybierz cały grafik ekipy albo tylko zaznaczone dni.",
         "error_selected_schedule_days_have_no_shifts": "W wybranych dniach nie ma zmian do edycji.",
         "error_replacement_driver_not_in_crew": "Nowego stałego kierowcę można wybrać tylko spośród pasażerów tej ekipy.",
@@ -420,6 +425,7 @@ PROJECT_CREW_ERROR_COPY = {
         "error_driver_shift_conflict": "Водій уже має іншу зміну, що перетинається в часі.",
         "error_legacy_driver_or_vehicle_already_assigned": "Водій або автомобіль досі зайнятий у попередньому транспортному призначенні.",
         "error_driver_or_vehicle_already_assigned": "Водій або автомобіль уже закріплений за іншим екіпажем.",
+        "error_driver_project_vehicle_locked": "Водій уже працює в іншому проєкті. Використайте автомобіль, який уже закріплено за цим водієм.",
         "error_passenger_scope_invalid": "Виберіть увесь графік екіпажу або лише позначені дні.",
         "error_selected_schedule_days_have_no_shifts": "У вибраних днях немає змін, які можна редагувати.",
         "error_replacement_driver_not_in_crew": "Нового постійного водія можна вибрати лише з пасажирів цього екіпажу.",
@@ -622,8 +628,16 @@ def _shift_month(value, offset):
     return date(month_index // 12, month_index % 12 + 1, 1)
 
 
-def _crew_calendar(crew, *, selected_month, today, driver_absence_dates=None):
+def _crew_calendar(
+    crew,
+    *,
+    selected_month,
+    today,
+    driver_absence_dates=None,
+    driver_conflict_dates=None,
+):
     driver_absence_dates = set(driver_absence_dates or ())
+    driver_conflict_dates = set(driver_conflict_dates or ())
     shifts = [
         shift
         for shift in crew.calendar_shifts.all()
@@ -652,6 +666,7 @@ def _crew_calendar(crew, *, selected_month, today, driver_absence_dates=None):
                 "has_published": shift is not None,
                 "has_no_driver": has_no_driver,
                 "is_driver_absence": work_date in driver_absence_dates,
+                "has_driver_conflict": work_date in driver_conflict_dates,
             }
         )
     return days, shifts
@@ -725,31 +740,38 @@ def _project_context(request, organization, project, *, selected_month):
         )
         .order_by("internal_name", "id")
     )
-    used_vehicle_ids = set(
+    open_project_resources = list(
         ProjectCrewResourceAssignment.objects.filter(
             crew__organization=organization,
+            crew__state=ProjectCrew.STATE_ACTIVE,
             ends_on__isnull=True,
-        ).values_list("vehicle_id", flat=True)
+        )
+        .select_related("driver_connection__candidate", "vehicle", "crew__project")
+        .order_by("-starts_on", "-id")
     )
-    used_driver_ids = set(
-        ProjectCrewResourceAssignment.objects.filter(
-            crew__organization=organization,
-            ends_on__isnull=True,
-        ).values_list("driver_connection_id", flat=True)
-    )
-    legacy_resources = DriverVehicleAssignment.objects.filter(
+    legacy_resources = list(DriverVehicleAssignment.objects.filter(
         organization=organization,
         state__in=(
             DriverVehicleAssignment.STATE_DRAFT,
             DriverVehicleAssignment.STATE_PUBLISHED,
         ),
     ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
-    used_vehicle_ids.update(
-        legacy_resources.values_list("vehicle_id", flat=True)
-    )
-    used_driver_ids.update(
-        legacy_resources.values_list("driver_connection_id", flat=True)
-    )
+    .select_related("driver_connection__candidate", "vehicle")
+    .order_by("-starts_on", "-id"))
+    project_resources_by_driver = {}
+    project_driver_ids_by_vehicle = {}
+    for resource in open_project_resources:
+        project_resources_by_driver.setdefault(resource.driver_connection_id, []).append(resource)
+        project_driver_ids_by_vehicle.setdefault(resource.vehicle_id, set()).add(
+            resource.driver_connection_id
+        )
+    legacy_resource_by_driver = {}
+    legacy_driver_ids_by_vehicle = {}
+    for resource in legacy_resources:
+        legacy_resource_by_driver.setdefault(resource.driver_connection_id, resource)
+        legacy_driver_ids_by_vehicle.setdefault(resource.vehicle_id, set()).add(
+            resource.driver_connection_id
+        )
     crew_shift_dates = {
         shift.work_date
         for crew in crews
@@ -981,11 +1003,26 @@ def _project_context(request, organization, project, *, selected_month):
             if connection.id not in unavailable_passenger_ids
         ]
         crew.published_shifts = list(crew.calendar_shifts.all())
+        driver_conflict_dates = []
+        if crew.current_resource:
+            driver_conflict_dates = list(
+                ProjectCrewShiftMember.objects.filter(
+                    connection=crew.current_resource.driver_connection,
+                    role=ProjectCrewShiftMember.ROLE_DRIVER,
+                    shift__crew__organization=organization,
+                    shift__state=ProjectCrewShift.STATE_PUBLISHED,
+                    shift__work_date__range=(selected_month, selected_month_end),
+                )
+                .exclude(shift__crew=crew)
+                .values_list("shift__work_date", flat=True)
+                .distinct()
+            )
         crew.calendar_days, crew.month_shifts = _crew_calendar(
             crew,
             selected_month=selected_month,
             today=today,
             driver_absence_dates=crew.substitute_eligible_dates,
+            driver_conflict_dates=driver_conflict_dates,
         )
         crew.schedule_example = (
             crew.month_shifts[0]
@@ -1034,15 +1071,43 @@ def _project_context(request, organization, project, *, selected_month):
                 item.isoformat() for item in sorted(set(option["work_dates"]))
             )
 
-    available_drivers = [
-        item for item in connections
-        if item.has_driving_license and item.id not in used_driver_ids
-    ]
+    available_drivers = []
+    for connection in connections:
+        if not connection.has_driving_license:
+            continue
+        project_resources = project_resources_by_driver.get(connection.id, [])
+        fleet_resource = legacy_resource_by_driver.get(connection.id)
+        preferred_resource = project_resources[0] if project_resources else fleet_resource
+        connection.preferred_vehicle_public_id = (
+            str(preferred_resource.vehicle.public_id) if preferred_resource else ""
+        )
+        connection.project_vehicle_locked = bool(project_resources)
+        connection.project_names = sorted(
+            {
+                resource.crew.project.worker_visible_name
+                or resource.crew.project.internal_name
+                for resource in project_resources
+            },
+            key=str.casefold,
+        )
+        connection.display_option = connection.display_name
+        if connection.project_names:
+            connection.display_option += " · " + copy["project_marker"] + ": " + ", ".join(
+                connection.project_names
+            )
+        available_drivers.append(connection)
+
     available_vehicles = list(
         Vehicle.objects.filter(organization=organization, is_active=True)
-        .exclude(id__in=used_vehicle_ids)
         .order_by("internal_name", "registration_identifier")
     )
+    for vehicle in available_vehicles:
+        vehicle.project_driver_ids = ",".join(
+            str(item) for item in sorted(project_driver_ids_by_vehicle.get(vehicle.id, set()))
+        )
+        vehicle.fleet_driver_ids = ",".join(
+            str(item) for item in sorted(legacy_driver_ids_by_vehicle.get(vehicle.id, set()))
+        )
     return {
         "crews": crews,
         "connections": connections,

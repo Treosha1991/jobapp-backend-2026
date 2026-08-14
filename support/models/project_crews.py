@@ -115,16 +115,6 @@ class ProjectCrewResourceAssignment(models.Model):
                 condition=Q(ends_on__isnull=True),
                 name="support_pc_one_open_resource",
             ),
-            models.UniqueConstraint(
-                fields=("driver_connection",),
-                condition=Q(ends_on__isnull=True),
-                name="support_pc_one_open_driver",
-            ),
-            models.UniqueConstraint(
-                fields=("vehicle",),
-                condition=Q(ends_on__isnull=True),
-                name="support_pc_one_open_vehicle",
-            ),
         ]
         indexes = [
             models.Index(fields=("crew", "starts_on"), name="support_pc_res_crew_start_idx"),
