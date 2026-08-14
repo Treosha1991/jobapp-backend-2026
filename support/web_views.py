@@ -354,12 +354,18 @@ def candidate_applications_workspace(request):
         answers = item.questionnaire_answers or {}
         item.questionnaire_complete = questionnaire_is_complete(answers)
         item.questionnaire_tags = questionnaire_tags(item, language=page_language)
-        item.questionnaire_facts = _candidate_questionnaire_facts(
+        item.questionnaire_sections = _candidate_questionnaire_sections(
             answers,
             language=page_language,
         )
-        for fact in item.questionnaire_facts:
-            fact["label"] = tr(request, f"support_questionnaire_{fact['key']}")
+        for section in item.questionnaire_sections:
+            section["label"] = tr(
+                request,
+                f"support_questionnaire_section_{section['key']}",
+            )
+            for fact in section["facts"]:
+                if not fact.get("label"):
+                    fact["label"] = tr(request, f"support_questionnaire_{fact['key']}")
         for event in item.decision_events.all():
             event.action_label = tr(
                 request,
@@ -417,8 +423,8 @@ def candidate_applications_workspace(request):
     return render(request, "support/candidate_applications_workspace.html", snapshot)
 
 
-def _candidate_questionnaire_facts(answers, *, language):
-    """Compact, safe presentation of the structured screening answers."""
+def _candidate_questionnaire_sections(answers, *, language):
+    """Group screening answers into compact manager-friendly sections."""
 
     if not answers:
         return []
@@ -426,36 +432,75 @@ def _candidate_questionnaire_facts(answers, *, language):
     def joined(key):
         return ", ".join(questionnaire_label(value, language) for value in answers.get(key, [])) or "—"
 
+    def formatted_date(key):
+        raw = answers.get(key)
+        if not raw:
+            return "—"
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").strftime("%d.%m.%Y")
+        except (TypeError, ValueError):
+            return str(raw)
+
+    def fact(key, value, *, label=None):
+        return {"key": key, "value": value, "label": label}
+
     yes_no = lambda value: questionnaire_label("yes" if value else "no", language)
     conditions = answers.get("work_conditions") or {}
-    values = [
-        ("legal_status", questionnaire_label(answers.get("legal_status"), language)),
-        ("document_valid_until", answers.get("document_valid_until") or "—"),
-        ("current_city", answers.get("current_city") or "—"),
-        ("available_from", answers.get("available_from") or "—"),
-        ("planned_duration", questionnaire_label(answers.get("planned_duration"), language)),
-        ("experience_sectors", joined("experience_sectors")),
-        ("experience_duration", questionnaire_label(answers.get("experience_duration"), language)),
-        ("work_countries", ", ".join(answers.get("work_countries", [])) or "—"),
-        ("last_position", answers.get("last_position") or "—"),
-        ("english_level", questionnaire_label(answers.get("english_level"), language)),
-        ("polish_level", questionnaire_label(answers.get("polish_level"), language)),
-        ("dutch_level", questionnaire_label(answers.get("dutch_level"), language)),
-        ("driving_license", yes_no(answers.get("has_driving_license"))),
-        ("driving_categories", joined("driving_license_categories")),
-        ("qualifications", joined("qualifications")),
-        ("work_conditions", "; ".join(
-            f"{questionnaire_label(key, language)}: {questionnaire_label(value, language)}"
-            for key, value in conditions.items()
-        ) or "—"),
-        ("shift_preferences", joined("shift_preferences")),
-        ("needs_housing", yes_no(answers.get("needs_housing"))),
-        ("needs_transport", yes_no(answers.get("needs_transport"))),
-        ("travelling_with_partner", yes_no(answers.get("travelling_with_partner"))),
-        ("safety_policy_accepted", yes_no(answers.get("safety_policy_accepted"))),
-        ("additional_note", answers.get("additional_note") or "—"),
+    sections = [
+        ("readiness", [
+            fact("legal_status", questionnaire_label(answers.get("legal_status"), language)),
+            fact("document_valid_until", formatted_date("document_valid_until")),
+            fact("current_city", answers.get("current_city") or "—"),
+            fact("available_from", formatted_date("available_from")),
+            fact("planned_duration", questionnaire_label(answers.get("planned_duration"), language)),
+        ]),
+        ("experience", [
+            fact("experience_sectors", joined("experience_sectors")),
+            fact("experience_duration", questionnaire_label(answers.get("experience_duration"), language)),
+            fact("work_countries", ", ".join(answers.get("work_countries", [])) or "—"),
+            fact("last_position", answers.get("last_position") or "—"),
+        ]),
+        ("languages", [
+            fact("english_level", questionnaire_label(answers.get("english_level"), language)),
+            fact("polish_level", questionnaire_label(answers.get("polish_level"), language)),
+            fact("dutch_level", questionnaire_label(answers.get("dutch_level"), language)),
+        ]),
+        ("driving", [
+            fact("driving_license", yes_no(answers.get("has_driving_license"))),
+            fact("driving_categories", joined("driving_license_categories")),
+            fact("driving_license_valid_in_eu", yes_no(answers.get("driving_license_valid_in_eu"))),
+            fact("driving_experience", questionnaire_label(answers.get("driving_experience"), language)),
+            fact("willing_crew_driver", yes_no(answers.get("willing_crew_driver"))),
+            fact("has_own_car", yes_no(answers.get("has_own_car"))),
+            fact("qualifications", joined("qualifications")),
+        ]),
+        ("conditions", [
+            *[
+                fact(
+                    f"condition_{key}",
+                    questionnaire_label(value, language),
+                    label=questionnaire_label(key, language),
+                )
+                for key, value in conditions.items()
+            ],
+            fact("shift_preferences", joined("shift_preferences")),
+            fact("overtime_willing", questionnaire_label(answers.get("overtime_willing"), language)),
+            fact("unavailable_dates_note", answers.get("unavailable_dates_note") or "—"),
+        ]),
+        ("relocation", [
+            fact("needs_housing", yes_no(answers.get("needs_housing"))),
+            fact("needs_transport", yes_no(answers.get("needs_transport"))),
+            fact("travelling_with_partner", yes_no(answers.get("travelling_with_partner"))),
+            fact("shared_room_preference", questionnaire_label(answers.get("shared_room_preference"), language)),
+            fact("planned_move_in", formatted_date("planned_move_in")),
+            fact("safety_policy_accepted", yes_no(answers.get("safety_policy_accepted"))),
+        ]),
     ]
-    return [{"key": key, "value": value} for key, value in values]
+    return [
+        {"key": key, "facts": facts}
+        for key, facts in sections
+        if facts
+    ]
 
 
 @login_required(login_url="employer:login")

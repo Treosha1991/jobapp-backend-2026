@@ -4351,3 +4351,71 @@ TRANSLATIONS["uk"].update({
     "support_application_event_declined": "Заявку відхилено",
     "support_application_event_cancelled": "Заявку скасовано",
 })
+
+# Candidate questionnaire groups and the v2 fields that were previously
+# visible only as raw tags. Keep this four-language block complete: missing
+# translations in employer text can otherwise surface as "???" in production.
+TRANSLATIONS["ru"].update({
+    "support_questionnaire_section_readiness": "Документы и готовность",
+    "support_questionnaire_section_experience": "Опыт работы",
+    "support_questionnaire_section_languages": "Языки",
+    "support_questionnaire_section_driving": "Права и квалификации",
+    "support_questionnaire_section_conditions": "Условия и смены",
+    "support_questionnaire_section_relocation": "Переезд и быт",
+    "support_questionnaire_driving_license_valid_in_eu": "Права действуют в ЕС",
+    "support_questionnaire_driving_experience": "Стаж вождения",
+    "support_questionnaire_willing_crew_driver": "Готов быть водителем экипажа",
+    "support_questionnaire_has_own_car": "Личный автомобиль",
+    "support_questionnaire_overtime_willing": "Сверхурочная работа",
+    "support_questionnaire_unavailable_dates_note": "Недоступные даты",
+    "support_questionnaire_shared_room_preference": "Совместная комната",
+    "support_questionnaire_planned_move_in": "Планируемое заселение",
+})
+TRANSLATIONS["en"].update({
+    "support_questionnaire_section_readiness": "Documents and availability",
+    "support_questionnaire_section_experience": "Work experience",
+    "support_questionnaire_section_languages": "Languages",
+    "support_questionnaire_section_driving": "Driving and qualifications",
+    "support_questionnaire_section_conditions": "Conditions and shifts",
+    "support_questionnaire_section_relocation": "Relocation and housing",
+    "support_questionnaire_driving_license_valid_in_eu": "Licence valid in the EU",
+    "support_questionnaire_driving_experience": "Driving experience",
+    "support_questionnaire_willing_crew_driver": "Willing to drive a crew",
+    "support_questionnaire_has_own_car": "Own car",
+    "support_questionnaire_overtime_willing": "Overtime availability",
+    "support_questionnaire_unavailable_dates_note": "Unavailable dates",
+    "support_questionnaire_shared_room_preference": "Shared room",
+    "support_questionnaire_planned_move_in": "Planned move-in",
+})
+TRANSLATIONS["pl"].update({
+    "support_questionnaire_section_readiness": "Dokumenty i dostępność",
+    "support_questionnaire_section_experience": "Doświadczenie zawodowe",
+    "support_questionnaire_section_languages": "Języki",
+    "support_questionnaire_section_driving": "Prawo jazdy i uprawnienia",
+    "support_questionnaire_section_conditions": "Warunki i zmiany",
+    "support_questionnaire_section_relocation": "Przeprowadzka i zakwaterowanie",
+    "support_questionnaire_driving_license_valid_in_eu": "Prawo jazdy ważne w UE",
+    "support_questionnaire_driving_experience": "Doświadczenie w prowadzeniu",
+    "support_questionnaire_willing_crew_driver": "Może prowadzić załogę",
+    "support_questionnaire_has_own_car": "Własny samochód",
+    "support_questionnaire_overtime_willing": "Gotowość do nadgodzin",
+    "support_questionnaire_unavailable_dates_note": "Niedostępne terminy",
+    "support_questionnaire_shared_room_preference": "Wspólny pokój",
+    "support_questionnaire_planned_move_in": "Planowana data zamieszkania",
+})
+TRANSLATIONS["uk"].update({
+    "support_questionnaire_section_readiness": "Документи та готовність",
+    "support_questionnaire_section_experience": "Досвід роботи",
+    "support_questionnaire_section_languages": "Мови",
+    "support_questionnaire_section_driving": "Права та кваліфікації",
+    "support_questionnaire_section_conditions": "Умови та зміни",
+    "support_questionnaire_section_relocation": "Переїзд і житло",
+    "support_questionnaire_driving_license_valid_in_eu": "Права дійсні в ЄС",
+    "support_questionnaire_driving_experience": "Стаж водіння",
+    "support_questionnaire_willing_crew_driver": "Готовий бути водієм екіпажу",
+    "support_questionnaire_has_own_car": "Власний автомобіль",
+    "support_questionnaire_overtime_willing": "Понаднормова робота",
+    "support_questionnaire_unavailable_dates_note": "Недоступні дати",
+    "support_questionnaire_shared_room_preference": "Спільна кімната",
+    "support_questionnaire_planned_move_in": "Заплановане заселення",
+})

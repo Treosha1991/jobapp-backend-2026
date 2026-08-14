@@ -1,4 +1,5 @@
 import secrets
+from datetime import timedelta
 
 from django.db import IntegrityError, transaction
 from django.db.models import Q
@@ -22,6 +23,36 @@ from support.permissions import active_membership_for, require_permission
 
 from .audit import record_audit_event
 from .entitlements import support_access_snapshot_for
+
+
+APPLICATION_RESUBMIT_COOLDOWN = timedelta(minutes=60)
+
+
+def application_resubmission_state(application, *, now=None):
+    """Return the server-authoritative reapplication cooldown for a rejection."""
+
+    if application.status != SupportApplication.STATUS_DECLINED:
+        return {
+            "can_resubmit": False,
+            "available_at": None,
+            "wait_seconds": 0,
+        }
+    declined_event = (
+        application.decision_events.filter(
+            action=ApplicationDecisionEvent.ACTION_DECLINED,
+        )
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    declined_at = declined_event.created_at if declined_event is not None else application.updated_at
+    available_at = declined_at + APPLICATION_RESUBMIT_COOLDOWN
+    current_time = now or timezone.now()
+    wait_seconds = max(0, int((available_at - current_time).total_seconds() + 0.999))
+    return {
+        "can_resubmit": wait_seconds == 0,
+        "available_at": available_at,
+        "wait_seconds": wait_seconds,
+    }
 
 
 def _reference_code():
@@ -190,24 +221,33 @@ def submit_application(
             raise ValidationError({"partner_reference_code": "partner_reference_not_available"})
 
     with transaction.atomic():
-        existing = SupportApplication.objects.select_for_update().filter(
-            vacancy=vacancy,
-            candidate=candidate,
-            status__in=[
-                SupportApplication.STATUS_SUBMITTED,
-                SupportApplication.STATUS_UNDER_REVIEW,
-                SupportApplication.STATUS_APPROVED,
-            ],
-        )
-        if existing.exists():
-            raise ValidationError({"application": "open_application_already_exists"})
-        latest_revision = (
-            SupportApplication.objects.filter(vacancy=vacancy, candidate=candidate)
-            .order_by("-revision")
-            .values_list("revision", flat=True)
+        latest_application = (
+            SupportApplication.objects.select_for_update()
+            .filter(vacancy=vacancy, candidate=candidate)
+            .prefetch_related("decision_events")
+            .order_by("-revision", "-submitted_at", "-id")
             .first()
-            or 0
         )
+        if latest_application is not None and latest_application.status in {
+            SupportApplication.STATUS_SUBMITTED,
+            SupportApplication.STATUS_UNDER_REVIEW,
+            SupportApplication.STATUS_APPROVED,
+        }:
+            raise ValidationError({"application": "open_application_already_exists"})
+        if latest_application is not None:
+            resubmission = application_resubmission_state(latest_application)
+            if (
+                latest_application.status == SupportApplication.STATUS_DECLINED
+                and not resubmission["can_resubmit"]
+            ):
+                raise ValidationError(
+                    {
+                        "application": "application_resubmit_cooldown",
+                        "available_at": resubmission["available_at"].isoformat(),
+                        "wait_seconds": resubmission["wait_seconds"],
+                    }
+                )
+        latest_revision = latest_application.revision if latest_application is not None else 0
         applicant_reference = applicant_reference_for(user=candidate)
         application = SupportApplication.objects.create(
             vacancy=vacancy,

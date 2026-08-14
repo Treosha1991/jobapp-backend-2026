@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 from jobs.models import Vacancy
 
 from support.models import (
+    ApplicationDecisionEvent,
     EmploymentExclusivityLock,
     SupportApplication,
     SupportConnection,
@@ -251,6 +252,42 @@ class SupportPipelineTests(TestCase):
         )
         self.assertEqual(queue.status_code, 200, queue.data)
         self.assertEqual(queue.data["results"][0]["questionnaire"]["english_level"], "instructions")
+
+    def test_declined_application_can_be_resubmitted_only_after_one_hour(self):
+        vacancy_id = self.create_published_vacancy()
+        submitted = self.submit_application(vacancy_id)
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        application_id = submitted.data["application"]["id"]
+
+        declined = self.owner_client.post(
+            f"/api/v2/support/applications/{application_id}/decline/",
+            {"note": "Try again later."},
+            format="json",
+        )
+        self.assertEqual(declined.status_code, 200, declined.data)
+
+        mine = self.candidate_client.get("/api/v2/support/applications/mine/")
+        self.assertEqual(mine.status_code, 200, mine.data)
+        latest = mine.data["results"][0]
+        self.assertFalse(latest["can_resubmit"])
+        self.assertIsNotNone(latest["resubmit_available_at"])
+        self.assertGreater(latest["resubmit_wait_seconds"], 0)
+
+        blocked = self.submit_application(vacancy_id)
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        self.assertIn("application_resubmit_cooldown", str(blocked.data))
+
+        ApplicationDecisionEvent.objects.filter(
+            application__public_id=application_id,
+            action=ApplicationDecisionEvent.ACTION_DECLINED,
+        ).update(created_at=timezone.now() - timedelta(minutes=61))
+
+        repeated = self.submit_application(vacancy_id)
+        self.assertEqual(repeated.status_code, 201, repeated.data)
+        self.assertEqual(
+            SupportApplication.objects.filter(candidate=self.candidate).latest("revision").revision,
+            2,
+        )
 
     def test_structured_questionnaire_rejects_sensitive_shortcut_and_missing_conditions(self):
         vacancy_id = self.create_published_vacancy()

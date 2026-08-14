@@ -205,6 +205,7 @@ from .services.registries import (
     create_worksite,
 )
 from .services.pipeline import (
+    application_resubmission_state,
     answer_application_clarification,
     approve_application,
     create_bot_revision,
@@ -319,6 +320,10 @@ def _application_payload(application, *, include_staff_fields=False):
 
 def _candidate_application_payload(application):
     payload = _application_payload(application)
+    resubmission = application_resubmission_state(application)
+    payload["can_resubmit"] = resubmission["can_resubmit"]
+    payload["resubmit_available_at"] = resubmission["available_at"]
+    payload["resubmit_wait_seconds"] = resubmission["wait_seconds"]
     connection = getattr(application, "support_connection", None)
     payload["connection"] = _connection_payload(connection) if connection is not None else None
     latest_decision = (

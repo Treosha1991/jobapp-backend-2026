@@ -29,7 +29,10 @@
   .application-tag { padding:5px 8px; border:1px solid rgba(24,223,103,.27); border-radius:999px; color:#c8f8dc; background:rgba(24,223,103,.08); font-size:11px; font-weight:800; }
   .questionnaire-details { margin-top:11px; padding:10px; border:1px solid rgba(183,224,255,.14); border-radius:13px; }
   .questionnaire-details summary { cursor:pointer; font-weight:900; }
-  .questionnaire-details-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; margin-top:10px; }
+  .questionnaire-sections { display:grid; gap:9px; margin-top:10px; }
+  .questionnaire-section { padding:10px; border:1px solid rgba(183,224,255,.13); border-radius:12px; background:rgba(3,18,30,.18); }
+  .questionnaire-section h3 { margin:0 0 8px; color:#dff4ff; font-size:13px; }
+  .questionnaire-details-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
   .application-pipeline { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:13px; padding-top:13px; border-top:1px solid rgba(183,224,255,.15); }
   .application-form { margin-top:13px; padding-top:13px; border-top:1px solid rgba(183,224,255,.15); }
   .application-form textarea { min-height:68px; }
@@ -58,7 +61,7 @@
       <a class="jh-btn applications-filter{% if status_filter == 'all' %} active{% endif %}" href="{{ filter_base_url }}&filter=all">{{ employer_t.support_applications_all }}</a>
     </nav>
 
-    <form class="questionnaire-filters" method="get">
+    <form class="questionnaire-filters" method="get" autocomplete="off">
       <input type="hidden" name="organization" value="{{ organization.public_id }}">
       <input type="hidden" name="filter" value="{{ status_filter }}">
       <h2>{{ employer_t.support_questionnaire_filters_title }}</h2>
@@ -79,7 +82,7 @@
           <select class="jh-input" name="license"><option value="">{{ employer_t.support_questionnaire_any }}</option><option value="any"{% if questionnaire_filters.license == 'any' %} selected{% endif %}>B+</option><option value="B"{% if questionnaire_filters.license == 'B' %} selected{% endif %}>B</option><option value="C"{% if questionnaire_filters.license == 'C' %} selected{% endif %}>C</option><option value="CE"{% if questionnaire_filters.license == 'CE' %} selected{% endif %}>CE</option></select>
         </label>
         <label>{{ employer_t.support_questionnaire_available_from }}
-          <input class="jh-input" type="date" name="available_by" value="{{ questionnaire_filters.available_by }}">
+          <input class="jh-input" type="date" name="available_by" value="{{ questionnaire_filters.available_by|default:'' }}" autocomplete="off" data-available-by-filter>
         </label>
         <label>{{ employer_t.support_questionnaire_answers }}
           <select class="jh-input" name="complete"><option value="">{{ employer_t.support_questionnaire_any }}</option><option value="yes"{% if questionnaire_filters.complete == 'yes' %} selected{% endif %}>{{ employer_t.support_questionnaire_complete }}</option><option value="no"{% if questionnaire_filters.complete == 'no' %} selected{% endif %}>{{ employer_t.support_questionnaire_incomplete }}</option></select>
@@ -118,10 +121,10 @@
             <div class="application-fact"><span>{{ employer_t.support_applications_subscription }}</span><strong>{% if item.support_access.state == 'active' %}{{ employer_t.support_applications_subscription_active }}{% else %}{{ employer_t.support_applications_subscription_inactive }}{% endif %}</strong></div>
           </div>
           {% if item.questionnaire_tags %}<div class="application-tags">{% for tag in item.questionnaire_tags %}<span class="application-tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
-          {% if item.questionnaire_facts %}
+          {% if item.questionnaire_sections %}
             <details class="questionnaire-details">
               <summary>{{ employer_t.support_questionnaire_answers }} · {% if item.questionnaire_complete %}{{ employer_t.support_questionnaire_complete }}{% else %}{{ employer_t.support_questionnaire_incomplete }}{% endif %}</summary>
-              <div class="questionnaire-details-grid">{% for fact in item.questionnaire_facts %}<div class="application-fact"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div>
+              <div class="questionnaire-sections">{% for section in item.questionnaire_sections %}<section class="questionnaire-section"><h3>{{ section.label }}</h3><div class="questionnaire-details-grid">{% for fact in section.facts %}<div class="application-fact"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div></section>{% endfor %}</div>
             </details>
           {% endif %}
           {% if item.availability_note %}<div class="application-note"><strong>{{ employer_t.support_applications_candidate_note }}:</strong><br>{{ item.availability_note|linebreaksbr }}</div>{% endif %}
@@ -174,4 +177,19 @@
       {% endfor %}
     </div>
   </section>
+{% endblock %}
+
+{% block extra_body %}
+<script>
+  (() => {
+    const clearRestoredDefault = () => {
+      const input = document.querySelector('[data-available-by-filter]');
+      if (!input) return;
+      const value = new URLSearchParams(window.location.search).get('available_by');
+      if (!value) input.value = '';
+    };
+    window.addEventListener('pageshow', clearRestoredDefault);
+    clearRestoredDefault();
+  })();
+</script>
 {% endblock %}

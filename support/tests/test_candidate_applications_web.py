@@ -284,6 +284,13 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.assertContains(matching, "Польская рабочая виза")
         self.assertContains(matching, "Погрузчик")
         self.assertContains(matching, "Ответы анкеты")
+        self.assertContains(matching, "Документы и готовность")
+        self.assertContains(matching, "Опыт работы")
+        self.assertContains(matching, "Языки")
+        self.assertContains(matching, "Права и квалификации")
+        self.assertContains(matching, "Условия и смены")
+        self.assertContains(matching, "Переезд и быт")
+        self.assertContains(matching, 'name="available_by" value=""')
 
         excluded = self.client.get(f"{self.url}&experience=construction")
         self.assertNotContains(excluded, "Pavel Candidate")
