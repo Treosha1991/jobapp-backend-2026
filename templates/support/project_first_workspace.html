@@ -8,7 +8,7 @@
   .pf-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
   .pf-kicker{margin:0 0 6px;color:var(--green);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
   .pf-projects{display:grid;gap:8px;margin-top:18px}
-  .pf-project{display:grid;grid-template-columns:minmax(180px,1.3fr) minmax(220px,1fr) auto auto;gap:12px;align-items:center;padding:11px 13px;border:1px solid var(--line);border-radius:14px;background:rgba(5,22,36,.28)}
+  .pf-project{display:grid;grid-template-columns:minmax(180px,1.2fr) minmax(210px,1fr) minmax(110px,auto) auto auto;gap:12px;align-items:center;padding:11px 13px;border:1px solid var(--line);border-radius:14px;background:rgba(5,22,36,.28)}
   .pf-project strong,.pf-project span{display:block}.pf-project span,.pf-muted{color:var(--muted);font-size:12px}
   .pf-crews{display:grid;gap:14px;margin-top:18px}
   .pf-crew{padding:14px;border:1px solid var(--line);border-radius:18px;background:rgba(5,22,36,.3)}
@@ -123,11 +123,36 @@ document.addEventListener('DOMContentLoaded',function(){
   <div class="pf-head">
     <div>
       <p class="pf-kicker">{{ pf.preview }} · {{ organization.display_name }}</p>
-      <h1 class="jh-title">{% if project %}{{ project.internal_name }}{% else %}{{ pf.title }}{% endif %}</h1>
+      <div class="pf-head-actions" style="justify-content:flex-start"><h1 class="jh-title">{% if project %}{{ project.internal_name }}{% else %}{{ pf.title }}{% endif %}</h1>{% if project and permissions.work %}<button class="jh-btn" type="button" data-pf-dialog-target="pf-project-edit-modal">{{ pf.edit_project }}</button>{% endif %}</div>
       <p class="jh-subtitle">{{ pf.subtitle }}</p>
     </div>
     {% if project %}<div class="pf-head-actions"><a class="jh-btn" href="{{ project_list_url }}">← {{ pf.back }}</a>{% if permissions.work %}<form method="post" data-pf-confirm="{{ pf.confirm_delete_project }}">{% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="project_delete"><button class="jh-btn danger" type="submit">{{ pf.delete_project }}</button></form>{% endif %}</div>{% else %}<div class="pf-head-actions">{% if permissions.work %}<button class="jh-btn primary" type="button" data-pf-dialog-target="pf-project-add-modal">{{ pf.add_project }}</button>{% endif %}<a class="jh-btn" href="{{ reset_plan_url }}">{{ pf.reset_plan }}</a></div>{% endif %}
   </div>
+
+  {% if project and permissions.work %}
+    <dialog class="pf-modal" id="pf-project-edit-modal" aria-labelledby="pf-project-edit-title">
+      <div class="pf-modal-card">
+        <div class="pf-modal-head"><h2 id="pf-project-edit-title">{{ pf.edit_project }} · {{ project.internal_name }}</h2><button class="jh-btn pf-modal-close" type="button" data-pf-modal-close aria-label="{{ employer_t.support_modal_close }}">×</button></div>
+        <form class="pf-project-form" method="post">
+          {% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="project_update"><input type="hidden" name="return_month" value="{{ calendar_month }}">
+          <label class="pf-field"><span>{{ employer_t.support_project_name }}</span><input class="jh-input" name="name" maxlength="160" value="{{ project.internal_name }}" required></label>
+          <label class="pf-field"><span>{{ employer_t.support_project_capacity }}</span><input class="jh-input" name="worker_capacity" type="number" min="{{ project.permanent_worker_count|default:1 }}" max="5000" value="{{ project.worker_capacity }}" required></label>
+          <label class="pf-field"><span>{{ employer_t.support_registry_country }}</span><input class="jh-input" name="country_code" maxlength="2" value="{{ project.worksite.country_code }}" required></label>
+          <label class="pf-field"><span>{{ employer_t.support_registry_city }}</span><input class="jh-input" name="city" maxlength="120" value="{{ project.worksite.city }}" required></label>
+          <label class="pf-field"><span>{{ employer_t.support_registry_postal_code }}</span><input class="jh-input" name="postal_code" maxlength="20" value="{{ project.worksite.postal_code }}"></label>
+          <label class="pf-field"><span>{{ employer_t.support_registry_street }}</span><input class="jh-input" name="street" maxlength="160" value="{{ project.worksite.street }}" required></label>
+          <label class="pf-field"><span>{{ employer_t.support_registry_building }}</span><input class="jh-input" name="building" maxlength="40" value="{{ project.worksite.building }}" required></label>
+          <label class="pf-field"><span>{{ employer_t.support_project_starts_on }}</span><input class="jh-input" name="starts_on" type="date" value="{{ project.starts_on|date:'Y-m-d' }}" required></label>
+          <label class="pf-field"><span>{{ employer_t.support_project_ends_on }}</span><input class="jh-input" name="ends_on" type="date" value="{{ project.ends_on|date:'Y-m-d' }}"></label>
+          <label class="pf-field"><span>{{ employer_t.support_project_contact_name }}</span><input class="jh-input" name="contact_name" maxlength="160" value="{{ project.contact_name }}"></label>
+          <label class="pf-field"><span>{{ employer_t.support_project_contact_phone }}</span><input class="jh-input" name="contact_phone" maxlength="48" value="{{ project.contact_phone }}"></label>
+          <label class="pf-field"><span>{{ employer_t.support_project_contact_email }}</span><input class="jh-input" name="contact_email" type="email" value="{{ project.contact_email }}"></label>
+          <label class="pf-field wide"><span>{{ employer_t.support_project_notes }}</span><textarea class="jh-input" name="instructions" maxlength="5000">{{ project.instructions }}</textarea></label>
+          <div class="pf-project-form-actions"><button class="jh-btn primary" type="submit">{{ pf.save_project }}</button></div>
+        </form>
+      </div>
+    </dialog>
+  {% endif %}
 
   {% if not project %}
     {% if permissions.work %}
@@ -160,6 +185,7 @@ document.addEventListener('DOMContentLoaded',function(){
           <article class="pf-project">
             <div><strong>{{ item.internal_name }}</strong><span>{{ item.worker_visible_name }}</span></div>
             <div><strong>{{ pf.project_address }}</strong><span>{{ item.worksite.city }}, {{ item.worksite.street }} {{ item.worksite.building }}</span></div>
+            <div><strong>{{ item.permanent_worker_count }}/{{ item.worker_capacity }}</strong><span>{{ pf.occupied_places }}{% if item.temporary_worker_count %} · {{ pf.temporary_workers }}: {{ item.temporary_worker_count }}{% endif %}</span></div>
             <div><strong>{{ item.crew_count }}</strong><span>{{ pf.crews }}</span></div>
             <div class="pf-head-actions"><a class="jh-btn primary" href="{% url 'support:project-first-detail' item.public_id %}?organization={{ organization.public_id }}">{{ pf.open }}</a>{% if permissions.work %}<form method="post" data-pf-confirm="{{ pf.confirm_delete_project }}">{% csrf_token %}<input type="hidden" name="organization" value="{{ organization.public_id }}"><input type="hidden" name="action" value="project_delete"><input type="hidden" name="project_id" value="{{ item.public_id }}"><button class="jh-btn danger" type="submit">{{ pf.delete_project }}</button></form>{% endif %}</div>
           </article>

@@ -59,7 +59,7 @@ from .services.project_first_reset import (
     build_project_first_reset_plan,
     execute_project_first_reset,
 )
-from .services.registries import create_project
+from .services.registries import create_project, update_project
 
 
 COPY = {
@@ -145,6 +145,12 @@ COPY = {
         "reset_confirmation_invalid": "Фраза подтверждения не совпадает.",
         "add_project": "Добавить проект",
         "project_created": "Проект создан.",
+        "edit_project": "Редактировать",
+        "save_project": "Сохранить изменения",
+        "project_updated": "Проект обновлён. Опубликованные смены не изменены.",
+        "occupied_places": "Постоянно занято",
+        "temporary_workers": "По датам",
+        "capacity_too_small": "Количество мест нельзя уменьшить ниже числа постоянных работников проекта: {count}.",
         "delete_project": "Удалить проект",
         "delete_crew": "Удалить экипаж",
         "project_deleted": "Проект удалён. Все активные привязки его экипажей освобождены.",
@@ -197,6 +203,10 @@ COPY = {
         "reset_guard_disabled": "The server-side reset guard is disabled.",
         "reset_confirmation_invalid": "The confirmation phrase does not match.",
         "add_project": "Add project", "project_created": "Project created.",
+        "edit_project": "Edit", "save_project": "Save changes",
+        "project_updated": "Project updated. Published shifts were not changed.",
+        "occupied_places": "Permanent", "temporary_workers": "Date-specific",
+        "capacity_too_small": "Capacity cannot be lower than the permanent worker count: {count}.",
         "delete_project": "Delete project", "delete_crew": "Delete crew",
         "project_deleted": "Project deleted. All active crew assignments were released.",
         "crew_deleted": "Crew deleted. Driver, vehicle and passengers were released.",
@@ -247,6 +257,10 @@ COPY = {
         "reset_guard_disabled": "Serwerowa blokada czyszczenia jest wyłączona.",
         "reset_confirmation_invalid": "Fraza potwierdzająca nie pasuje.",
         "add_project": "Dodaj projekt", "project_created": "Projekt został utworzony.",
+        "edit_project": "Edytuj", "save_project": "Zapisz zmiany",
+        "project_updated": "Projekt zaktualizowano. Opublikowane zmiany pozostały bez zmian.",
+        "occupied_places": "Stali pracownicy", "temporary_workers": "Według dat",
+        "capacity_too_small": "Liczba miejsc nie może być mniejsza niż liczba stałych pracowników: {count}.",
         "delete_project": "Usuń projekt", "delete_crew": "Usuń ekipę",
         "project_deleted": "Projekt został usunięty. Wszystkie aktywne przypisania ekip zostały zwolnione.",
         "crew_deleted": "Ekipa została usunięta. Kierowca, samochód i pasażerowie zostali zwolnieni.",
@@ -297,6 +311,10 @@ COPY = {
         "reset_guard_disabled": "Серверний захист очищення вимкнено.",
         "reset_confirmation_invalid": "Фраза підтвердження не збігається.",
         "add_project": "Додати проєкт", "project_created": "Проєкт створено.",
+        "edit_project": "Редагувати", "save_project": "Зберегти зміни",
+        "project_updated": "Проєкт оновлено. Опубліковані зміни не змінено.",
+        "occupied_places": "Постійно зайнято", "temporary_workers": "За датами",
+        "capacity_too_small": "Кількість місць не може бути меншою за кількість постійних працівників: {count}.",
         "delete_project": "Видалити проєкт", "delete_crew": "Видалити екіпаж",
         "project_deleted": "Проєкт видалено. Усі активні прив’язки його екіпажів звільнено.",
         "crew_deleted": "Екіпаж видалено. Водія, автомобіль і пасажирів звільнено.",
@@ -501,6 +519,52 @@ def _validation_message(error, copy=None):
     if detail:
         return str(detail)
     return str(error)
+
+
+def _attach_project_worker_counts(projects):
+    """Attach permanent and date-specific worker totals to project rows.
+
+    Open driver/passenger assignments reserve permanent project places. Daily
+    shift snapshots that are not part of that roster are reported separately;
+    substitute drivers are explicitly excluded because the primary driver's
+    place remains reserved.
+    """
+
+    project_ids = [item.id for item in projects]
+    permanent = {project_id: set() for project_id in project_ids}
+    temporary = {project_id: set() for project_id in project_ids}
+    if not project_ids:
+        return
+    active_crews = Q(crew__state=ProjectCrew.STATE_ACTIVE, crew__project_id__in=project_ids)
+    for project_id, connection_id in ProjectCrewResourceAssignment.objects.filter(
+        active_crews, ends_on__isnull=True
+    ).values_list("crew__project_id", "driver_connection_id"):
+        permanent[project_id].add(connection_id)
+    for project_id, connection_id in ProjectCrewPassenger.objects.filter(
+        active_crews, ends_on__isnull=True
+    ).values_list("crew__project_id", "connection_id"):
+        permanent[project_id].add(connection_id)
+
+    today = timezone.localdate()
+    substitutes = set(
+        ProjectCrewDriverSubstitution.objects.filter(
+            crew__state=ProjectCrew.STATE_ACTIVE,
+            crew__project_id__in=project_ids,
+            state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+            work_date__gte=today,
+        ).values_list("crew__project_id", "substitute_driver_connection_id")
+    )
+    for project_id, connection_id in ProjectCrewShiftMember.objects.filter(
+        shift__crew__state=ProjectCrew.STATE_ACTIVE,
+        shift__crew__project_id__in=project_ids,
+        shift__state=ProjectCrewShift.STATE_PUBLISHED,
+        shift__work_date__gte=today,
+    ).values_list("shift__crew__project_id", "connection_id"):
+        if connection_id not in permanent[project_id] and (project_id, connection_id) not in substitutes:
+            temporary[project_id].add(connection_id)
+    for item in projects:
+        item.permanent_worker_count = len(permanent[item.id])
+        item.temporary_worker_count = len(temporary[item.id])
 
 
 def _selected_organization(request):
@@ -989,6 +1053,31 @@ def _project_context(request, organization, project, *, selected_month):
 
 def _handle_action(request, *, organization, project, copy):
     action = (request.POST.get("action") or "").strip()
+    if action == "project_update":
+        serializer = ProjectCreateSerializer(data={
+            "name": request.POST.get("name", ""),
+            "country_code": request.POST.get("country_code", ""),
+            "city": request.POST.get("city", ""),
+            "postal_code": request.POST.get("postal_code", ""),
+            "street": request.POST.get("street", ""),
+            "building": request.POST.get("building", ""),
+            "worker_capacity": request.POST.get("worker_capacity", ""),
+            "starts_on": request.POST.get("starts_on", ""),
+            "ends_on": request.POST.get("ends_on") or None,
+            "contact_name": request.POST.get("contact_name", ""),
+            "contact_phone": request.POST.get("contact_phone", ""),
+            "contact_email": request.POST.get("contact_email", ""),
+            "instructions": request.POST.get("instructions", ""),
+        })
+        serializer.is_valid(raise_exception=True)
+        _attach_project_worker_counts([project])
+        minimum = project.permanent_worker_count
+        if serializer.validated_data["worker_capacity"] < minimum:
+            raise ValidationError({
+                "message": copy["capacity_too_small"].format(count=minimum),
+            })
+        update_project(actor=request.user, project=project, **serializer.validated_data)
+        return copy["project_updated"]
     if action == "project_delete":
         archive_project(actor=request.user, project=project)
         return copy["project_deleted"]
@@ -1130,6 +1219,7 @@ def project_first_workspace(request, project_public_id=None):
         )
         .order_by("internal_name", "id")
     )
+    _attach_project_worker_counts(projects)
     project = None
     if project_public_id is None and request.method == "POST":
         try:
@@ -1181,6 +1271,7 @@ def project_first_workspace(request, project_public_id=None):
             public_id=project_public_id,
             is_active=True,
         )
+        _attach_project_worker_counts([project])
         if request.method == "POST":
             try:
                 success = _handle_action(

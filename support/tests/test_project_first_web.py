@@ -298,6 +298,85 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertEqual(project.worksite.city, "Dronten")
         self.assertIn(str(project.public_id), response["Location"])
 
+    def test_project_rows_separate_permanent_and_date_specific_workers(self):
+        crew = self._create_crew()
+        ProjectCrewPassenger.objects.create(
+            crew=crew,
+            connection=self.passenger,
+            starts_on=timezone.localdate(),
+            created_by=self.owner,
+        )
+        shift = ProjectCrewShift.objects.create(
+            crew=crew,
+            work_date=timezone.localdate() + timedelta(days=2),
+            starts_at=timezone.now() + timedelta(days=2),
+            ends_at=timezone.now() + timedelta(days=2, hours=8),
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=shift,
+            connection=self.second_driver,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            created_by=self.owner,
+        )
+
+        response = self.client.get(self._list_url())
+
+        project = next(item for item in response.context["projects"] if item.pk == self.project.pk)
+        self.assertEqual(project.permanent_worker_count, 2)
+        self.assertEqual(project.temporary_worker_count, 1)
+        self.assertContains(response, "2/12")
+
+    def test_project_edit_preserves_shifts_and_rejects_capacity_below_permanent_roster(self):
+        crew = self._create_crew()
+        ProjectCrewPassenger.objects.create(
+            crew=crew,
+            connection=self.passenger,
+            starts_on=timezone.localdate(),
+            created_by=self.owner,
+        )
+        shift = ProjectCrewShift.objects.create(
+            crew=crew,
+            work_date=timezone.localdate() + timedelta(days=3),
+            starts_at=timezone.now() + timedelta(days=3),
+            ends_at=timezone.now() + timedelta(days=3, hours=8),
+            created_by=self.owner,
+        )
+        payload = {
+            "organization": str(self.organization.public_id),
+            "action": "project_update",
+            "name": "Updated preview project",
+            "worker_capacity": "1",
+            "country_code": "NL",
+            "city": "Dronten",
+            "postal_code": "8251AA",
+            "street": "Updatedlaan",
+            "building": "9",
+            "starts_on": "2026-08-01",
+            "ends_on": "",
+            "contact_name": "Updated contact",
+            "contact_phone": "+31611111111",
+            "contact_email": "updated@example.com",
+            "instructions": "Updated instructions",
+        }
+
+        response = self.client.post(self._detail_url(), payload)
+        self.project.refresh_from_db()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.project.worker_capacity, 12)
+        self.assertEqual(self.project.internal_name, "Preview project")
+        self.assertTrue(ProjectCrewShift.objects.filter(pk=shift.pk).exists())
+
+        payload["worker_capacity"] = "5"
+        response = self.client.post(self._detail_url(), payload)
+        self.project.refresh_from_db()
+        self.worksite.refresh_from_db()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.project.worker_capacity, 5)
+        self.assertEqual(self.project.internal_name, "Updated preview project")
+        self.assertEqual(self.worksite.city, "Dronten")
+        self.assertTrue(ProjectCrewShift.objects.filter(pk=shift.pk).exists())
+
     def test_owner_deletes_crew_and_releases_all_active_assignments(self):
         crew = self._create_crew()
         self.client.post(
