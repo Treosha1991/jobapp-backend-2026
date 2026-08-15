@@ -4131,8 +4131,8 @@ TRANSLATIONS["uk"].update({
 # submitted by people who are already working.  Keep every employer-facing
 # label in the same four-language set used by the rest of Support.
 TRANSLATIONS["ru"].update({
-    "support_nav_applications": "Заявки кандидатов",
-    "support_nav_requests": "Запросы работников",
+    "support_nav_applications": "Заявки",
+    "support_nav_requests": "Запросы",
     "support_application_approved": "Одобрена",
     "support_application_declined": "Отклонена",
     "support_application_cancelled": "Отменена",
@@ -4216,8 +4216,8 @@ TRANSLATIONS["ru"].update({
     "support_application_event_cancelled": "Заявка отменена",
 })
 TRANSLATIONS["en"].update({
-    "support_nav_applications": "Candidate applications",
-    "support_nav_requests": "Worker requests",
+    "support_nav_applications": "Applications",
+    "support_nav_requests": "Requests",
     "support_application_approved": "Approved",
     "support_application_declined": "Declined",
     "support_application_cancelled": "Cancelled",
@@ -4301,8 +4301,8 @@ TRANSLATIONS["en"].update({
     "support_application_event_cancelled": "Application cancelled",
 })
 TRANSLATIONS["pl"].update({
-    "support_nav_applications": "Zgłoszenia kandydatów",
-    "support_nav_requests": "Wnioski pracowników",
+    "support_nav_applications": "Zgłoszenia",
+    "support_nav_requests": "Wnioski",
     "support_application_approved": "Zatwierdzone",
     "support_application_declined": "Odrzucone",
     "support_application_cancelled": "Anulowane",
@@ -4386,8 +4386,8 @@ TRANSLATIONS["pl"].update({
     "support_application_event_cancelled": "Zgłoszenie anulowane",
 })
 TRANSLATIONS["uk"].update({
-    "support_nav_applications": "Заявки кандидатів",
-    "support_nav_requests": "Запити працівників",
+    "support_nav_applications": "Заявки",
+    "support_nav_requests": "Запити",
     "support_application_approved": "Схвалено",
     "support_application_declined": "Відхилено",
     "support_application_cancelled": "Скасовано",

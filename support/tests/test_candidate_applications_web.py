@@ -93,7 +93,7 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.assertEqual(opened.status_code, 200)
         self.assertContains(opened, "Pavel Candidate")
         self.assertContains(opened, "Заявки кандидатов")
-        self.assertContains(opened, "Запросы работников")
+        self.assertContains(opened, "Запросы")
 
         clarified = self.post_action(
             {
