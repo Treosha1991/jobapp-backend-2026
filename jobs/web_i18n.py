@@ -4581,3 +4581,71 @@ TRANSLATIONS["ru"]["support_menu_time"] = "Табель"
 TRANSLATIONS["en"]["support_menu_time"] = "Timesheet"
 TRANSLATIONS["pl"]["support_menu_time"] = "Ewidencja czasu"
 TRANSLATIONS["uk"]["support_menu_time"] = "Табель"
+
+# Candidate intake and the long document/visa wait share one workspace.  Keep
+# this block complete in all four languages: missing employer text must never
+# degrade to question marks on the live site.
+TRANSLATIONS["ru"].update({
+    "support_applications_title": "Заявки и оформление",
+    "support_applications_to_documents": "Начать оформление",
+    "support_stage_documents_stage": "Ожидает оформления",
+    "support_candidate_workspace_tabs": "Разделы кандидатов",
+    "support_candidate_tab_applications": "Заявки",
+    "support_candidate_tab_processing": "Оформление",
+    "support_processing_notice": "Здесь находятся одобренные кандидаты, которым готовят приглашение, документы или визу. Они ещё не входят в общий список работников.",
+    "support_processing_since": "В оформлении с",
+    "support_processing_manager": "Менеджер",
+    "support_processing_open_application": "Открыть анкету",
+    "support_processing_no_document_requests": "Запросы документов ещё не создавались.",
+    "support_processing_manage_documents": "Запросы документов",
+    "support_processing_close": "Закрыть оформление",
+    "support_processing_empty": "Кандидатов на оформлении пока нет.",
+})
+TRANSLATIONS["en"].update({
+    "support_applications_title": "Applications and onboarding",
+    "support_applications_to_documents": "Start onboarding",
+    "support_stage_documents_stage": "Awaiting onboarding",
+    "support_candidate_workspace_tabs": "Candidate sections",
+    "support_candidate_tab_applications": "Applications",
+    "support_candidate_tab_processing": "Onboarding",
+    "support_processing_notice": "Approved candidates waiting for an invitation, documents, or a visa are shown here. They are not yet included in the worker list.",
+    "support_processing_since": "Onboarding since",
+    "support_processing_manager": "Manager",
+    "support_processing_open_application": "Open questionnaire",
+    "support_processing_no_document_requests": "No document requests have been created yet.",
+    "support_processing_manage_documents": "Document requests",
+    "support_processing_close": "Close onboarding",
+    "support_processing_empty": "No candidates are awaiting onboarding.",
+})
+TRANSLATIONS["pl"].update({
+    "support_applications_title": "Zgłoszenia i formalności",
+    "support_applications_to_documents": "Rozpocznij formalności",
+    "support_stage_documents_stage": "Oczekuje na formalności",
+    "support_candidate_workspace_tabs": "Sekcje kandydatów",
+    "support_candidate_tab_applications": "Zgłoszenia",
+    "support_candidate_tab_processing": "Formalności",
+    "support_processing_notice": "Tutaj są zatwierdzeni kandydaci oczekujący na zaproszenie, dokumenty lub wizę. Nie są jeszcze widoczni na liście pracowników.",
+    "support_processing_since": "W formalnościach od",
+    "support_processing_manager": "Menedżer",
+    "support_processing_open_application": "Otwórz ankietę",
+    "support_processing_no_document_requests": "Nie utworzono jeszcze próśb o dokumenty.",
+    "support_processing_manage_documents": "Prośby o dokumenty",
+    "support_processing_close": "Zamknij formalności",
+    "support_processing_empty": "Brak kandydatów oczekujących na formalności.",
+})
+TRANSLATIONS["uk"].update({
+    "support_applications_title": "Заявки та оформлення",
+    "support_applications_to_documents": "Почати оформлення",
+    "support_stage_documents_stage": "Очікує оформлення",
+    "support_candidate_workspace_tabs": "Розділи кандидатів",
+    "support_candidate_tab_applications": "Заявки",
+    "support_candidate_tab_processing": "Оформлення",
+    "support_processing_notice": "Тут показані схвалені кандидати, які очікують запрошення, документів або візи. Вони ще не входять до загального списку працівників.",
+    "support_processing_since": "На оформленні з",
+    "support_processing_manager": "Менеджер",
+    "support_processing_open_application": "Відкрити анкету",
+    "support_processing_no_document_requests": "Запити документів ще не створювалися.",
+    "support_processing_manage_documents": "Запити документів",
+    "support_processing_close": "Закрити оформлення",
+    "support_processing_empty": "Кандидатів на оформленні поки немає.",
+})

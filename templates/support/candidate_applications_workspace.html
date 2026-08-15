@@ -8,6 +8,15 @@
   .applications-kicker { margin:0 0 6px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.1em; text-transform:uppercase; }
   .applications-note { margin:15px 0; padding:12px 14px; border:1px solid rgba(110,199,255,.28); border-radius:14px; color:#ccecff; background:rgba(110,199,255,.07); line-height:1.45; }
   .applications-filters { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+  .applications-primary-tabs { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 8px; padding-bottom:12px; border-bottom:1px solid rgba(183,224,255,.15); }
+  .applications-primary-tabs .jh-btn { display:inline-flex; align-items:center; gap:7px; }
+  .applications-count { min-width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; padding:0 7px; border-radius:999px; background:rgba(255,255,255,.1); font-size:11px; }
+  .processing-list { display:grid; gap:12px; margin-top:15px; }
+  .processing-card { padding:15px; border:1px solid rgba(255,211,106,.25); border-radius:17px; background:linear-gradient(135deg,rgba(255,211,106,.055),rgba(5,22,36,.28)); }
+  .processing-meta { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; color:var(--muted); font-size:12px; }
+  .processing-documents { display:grid; gap:7px; margin-top:11px; }
+  .processing-document { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; padding:9px 10px; border:1px solid rgba(183,224,255,.13); border-radius:12px; background:rgba(3,18,30,.22); }
+  .processing-document p { margin:3px 0 0; color:var(--muted); font-size:11px; }
   .applications-filter { text-decoration:none; }
   .applications-filter.active { border-color:rgba(24,223,103,.7); background:rgba(24,223,103,.14); color:#bafbd2; }
   .questionnaire-filters { margin:12px 0 18px; padding:12px; border:1px solid rgba(183,224,255,.16); border-radius:15px; background:rgba(3,18,30,.22); }
@@ -52,6 +61,61 @@
     <p class="applications-kicker">JobHub Support · {{ organization.display_name }}</p>
     <h1 class="jh-title">{{ employer_t.support_applications_title }}</h1>
     <p class="jh-subtitle">{{ employer_t.support_applications_subtitle }}</p>
+
+    <nav class="applications-primary-tabs" aria-label="{{ employer_t.support_candidate_workspace_tabs }}">
+      <a class="jh-btn{% if workspace_view == 'applications' %} primary{% endif %}" href="{{ applications_tab_url }}">{{ employer_t.support_candidate_tab_applications }}</a>
+      <a class="jh-btn{% if workspace_view == 'processing' %} primary{% endif %}" href="{{ processing_tab_url }}">{{ employer_t.support_candidate_tab_processing }} <span class="applications-count">{{ processing_count }}</span></a>
+    </nav>
+
+    {% if workspace_view == 'processing' %}
+      <div class="applications-note">{{ employer_t.support_processing_notice }}</div>
+      <div class="processing-list">
+        {% for connection in processing_connections %}
+          <article class="processing-card">
+            <div class="application-head">
+              <div>
+                <h2>{{ connection.candidate_display_name }}</h2>
+                <p>{{ connection.vacancy.internal_title }}</p>
+              </div>
+              <span class="jh-status warning">{{ connection.stage_label }}</span>
+            </div>
+            <div class="processing-meta">
+              <span>{{ employer_t.support_processing_since }}: {{ connection.processing_started_at|date:'d.m.Y H:i' }}</span>
+              {% if connection.assigned_manager %}<span>· {{ employer_t.support_processing_manager }}: {{ connection.assigned_manager.user.get_full_name|default:connection.assigned_manager.user.username }}</span>{% endif %}
+              <span>· {{ employer_t.support_documents_code }}: {% if connection.latest_document_package %}{{ connection.latest_document_package.account_reference.reference_code }}{% else %}—{% endif %}</span>
+            </div>
+
+            <details class="questionnaire-details">
+              <summary>{{ employer_t.support_processing_open_application }}</summary>
+              {% if connection.application_record.questionnaire_tags %}<div class="application-tags">{% for tag in connection.application_record.questionnaire_tags %}<span class="application-tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
+              <div class="questionnaire-sections">{% for section in connection.application_record.questionnaire_sections %}<section class="questionnaire-section"><h3>{{ section.label }}</h3><div class="questionnaire-details-grid">{% for fact in section.facts %}<div class="application-fact"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div></section>{% endfor %}</div>
+            </details>
+
+            <div class="processing-documents">
+              {% for package in connection.document_packages %}
+                <div class="processing-document">
+                  <div><strong>{{ package.requested_items_label|default:employer_t.support_documents_title }}</strong><p>{{ package.recipient_email }} · {{ package.account_reference.reference_code }} · {{ package.updated_at|date:'d.m.Y H:i' }}</p></div>
+                  <span class="jh-status {% if package.status == 'completed' %}success{% elif package.status == 'needs_correction' %}warning{% else %}info{% endif %}">{{ package.status_label }}</span>
+                </div>
+              {% empty %}<div class="application-empty">{{ employer_t.support_processing_no_document_requests }}</div>{% endfor %}
+            </div>
+
+            <div class="jh-actions" style="margin-top:12px">
+              {% if connection.chat_url %}<a class="jh-btn" href="{{ connection.chat_url }}">{{ employer_t.support_applications_open_chat }}</a>{% endif %}
+              {% if permissions.document_request %}<a class="jh-btn" href="{{ connection.documents_url }}">{{ employer_t.support_processing_manage_documents }}</a>{% endif %}
+              <form method="post" class="jh-actions">
+                {% csrf_token %}
+                <input type="hidden" name="connection_id" value="{{ connection.public_id }}">
+                <input type="hidden" name="filter" value="approved">
+                <input type="hidden" name="view" value="processing">
+                <button class="jh-btn primary" name="action" value="connection_coordinator" type="submit">{{ employer_t.support_applications_to_coordinator }}</button>
+                <button class="jh-btn danger" name="action" value="connection_close" type="submit">{{ employer_t.support_processing_close }}</button>
+              </form>
+            </div>
+          </article>
+        {% empty %}<div class="application-empty">{{ employer_t.support_processing_empty }}</div>{% endfor %}
+      </div>
+    {% else %}
     <div class="applications-note">{{ employer_t.support_applications_notice }}</div>
 
     <nav class="applications-filters" aria-label="{{ employer_t.support_applications_filters }}">
@@ -63,6 +127,7 @@
 
     <form class="questionnaire-filters" method="get" autocomplete="off">
       <input type="hidden" name="organization" value="{{ organization.public_id }}">
+      <input type="hidden" name="view" value="applications">
       <input type="hidden" name="filter" value="{{ status_filter }}">
       <h2>{{ employer_t.support_questionnaire_filters_title }}</h2>
       <div class="questionnaire-filter-grid">
@@ -141,6 +206,7 @@
                 {% csrf_token %}
                 <input type="hidden" name="connection_id" value="{{ item.connection_record.public_id }}">
                 <input type="hidden" name="filter" value="{{ status_filter }}">
+                <input type="hidden" name="view" value="applications">
                 {% if item.may_move_to_documents %}<button class="jh-btn primary" name="action" value="connection_documents" type="submit">{{ employer_t.support_applications_to_documents }}</button>{% endif %}
                 {% if item.may_move_to_coordinator %}<button class="jh-btn primary" name="action" value="connection_coordinator" type="submit">{{ employer_t.support_applications_to_coordinator }}</button>{% endif %}
                 {% if item.may_move_to_active_worker %}<button class="jh-btn primary" name="action" value="connection_active_worker" type="submit">{{ employer_t.support_applications_to_active }}</button>{% endif %}
@@ -153,6 +219,7 @@
               {% csrf_token %}
               <input type="hidden" name="application_id" value="{{ item.public_id }}">
               <input type="hidden" name="filter" value="{{ status_filter }}">
+              <input type="hidden" name="view" value="applications">
               <label class="jh-field"><span>{{ employer_t.support_applications_manager_note }}</span><textarea class="jh-input" name="note" maxlength="500" placeholder="{{ employer_t.support_applications_note_hint }}"></textarea></label>
               <div class="jh-actions">
                 <button class="jh-btn" name="action" value="application_clarify" type="submit">{{ employer_t.support_applications_clarify }}</button>
@@ -176,6 +243,7 @@
         <div class="application-empty">{{ employer_t.support_applications_empty }}</div>
       {% endfor %}
     </div>
+    {% endif %}
   </section>
 {% endblock %}
 

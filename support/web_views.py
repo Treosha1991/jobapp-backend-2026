@@ -223,11 +223,12 @@ def workspace_home(request):
     return render(request, "support/workspace.html", snapshot)
 
 
-def _candidate_applications_redirect(organization, *, status_filter):
+def _candidate_applications_redirect(organization, *, status_filter, workspace_view="applications"):
     query = urlencode(
         {
             "organization": organization.public_id,
             "filter": status_filter,
+            "view": workspace_view,
         }
     )
     return redirect(f"{reverse('support:candidate-applications')}?{query}")
@@ -239,6 +240,7 @@ def _candidate_application_operation(request, *, snapshot):
     organization = snapshot["organization"]
     action = (request.POST.get("action") or "").strip()
     selected_filter = request.POST.get("filter") or snapshot["status_filter"]
+    selected_view = request.POST.get("view") or snapshot["workspace_view"]
     try:
         if action in {"application_clarify", "application_approve", "application_decline"}:
             application = get_object_or_404(
@@ -314,6 +316,7 @@ def _candidate_application_operation(request, *, snapshot):
     return _candidate_applications_redirect(
         organization,
         status_filter=selected_filter,
+        workspace_view=selected_view,
     )
 
 
@@ -344,12 +347,26 @@ def candidate_applications_workspace(request):
         status_filter=request.GET.get("filter") or "open",
         questionnaire_filters=questionnaire_filters,
         sort=request.GET.get("sort") or "newest",
+        workspace_view=request.GET.get("view") or "applications",
     )
     if request.method == "POST":
         return _candidate_application_operation(request, snapshot=snapshot)
 
     page_language = get_lang(request)
-    for item in snapshot["applications"]:
+    application_items = list(snapshot["applications"])
+    known_application_ids = {item.id for item in application_items}
+    for connection in snapshot["processing_connections"]:
+        connection.application.connection_record = connection
+        connection.application.manager_conversation = connection.manager_conversation
+        connection.application.is_open = False
+        connection.application.may_move_to_documents = False
+        connection.application.may_move_to_coordinator = True
+        connection.application.may_move_to_active_worker = False
+        if connection.application_id not in known_application_ids:
+            application_items.append(connection.application)
+            known_application_ids.add(connection.application_id)
+
+    for item in application_items:
         item.status_label = tr(request, f"support_application_{item.status}")
         item.language_label = item.preferred_language.upper()
         answers = item.questionnaire_answers or {}
@@ -386,7 +403,10 @@ def candidate_applications_workspace(request):
                     request,
                     f"support_stage_{event.next_stage}",
                 )
-            if snapshot["permissions"]["workers"] and item.connection_record.stage in {
+            if (
+                snapshot["permissions"]["workers"]
+                or snapshot["permissions"]["document_request"]
+            ) and item.connection_record.stage in {
                 SupportConnection.STAGE_DOCUMENTS,
                 SupportConnection.STAGE_COORDINATOR,
                 SupportConnection.STAGE_ACTIVE_WORKER,
@@ -401,11 +421,56 @@ def candidate_applications_workspace(request):
                 kwargs={"conversation_public_id": item.manager_conversation.public_id},
             )
 
+    document_status_labels = {
+        DocumentRequestPackage.STATUS_REQUESTED: tr(request, "support_documents_status_requested"),
+        DocumentRequestPackage.STATUS_SENT_TO_EMPLOYER: tr(request, "support_documents_status_sent"),
+        DocumentRequestPackage.STATUS_NEEDS_CORRECTION: tr(request, "support_documents_status_correction"),
+        DocumentRequestPackage.STATUS_COMPLETED: tr(request, "support_documents_status_completed"),
+        DocumentRequestPackage.STATUS_NOT_REQUIRED: tr(request, "support_documents_status_not_required"),
+        DocumentRequestPackage.STATUS_CANCELLED: tr(request, "support_documents_status_cancelled"),
+    }
+    for connection in snapshot["processing_connections"]:
+        connection.application_record = connection.application
+        connection.stage_label = tr(request, f"support_stage_{connection.stage}")
+        connection.chat_url = (
+            reverse(
+                "support:conversation-detail",
+                kwargs={"conversation_public_id": connection.manager_conversation.public_id},
+            )
+            if connection.manager_conversation is not None
+            else None
+        )
+        connection.documents_url = (
+            reverse(
+                "support:worker-card",
+                kwargs={"connection_public_id": connection.public_id},
+            )
+            + "?"
+            + urlencode({"documents": "1", "organization": snapshot["organization"].public_id})
+            + "#documents"
+        )
+        for package in connection.document_packages:
+            labels = []
+            for requested_item in package.requested_items:
+                item_type = (requested_item.get("type") or "").strip()
+                if item_type == "custom":
+                    labels.append((requested_item.get("custom_label") or "").strip())
+                else:
+                    labels.append(tr(request, f"support_document_{item_type}"))
+            package.requested_items_label = ", ".join(label for label in labels if label)
+            package.status_label = document_status_labels[package.status]
+
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
     snapshot["filter_base_url"] = (
-        f"{reverse('support:candidate-applications')}?organization={snapshot['organization'].public_id}"
+        f"{reverse('support:candidate-applications')}?organization={snapshot['organization'].public_id}&view=applications"
+    )
+    snapshot["applications_tab_url"] = (
+        f"{reverse('support:candidate-applications')}?organization={snapshot['organization'].public_id}&view=applications"
+    )
+    snapshot["processing_tab_url"] = (
+        f"{reverse('support:candidate-applications')}?organization={snapshot['organization'].public_id}&view=processing"
     )
     snapshot["questionnaire_filter_options"] = {
         "legal_statuses": [
@@ -711,6 +776,7 @@ def _worker_card_redirect(
     site=None,
     transport_template=None,
     transport_crew=None,
+    documents=False,
 ):
     """Return to the same focused worker tab after a safe POST operation."""
 
@@ -727,6 +793,8 @@ def _worker_card_redirect(
         query["transport_template"] = transport_template
     if tab == "work_transport" and transport_crew:
         query["transport_crew"] = transport_crew
+    if documents:
+        query["documents"] = "1"
     base_url = reverse(
         "support:worker-card",
         kwargs={"connection_public_id": connection.public_id},
@@ -1907,6 +1975,7 @@ def _worker_card_operation(request, *, snapshot):
         site=request.POST.get("return_site"),
         transport_template=request.POST.get("return_transport_template"),
         transport_crew=request.POST.get("return_transport_crew"),
+        documents=request.POST.get("return_documents") == "1",
     )
 
 
@@ -1961,9 +2030,24 @@ def worker_card(request, connection_public_id):
         request,
         f"support_stage_{snapshot['connection'].stage}",
     )
-    snapshot["workspace_url"] = (
-        f"{reverse('support:workers')}?organization={snapshot['organization'].public_id}"
-    )
+    snapshot["open_documents"] = request.GET.get("documents") == "1"
+    if (
+        snapshot["open_documents"]
+        and snapshot["connection"].stage == SupportConnection.STAGE_DOCUMENTS
+    ):
+        snapshot["workspace_url"] = (
+            f"{reverse('support:candidate-applications')}?"
+            + urlencode(
+                {
+                    "organization": snapshot["organization"].public_id,
+                    "view": "processing",
+                }
+            )
+        )
+    else:
+        snapshot["workspace_url"] = (
+            f"{reverse('support:workers')}?organization={snapshot['organization'].public_id}"
+        )
     requested_tab = (request.GET.get("tab") or "work_transport").strip()
     if requested_tab in {"company", "transport"}:
         requested_tab = "work_transport"

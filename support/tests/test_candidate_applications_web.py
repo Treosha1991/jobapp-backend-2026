@@ -92,7 +92,7 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         opened = self.client.get(self.url)
         self.assertEqual(opened.status_code, 200)
         self.assertContains(opened, "Pavel Candidate")
-        self.assertContains(opened, "Заявки кандидатов")
+        self.assertContains(opened, "Заявки и оформление")
         self.assertContains(opened, "Запросы")
 
         clarified = self.post_action(
@@ -152,7 +152,14 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         )
         workers_page = self.client.get(workers_url)
         self.assertEqual(workers_page.status_code, 200)
-        self.assertContains(workers_page, "Pavel Candidate")
+        self.assertNotContains(workers_page, "Pavel Candidate")
+
+        processing_page = self.client.get(f"{self.url}&view=processing")
+        self.assertEqual(processing_page.status_code, 200)
+        self.assertContains(processing_page, "Оформление")
+        self.assertContains(processing_page, "Pavel Candidate")
+        self.assertContains(processing_page, "Ожидает оформления")
+        self.assertContains(processing_page, "Запросы документов")
 
         coordinator = self.post_action(
             {
@@ -164,6 +171,9 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.assertEqual(coordinator.status_code, 200)
         connection.refresh_from_db()
         self.assertEqual(connection.stage, SupportConnection.STAGE_COORDINATOR)
+
+        coordinator_workers_page = self.client.get(workers_url)
+        self.assertContains(coordinator_workers_page, "Pavel Candidate")
 
         active = self.post_action(
             {

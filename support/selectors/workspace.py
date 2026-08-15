@@ -81,6 +81,7 @@ def candidate_applications_snapshot(
     status_filter="open",
     questionnaire_filters=None,
     sort="newest",
+    workspace_view="applications",
 ):
     """Return the employer candidate queue and the approved hand-off pipeline.
 
@@ -97,6 +98,10 @@ def candidate_applications_snapshot(
     permissions = _permissions_for(user=user, organization=organization)
     if not permissions["pipeline"]:
         raise Http404("support_candidate_applications_not_found")
+
+    normalized_view = (workspace_view or "applications").strip()
+    if normalized_view not in {"applications", "processing"}:
+        raise Http404("support_candidate_applications_invalid_view")
 
     supported_filters = {
         "open": (
@@ -144,11 +149,38 @@ def candidate_applications_snapshot(
     elif normalized_sort == "name":
         applications.sort(key=lambda item: _display_name(item.candidate).casefold())
 
+    processing_connections = list(
+        SupportConnection.objects.filter(
+            organization=organization,
+            is_archived=False,
+            stage=SupportConnection.STAGE_DOCUMENTS,
+        )
+        .select_related(
+            "candidate",
+            "vacancy",
+            "application",
+            "assigned_manager__user",
+        )
+        .prefetch_related(
+            "stage_events",
+            Prefetch(
+                "document_request_packages",
+                queryset=DocumentRequestPackage.objects.select_related(
+                    "account_reference",
+                    "created_by",
+                    "reviewed_by",
+                ).order_by("-updated_at", "-id"),
+            ),
+        )
+        .order_by("-updated_at", "-id")
+    )
+
     connection_ids = [
         item.support_connection.id
         for item in applications
         if hasattr(item, "support_connection")
     ]
+    connection_ids.extend(item.id for item in processing_connections)
     conversations_by_connection = {
         item.connection_id: item
         for item in SupportConversation.objects.filter(
@@ -192,6 +224,22 @@ def candidate_applications_snapshot(
             and item.connection_record.stage == SupportConnection.STAGE_COORDINATOR
         )
 
+    for connection in processing_connections:
+        connection.candidate_display_name = _display_name(connection.candidate)
+        connection.manager_conversation = conversations_by_connection.get(connection.id)
+        connection.document_packages = list(connection.document_request_packages.all())
+        connection.latest_document_package = (
+            connection.document_packages[0] if connection.document_packages else None
+        )
+        connection.processing_started_at = next(
+            (
+                event.created_at
+                for event in reversed(list(connection.stage_events.all()))
+                if event.next_stage == SupportConnection.STAGE_DOCUMENTS
+            ),
+            connection.updated_at,
+        )
+
     return {
         "organization": organization,
         "membership": membership,
@@ -201,6 +249,9 @@ def candidate_applications_snapshot(
         "questionnaire_filters": questionnaire_filters,
         "application_sort": normalized_sort,
         "applications": applications,
+        "workspace_view": normalized_view,
+        "processing_connections": processing_connections,
+        "processing_count": len(processing_connections),
     }
 
 
@@ -451,7 +502,6 @@ def workspace_snapshot(*, user, organization_public_id=None, worker_limit=8):
                 SupportConnection.objects.filter(
                     is_archived=False,
                     stage__in=(
-                        SupportConnection.STAGE_DOCUMENTS,
                         SupportConnection.STAGE_COORDINATOR,
                         SupportConnection.STAGE_ACTIVE_WORKER,
                     ),

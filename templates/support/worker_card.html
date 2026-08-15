@@ -482,7 +482,7 @@
     {% if not can_operate %}<div class="worker-warning">{{ employer_t.support_worker_not_ready }}</div>{% endif %}
 
     {% if permissions.document_request %}
-      <details class="worker-documents">
+      <details class="worker-documents" id="documents"{% if open_documents %} open{% endif %}>
         <summary>{{ employer_t.support_documents_title }}</summary>
         <div class="worker-documents-content">
           <p class="jh-subtitle">{{ employer_t.support_documents_text }}</p>
@@ -492,7 +492,7 @@
               <div class="worker-status"><span class="jh-status {% if item.status == 'completed' %}success{% elif item.status == 'needs_correction' %}warning{% endif %}">{{ item.status_label }}</span></div>
             </article>
           {% empty %}<div class="worker-empty">{{ employer_t.support_documents_no_items }}</div>{% endfor %}
-          <form class="worker-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="document_package_create"><input type="hidden" name="return_tab" value="{{ active_tab }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="return_site" value="{% if selected_housing_site %}{{ selected_housing_site.public_id }}{% endif %}">
+          <form class="worker-form" method="post">{% csrf_token %}<input type="hidden" name="action" value="document_package_create"><input type="hidden" name="return_documents" value="1"><input type="hidden" name="return_tab" value="{{ active_tab }}"><input type="hidden" name="return_month" value="{{ calendar_month }}"><input type="hidden" name="return_site" value="{% if selected_housing_site %}{{ selected_housing_site.public_id }}{% endif %}">
             <h3>{{ employer_t.support_documents_create }}</h3><p>{{ employer_t.support_documents_types }}</p>
             <div class="worker-form-grid">
               <label><input type="checkbox" name="document_type" value="passport"> {{ employer_t.support_document_passport }}</label><label><input type="checkbox" name="document_type" value="visa"> {{ employer_t.support_document_visa }}</label><label><input type="checkbox" name="document_type" value="residence_permit"> {{ employer_t.support_document_residence_permit }}</label><label><input type="checkbox" name="document_type" value="pesel"> {{ employer_t.support_document_pesel }}</label><label><input type="checkbox" name="document_type" value="bsn"> {{ employer_t.support_document_bsn }}</label><label><input type="checkbox" name="document_type" value="bank_account"> {{ employer_t.support_document_bank_account }}</label><label><input type="checkbox" name="document_type" value="driving_license"> {{ employer_t.support_document_driving_license }}</label><label><input type="checkbox" name="document_type" value="custom"> {{ employer_t.support_documents_custom }}</label>
