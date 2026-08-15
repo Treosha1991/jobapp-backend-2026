@@ -25,6 +25,7 @@ from support.models import (
 from support.permission_codes import (
     SCHEDULE_MANAGE,
     TIME_EDIT,
+    TIME_EXPORT,
     TIME_REVIEW,
     TIME_VIEW,
     WORKER_VIEW,
@@ -632,37 +633,22 @@ class TimekeepingTests(TestCase):
         self.client.force_login(self.accountant)
         opened = self.client.get(screen_url)
         self.assertEqual(opened.status_code, 200)
-        self.assertContains(opened, "Time and schedule")
+        self.assertContains(opened, "Employee timesheet")
         self.assertContains(opened, "Ihor Hours")
+        self.assertNotContains(opened, 'value="scheduled_shift_draft"')
 
-        created = self.client.post(
-            screen_url,
-            {
-                "action": "scheduled_shift_draft",
-                "date_from": work_date.isoformat(),
-                "date_to": work_date.isoformat(),
-                "connection_id": str(self.connection.public_id),
-                "work_date": work_date.isoformat(),
-                "starts_at": self._iso(start),
-                "ends_at": self._iso(end),
-                "break_minutes": "15",
-                "worker_label": "Morning shift",
-            },
+        shift = create_scheduled_shift(
+            actor=self.accountant,
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=start,
+            ends_at=end,
+            break_minutes=15,
+            worker_label="Morning shift",
         )
-        self.assertEqual(created.status_code, 302)
-        shift = ScheduledWorkShift.objects.get(connection=self.connection, work_date=work_date)
         self.assertEqual(shift.state, ScheduledWorkShift.STATE_DRAFT)
-
-        published = self.client.post(
-            screen_url,
-            {
-                "action": "scheduled_shift_publish",
-                "date_from": work_date.isoformat(),
-                "date_to": work_date.isoformat(),
-                "shift_id": str(shift.public_id),
-            },
-        )
-        self.assertEqual(published.status_code, 302)
+        publish_scheduled_shift(actor=self.accountant, shift=shift)
         shift.refresh_from_db()
         self.assertEqual(shift.state, ScheduledWorkShift.STATE_PUBLISHED)
 
@@ -699,3 +685,63 @@ class TimekeepingTests(TestCase):
             WorkTimeEntry.objects.get(public_id=entry_id).status,
             WorkTimeEntry.STATUS_CONFIRMED,
         )
+
+    def test_weekly_timesheet_bulk_confirm_and_csv_export(self):
+        grant_permission(
+            actor=self.owner,
+            organization=self.organization,
+            membership=self.accountant_membership,
+            permission_code=TIME_EXPORT,
+        )
+        starts_at = (timezone.now() - timedelta(days=1)).replace(
+            hour=6, minute=0, second=0, microsecond=0
+        )
+        ends_at = starts_at + timedelta(hours=8)
+        work_date = timezone.localtime(starts_at).date()
+        shift = create_scheduled_shift(
+            actor=self.accountant,
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=30,
+            worker_label="Export shift",
+        )
+        publish_scheduled_shift(actor=self.accountant, shift=shift)
+        submitted = self.worker_client.post(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "time-entries/mine/submit/",
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(starts_at),
+                "ended_at": self._iso(ends_at),
+                "break_minutes": 30,
+            },
+            format="json",
+        )
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        entry_id = submitted.data["time_entry"]["id"]
+        screen_url = (
+            f"/employer/support/time/?organization={self.organization.public_id}"
+            f"&date_from={work_date.isoformat()}&date_to={work_date.isoformat()}"
+        )
+        self.client.force_login(self.accountant)
+        bulk = self.client.post(
+            screen_url,
+            {
+                "action": "time_entries_confirm_bulk",
+                "date_from": work_date.isoformat(),
+                "date_to": work_date.isoformat(),
+                "entry_ids": [entry_id],
+            },
+        )
+        self.assertEqual(bulk.status_code, 302)
+        self.assertEqual(
+            WorkTimeEntry.objects.get(public_id=entry_id).status,
+            WorkTimeEntry.STATUS_CONFIRMED,
+        )
+        exported = self.client.get(f"{screen_url}&export=csv")
+        self.assertEqual(exported.status_code, 200)
+        self.assertIn("text/csv", exported["Content-Type"])
+        self.assertIn("Ihor Hours", exported.content.decode("utf-8-sig"))

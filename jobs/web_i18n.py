@@ -1003,6 +1003,125 @@ TRANSLATIONS["uk"].update({
     "phone_verify_send_failed": "Не вдалося надіслати код. Перевірте номер або спробуйте пізніше.",
 })
 
+# IMPORTANT: the timesheet is staff-visible in every supported language. Keep
+# these four dictionaries in sync whenever its UI changes.
+TRANSLATIONS["ru"].update({
+    "support_time_workspace_link": "Табель",
+    "support_time_title": "Табель работников",
+    "support_time_subtitle": "Плановые смены, фактические часы и проверка за одну неделю.",
+    "support_time_today": "Сегодня",
+    "support_time_readonly_plan": "Плановый график здесь доступен только для просмотра. Изменяйте смены на странице проекта и экипажа.",
+    "support_time_project": "Проект",
+    "support_time_crew": "Экипаж",
+    "support_time_all": "Все",
+    "support_time_export": "Выгрузить CSV",
+    "support_time_planned": "Запланировано",
+    "support_time_submitted_total": "Внесено работниками",
+    "support_time_waiting": "Ждут проверки",
+    "support_time_discrepancies": "Расхождения",
+    "support_time_confirmed_total": "Подтверждено",
+    "support_time_week_total": "Итого за неделю",
+    "support_time_select": "Выбрать",
+    "support_time_plan_short": "План:",
+    "support_time_fact_short": "Факт:",
+    "support_time_no_plan": "Без плановой смены",
+    "support_time_not_submitted": "Часы не внесены",
+    "support_time_bulk_hint": "Массово подтверждаются только выбранные записи со статусом «На проверке».",
+    "support_time_confirm_selected": "Подтвердить выбранные",
+    "support_time_difference": "Разница с планом",
+    "support_time_minutes_short": "мин",
+    "support_time_history": "История изменений",
+    "support_time_confirmed_by": "Кто подтвердил",
+    "support_time_entries_confirmed_bulk": "Выбранные записи рабочего времени подтверждены.",
+})
+TRANSLATIONS["en"].update({
+    "support_time_workspace_link": "Timesheet",
+    "support_time_title": "Employee timesheet",
+    "support_time_subtitle": "Planned shifts, actual hours, and review for one week.",
+    "support_time_today": "Today",
+    "support_time_readonly_plan": "The planned schedule is read-only here. Change shifts on the project and crew page.",
+    "support_time_project": "Project",
+    "support_time_crew": "Crew",
+    "support_time_all": "All",
+    "support_time_export": "Export CSV",
+    "support_time_planned": "Planned",
+    "support_time_submitted_total": "Entered by workers",
+    "support_time_waiting": "Waiting for review",
+    "support_time_discrepancies": "Discrepancies",
+    "support_time_confirmed_total": "Confirmed",
+    "support_time_week_total": "Week total",
+    "support_time_select": "Select",
+    "support_time_plan_short": "Plan:",
+    "support_time_fact_short": "Actual:",
+    "support_time_no_plan": "No planned shift",
+    "support_time_not_submitted": "Hours not entered",
+    "support_time_bulk_hint": "Only selected entries with the Waiting for review status are confirmed in bulk.",
+    "support_time_confirm_selected": "Confirm selected",
+    "support_time_difference": "Difference from plan",
+    "support_time_minutes_short": "min",
+    "support_time_history": "Change history",
+    "support_time_confirmed_by": "Confirmed by",
+    "support_time_entries_confirmed_bulk": "The selected work-time entries were confirmed.",
+})
+TRANSLATIONS["pl"].update({
+    "support_time_workspace_link": "Ewidencja czasu",
+    "support_time_title": "Ewidencja czasu pracowników",
+    "support_time_subtitle": "Planowane zmiany, faktyczne godziny i weryfikacja za jeden tydzień.",
+    "support_time_today": "Dzisiaj",
+    "support_time_readonly_plan": "Planowany grafik jest tutaj tylko do odczytu. Zmieniaj zmiany na stronie projektu i załogi.",
+    "support_time_project": "Projekt",
+    "support_time_crew": "Załoga",
+    "support_time_all": "Wszystkie",
+    "support_time_export": "Eksportuj CSV",
+    "support_time_planned": "Zaplanowano",
+    "support_time_submitted_total": "Wpisane przez pracowników",
+    "support_time_waiting": "Czekają na sprawdzenie",
+    "support_time_discrepancies": "Rozbieżności",
+    "support_time_confirmed_total": "Potwierdzone",
+    "support_time_week_total": "Suma tygodnia",
+    "support_time_select": "Wybierz",
+    "support_time_plan_short": "Plan:",
+    "support_time_fact_short": "Faktycznie:",
+    "support_time_no_plan": "Brak planowanej zmiany",
+    "support_time_not_submitted": "Nie wpisano godzin",
+    "support_time_bulk_hint": "Zbiorczo potwierdzane są tylko wybrane wpisy oczekujące na sprawdzenie.",
+    "support_time_confirm_selected": "Potwierdź wybrane",
+    "support_time_difference": "Różnica względem planu",
+    "support_time_minutes_short": "min",
+    "support_time_history": "Historia zmian",
+    "support_time_confirmed_by": "Potwierdził(a)",
+    "support_time_entries_confirmed_bulk": "Wybrane wpisy czasu pracy zostały potwierdzone.",
+})
+TRANSLATIONS["uk"].update({
+    "support_time_workspace_link": "Табель",
+    "support_time_title": "Табель працівників",
+    "support_time_subtitle": "Заплановані зміни, фактичні години та перевірка за один тиждень.",
+    "support_time_today": "Сьогодні",
+    "support_time_readonly_plan": "Плановий графік тут доступний лише для перегляду. Змінюйте зміни на сторінці проєкту та екіпажу.",
+    "support_time_project": "Проєкт",
+    "support_time_crew": "Екіпаж",
+    "support_time_all": "Усі",
+    "support_time_export": "Експортувати CSV",
+    "support_time_planned": "Заплановано",
+    "support_time_submitted_total": "Внесено працівниками",
+    "support_time_waiting": "Очікують перевірки",
+    "support_time_discrepancies": "Розбіжності",
+    "support_time_confirmed_total": "Підтверджено",
+    "support_time_week_total": "Разом за тиждень",
+    "support_time_select": "Вибрати",
+    "support_time_plan_short": "План:",
+    "support_time_fact_short": "Факт:",
+    "support_time_no_plan": "Без планової зміни",
+    "support_time_not_submitted": "Години не внесено",
+    "support_time_bulk_hint": "Масово підтверджуються лише вибрані записи зі статусом очікування перевірки.",
+    "support_time_confirm_selected": "Підтвердити вибрані",
+    "support_time_difference": "Різниця з планом",
+    "support_time_minutes_short": "хв",
+    "support_time_history": "Історія змін",
+    "support_time_confirmed_by": "Хто підтвердив",
+    "support_time_entries_confirmed_bulk": "Вибрані записи робочого часу підтверджено.",
+})
+
 
 # IMPORTANT: Housing workspace copy is maintained in all four portal languages.
 # Never add a visible Support label to only one dictionary: missing Cyrillic
@@ -4419,3 +4538,30 @@ TRANSLATIONS["uk"].update({
     "support_questionnaire_shared_room_preference": "Спільна кімната",
     "support_questionnaire_planned_move_in": "Заплановане заселення",
 })
+
+# Final timesheet naming overrides must stay below the legacy time-ledger
+# dictionary so the new weekly interface wins during dictionary construction.
+TRANSLATIONS["ru"].update({
+    "support_time_workspace_link": "Табель",
+    "support_time_title": "Табель работников",
+    "support_time_subtitle": "Плановые смены, фактические часы и проверка за одну неделю.",
+})
+TRANSLATIONS["en"].update({
+    "support_time_workspace_link": "Timesheet",
+    "support_time_title": "Employee timesheet",
+    "support_time_subtitle": "Planned shifts, actual hours, and review for one week.",
+})
+TRANSLATIONS["pl"].update({
+    "support_time_workspace_link": "Ewidencja czasu",
+    "support_time_title": "Ewidencja czasu pracowników",
+    "support_time_subtitle": "Planowane zmiany, faktyczne godziny i weryfikacja za jeden tydzień.",
+})
+TRANSLATIONS["uk"].update({
+    "support_time_workspace_link": "Табель",
+    "support_time_title": "Табель працівників",
+    "support_time_subtitle": "Заплановані зміни, фактичні години та перевірка за один тиждень.",
+})
+TRANSLATIONS["ru"]["support_menu_time"] = "Табель"
+TRANSLATIONS["en"]["support_menu_time"] = "Timesheet"
+TRANSLATIONS["pl"]["support_menu_time"] = "Ewidencja czasu"
+TRANSLATIONS["uk"]["support_menu_time"] = "Табель"

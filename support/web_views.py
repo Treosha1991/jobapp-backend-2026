@@ -1,3 +1,4 @@
+import csv
 import uuid
 from datetime import datetime, timedelta
 from urllib.parse import urlencode, urlsplit
@@ -6,7 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -3082,14 +3083,17 @@ def team_management(request):
     return render(request, "support/team_management.html", snapshot)
 
 
-def _time_redirect(organization, *, date_from, date_to):
-    query = urlencode(
-        {
-            "organization": organization.public_id,
-            "date_from": date_from,
-            "date_to": date_to,
-        }
-    )
+def _time_redirect(organization, *, request, date_from, date_to):
+    query_data = {
+        "organization": organization.public_id,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    for key in ("project", "crew", "worker", "status"):
+        value = (request.POST.get(key) or "").strip()
+        if value:
+            query_data[key] = value
+    query = urlencode(query_data)
     return redirect(f"{reverse('support:time')}?{query}")
 
 
@@ -3100,7 +3104,22 @@ def _time_operation(request, *, snapshot):
     action = (request.POST.get("action") or "").strip()
     selected_date_from = request.POST.get("date_from") or snapshot["date_from"].isoformat()
     selected_date_to = request.POST.get("date_to") or snapshot["date_to"].isoformat()
-    ignored_fields = ("date_from", "date_to")
+    ignored_fields = ("date_from", "date_to", "project", "crew", "worker", "status")
+    visible_entry_ids = {
+        str(entry.public_id)
+        for entry in snapshot["entries"]
+    }
+
+    def visible_entry_or_404():
+        entry_id = (request.POST.get("entry_id") or "").strip()
+        if entry_id not in visible_entry_ids:
+            raise Http404("support_time_entry_not_found")
+        return get_object_or_404(
+            WorkTimeEntry,
+            organization=organization,
+            public_id=entry_id,
+        )
+
     try:
         if action == "scheduled_shift_draft":
             data = _validated_post(
@@ -3147,24 +3166,37 @@ def _time_operation(request, *, snapshot):
             delete_scheduled_shift_draft(actor=request.user, shift=shift)
             message_key = "support_draft_deleted"
         elif action == "time_entry_confirm":
-            entry = get_object_or_404(
-                WorkTimeEntry,
-                organization=organization,
-                public_id=request.POST.get("entry_id"),
-            )
+            entry = visible_entry_or_404()
             confirm_work_time_entry(actor=request.user, entry=entry)
             message_key = "support_time_entry_confirmed"
+        elif action == "time_entries_confirm_bulk":
+            if not snapshot["permissions"]["time_review"]:
+                raise ValueError("time_bulk_confirm_not_allowed")
+            entry_ids = [value for value in request.POST.getlist("entry_ids") if value]
+            selected_entries = list(
+                WorkTimeEntry.objects.filter(
+                    organization=organization,
+                    public_id__in=entry_ids,
+                    status=WorkTimeEntry.STATUS_SUBMITTED,
+                )
+            )
+            if (
+                not entry_ids
+                or not set(entry_ids).issubset(visible_entry_ids)
+                or len(selected_entries) != len(set(entry_ids))
+            ):
+                raise ValueError("time_bulk_confirm_invalid_selection")
+            with transaction.atomic():
+                for selected_entry in selected_entries:
+                    confirm_work_time_entry(actor=request.user, entry=selected_entry)
+            message_key = "support_time_entries_confirmed_bulk"
         elif action == "time_entry_correction":
             data = _validated_post(
                 WorkTimeEntryCorrectionSerializer,
                 request,
                 ignored_fields=ignored_fields + ("entry_id",),
             )
-            entry = get_object_or_404(
-                WorkTimeEntry,
-                organization=organization,
-                public_id=request.POST.get("entry_id"),
-            )
+            entry = visible_entry_or_404()
             request_work_time_correction(
                 actor=request.user,
                 entry=entry,
@@ -3177,11 +3209,7 @@ def _time_operation(request, *, snapshot):
                 request,
                 ignored_fields=ignored_fields + ("entry_id",),
             )
-            entry = get_object_or_404(
-                WorkTimeEntry,
-                organization=organization,
-                public_id=request.POST.get("entry_id"),
-            )
+            entry = visible_entry_or_404()
             edit_work_time_entry(actor=request.user, entry=entry, **data)
             message_key = "support_time_entry_edited"
         else:
@@ -3192,9 +3220,58 @@ def _time_operation(request, *, snapshot):
         messages.success(request, tr(request, message_key))
     return _time_redirect(
         organization,
+        request=request,
         date_from=selected_date_from,
         date_to=selected_date_to,
     )
+
+
+def _timekeeping_csv(request, snapshot):
+    if not snapshot["permissions"]["time_export"]:
+        raise Http404("support_time_export_not_found")
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = (
+        f'attachment; filename="jobhub-timesheet-{snapshot["date_from"]}.csv"'
+    )
+    response.write("\ufeff")
+    writer = csv.writer(response, delimiter=";")
+    writer.writerow([
+        tr(request, "support_time_worker"),
+        tr(request, "support_time_project"),
+        tr(request, "support_time_crew"),
+        tr(request, "support_time_work_date"),
+        tr(request, "support_time_planned"),
+        tr(request, "support_time_actual"),
+        tr(request, "support_time_break"),
+        tr(request, "support_time_total_minutes"),
+        tr(request, "support_time_total_decimal"),
+        tr(request, "support_time_status"),
+        tr(request, "support_time_confirmed_by"),
+    ])
+    export_all = request.GET.get("export_scope") == "all"
+    for entry in snapshot["entries"]:
+        if not export_all and entry.status != WorkTimeEntry.STATUS_CONFIRMED:
+            continue
+        writer.writerow([
+            entry.worker_display_name,
+            entry.project_label,
+            entry.crew_label,
+            entry.work_date.isoformat(),
+            _time_range_label(entry.scheduled_shift) if entry.scheduled_shift else "",
+            f"{timezone.localtime(entry.started_at):%H:%M}-{timezone.localtime(entry.ended_at):%H:%M}",
+            entry.break_minutes,
+            entry.worked_minutes,
+            entry.decimal_hours_label,
+            tr(request, f"support_time_status_{entry.status}"),
+            entry.confirmed_by.get_username() if entry.confirmed_by else "",
+        ])
+    return response
+
+
+def _time_range_label(shift):
+    starts_at = getattr(shift, "starts_at", None) or shift.started_at
+    ends_at = getattr(shift, "ends_at", None) or shift.ended_at
+    return f"{timezone.localtime(starts_at):%H:%M}-{timezone.localtime(ends_at):%H:%M}"
 
 
 @login_required(login_url="employer:login")
@@ -3204,19 +3281,69 @@ def timekeeping_workspace(request):
     snapshot = timekeeping_snapshot(
         user=request.user,
         organization_public_id=request.GET.get("organization"),
+        anchor=request.GET.get("anchor"),
         date_from=request.GET.get("date_from"),
         date_to=request.GET.get("date_to"),
+        project_id=request.GET.get("project"),
+        crew_id=request.GET.get("crew"),
+        worker_id=request.GET.get("worker"),
+        status_filter=request.GET.get("status"),
     )
     if request.method == "POST":
         return _time_operation(request, snapshot=snapshot)
+    if request.GET.get("export") == "csv":
+        return _timekeeping_csv(request, snapshot)
+    conversation_by_connection = {
+        item.connection_id: item
+        for item in SupportConversation.objects.filter(
+            organization=snapshot["organization"],
+            connection_id__in=[entry.connection_id for entry in snapshot["entries"]],
+            kind=SupportConversation.KIND_MANAGER,
+            state=SupportConversation.STATE_ACTIVE,
+            members__user=request.user,
+            members__left_at__isnull=True,
+        ).distinct()
+    }
     for entry in snapshot["entries"]:
         entry.status_label = tr(request, f"support_time_status_{entry.status}")
         entry.worker_url = reverse(
             "support:worker-card",
             kwargs={"connection_public_id": entry.connection.public_id},
         )
-    for shift in snapshot["scheduled_shifts"]:
-        shift.state_label = tr(request, f"support_worker_state_{shift.state}")
+        conversation = conversation_by_connection.get(entry.connection_id)
+        entry.conversation_url = (
+            reverse(
+                "support:conversation-detail",
+                kwargs={"conversation_public_id": conversation.public_id},
+            )
+            if conversation
+            else ""
+        )
+        entry.actual_range_label = _time_range_label(entry)
+        entry.planned_range_label = (
+            _time_range_label(entry.scheduled_shift) if entry.scheduled_shift else "—"
+        )
+        for revision in entry.revisions.all():
+            revision.status_label = tr(
+                request, f"support_time_status_{revision.status_after}"
+            )
+            revision.actor_label = revision.actor.get_username() if revision.actor else "—"
+    for row in snapshot["worker_rows"]:
+        row.worker_url = reverse(
+            "support:worker-card",
+            kwargs={"connection_public_id": row.worker.public_id},
+        )
+        for cell in row.cells:
+            for shift in cell.shifts:
+                shift.range_label = _time_range_label(shift)
+            if cell.entry:
+                cell.entry.status_label = tr(
+                    request, f"support_time_status_{cell.entry.status}"
+                )
+    snapshot["status_filter_choices"] = [
+        (value, tr(request, f"support_time_status_{value}"))
+        for value, _label in snapshot["status_choices"]
+    ]
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )

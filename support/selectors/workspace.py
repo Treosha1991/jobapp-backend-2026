@@ -56,6 +56,7 @@ from support.permission_codes import (
     PIPELINE_REVIEW,
     SCHEDULE_MANAGE,
     TIME_EDIT,
+    TIME_EXPORT,
     TIME_REVIEW,
     TIME_VIEW,
     TRANSPORT_MANAGE,
@@ -298,6 +299,9 @@ def _permissions_for(*, user, organization):
         ),
         "time_edit": has_permission(
             user=user, organization=organization, permission_code=TIME_EDIT
+        ),
+        "time_export": has_permission(
+            user=user, organization=organization, permission_code=TIME_EXPORT
         ),
         "request_decide": has_permission(
             user=user, organization=organization, permission_code=REQUEST_DECIDE
@@ -3198,8 +3202,38 @@ def _time_query_date(value, *, fallback, key):
     return parsed
 
 
-def timekeeping_snapshot(*, user, organization_public_id=None, date_from=None, date_to=None):
-    """Return one scope-filtered ledger and schedule workspace for staff."""
+def _time_duration_label(minutes):
+    return f"{minutes // 60}:{minutes % 60:02d}"
+
+
+def _time_project_and_crew(shift):
+    """Resolve the project-first source while keeping old published shifts readable."""
+
+    if shift.project_crew_member_id:
+        crew = shift.project_crew_member.shift.crew
+        return crew.project, crew
+    if shift.crew_id:
+        return shift.crew.project, shift.crew
+    if shift.work_assignment_id:
+        return shift.work_assignment.project, None
+    if shift.schedule_template_id:
+        return shift.schedule_template.project, None
+    return None, None
+
+
+def timekeeping_snapshot(
+    *,
+    user,
+    organization_public_id=None,
+    anchor=None,
+    date_from=None,
+    date_to=None,
+    project_id=None,
+    crew_id=None,
+    worker_id=None,
+    status_filter=None,
+):
+    """Return a scope-filtered weekly planned-versus-actual staff timesheet."""
 
     memberships, membership = _select_membership(
         user=user,
@@ -3211,16 +3245,11 @@ def timekeeping_snapshot(*, user, organization_public_id=None, date_from=None, d
         raise Http404("support_timekeeping_not_found")
 
     today = timezone.localdate()
-    selected_date_from = _time_query_date(
-        date_from,
-        fallback=today - timedelta(days=6),
-        key="date_from",
-    )
-    selected_date_to = _time_query_date(
-        date_to,
-        fallback=today,
-        key="date_to",
-    )
+    selected_anchor = _time_query_date(anchor, fallback=today, key="anchor")
+    default_date_from = selected_anchor - timedelta(days=selected_anchor.weekday())
+    default_date_to = default_date_from + timedelta(days=6)
+    selected_date_from = _time_query_date(date_from, fallback=default_date_from, key="date_from")
+    selected_date_to = _time_query_date(date_to, fallback=default_date_to, key="date_to")
     if (
         selected_date_to < selected_date_from
         or (selected_date_to - selected_date_from).days > 62
@@ -3238,21 +3267,90 @@ def timekeeping_snapshot(*, user, organization_public_id=None, date_from=None, d
             ),
         ),
     )
-    workers = list(
+    all_workers = list(
         allowed_connections.select_related("candidate", "vacancy").order_by(
             "candidate__first_name",
             "candidate__last_name",
             "candidate__username",
         )
     )
-    for worker in workers:
+    for worker in all_workers:
         worker.display_name = _display_name(worker.candidate)
         worker.time_label = f"{worker.display_name} · {worker.vacancy.internal_title}"
 
+    shifts_queryset = (
+        ScheduledWorkShift.objects.filter(
+            organization=organization,
+            connection__in=allowed_connections,
+            work_date__range=(selected_date_from, selected_date_to),
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+        )
+        .select_related(
+            "connection__candidate",
+            "connection__vacancy",
+            "work_assignment__project",
+            "schedule_template__project",
+            "crew__project",
+            "project_crew_member__shift__crew__project",
+        )
+        .order_by("work_date", "starts_at", "id")
+    )
+    all_scheduled_shifts = list(shifts_queryset)
+    project_choices = {}
+    crew_choices = {}
+    for shift in all_scheduled_shifts:
+        project, crew = _time_project_and_crew(shift)
+        shift.project_record = project
+        shift.crew_record = crew
+        shift.project_label = project.internal_name if project else "—"
+        shift.crew_label = (crew.internal_name or shift.project_label) if crew else "—"
+        shift.planned_minutes = max(
+            0,
+            int((shift.ends_at - shift.starts_at).total_seconds() // 60) - shift.break_minutes,
+        )
+        shift.duration_label = _time_duration_label(shift.planned_minutes)
+        if project:
+            project_choices[str(project.public_id)] = project.internal_name
+        if crew:
+            crew_choices[str(crew.public_id)] = crew.internal_name or project.internal_name
+
+    normalized_project_id = (project_id or "").strip()
+    normalized_crew_id = (crew_id or "").strip()
+    normalized_worker_id = (worker_id or "").strip()
+    supported_statuses = {choice[0] for choice in WorkTimeEntry.STATUS_CHOICES}
+    normalized_status = (status_filter or "").strip()
+    if normalized_status not in supported_statuses:
+        normalized_status = ""
+
+    def shift_is_selected(shift):
+        if normalized_project_id and (
+            not shift.project_record
+            or str(shift.project_record.public_id) != normalized_project_id
+        ):
+            return False
+        if normalized_crew_id and (
+            not shift.crew_record or str(shift.crew_record.public_id) != normalized_crew_id
+        ):
+            return False
+        if normalized_worker_id and str(shift.connection.public_id) != normalized_worker_id:
+            return False
+        return True
+
+    scheduled_shifts = [shift for shift in all_scheduled_shifts if shift_is_selected(shift)]
+    selected_connection_ids = (
+        set()
+        if normalized_status
+        else {shift.connection_id for shift in scheduled_shifts}
+    )
+    if normalized_worker_id:
+        selected_connection_ids.update(
+            worker.id for worker in all_workers if str(worker.public_id) == normalized_worker_id
+        )
+
     entries = []
-    totals = {"worked_minutes": 0, "entry_count": 0}
+    totals = {"worked_minutes": 0, "planned_minutes": 0, "entry_count": 0}
     if permissions["time_view"]:
-        entries = list(
+        all_entries = list(
             WorkTimeEntry.objects.filter(
                 organization=organization,
                 connection__in=allowed_connections,
@@ -3263,7 +3361,9 @@ def timekeeping_snapshot(*, user, organization_public_id=None, date_from=None, d
                 "connection__vacancy",
                 "scheduled_shift",
                 "confirmed_by",
+                "last_changed_by",
             )
+            .prefetch_related("revisions__actor")
             .order_by(
                 "-work_date",
                 "connection__candidate__last_name",
@@ -3271,35 +3371,87 @@ def timekeeping_snapshot(*, user, organization_public_id=None, date_from=None, d
                 "id",
             )
         )
+        shift_by_id = {shift.id: shift for shift in all_scheduled_shifts}
+        for entry in all_entries:
+            entry.worker_display_name = _display_name(entry.connection.candidate)
+            entry.duration_label = _time_duration_label(entry.worked_minutes)
+            entry.decimal_hours_label = f"{entry.decimal_hours:.2f}"
+            related_shift = shift_by_id.get(entry.scheduled_shift_id)
+            entry.project_record = related_shift.project_record if related_shift else None
+            entry.crew_record = related_shift.crew_record if related_shift else None
+            entry.project_label = related_shift.project_label if related_shift else "—"
+            entry.crew_label = related_shift.crew_label if related_shift else "—"
+            entry.planned_minutes = related_shift.planned_minutes if related_shift else 0
+            entry.discrepancy_minutes = entry.worked_minutes - entry.planned_minutes
+            entry.has_discrepancy = bool(related_shift and entry.discrepancy_minutes != 0)
+        entries = [
+            entry for entry in all_entries
+            if (not normalized_worker_id or str(entry.connection.public_id) == normalized_worker_id)
+            and (not normalized_status or entry.status == normalized_status)
+            and (
+                not normalized_project_id
+                or (entry.project_record and str(entry.project_record.public_id) == normalized_project_id)
+            )
+            and (
+                not normalized_crew_id
+                or (entry.crew_record and str(entry.crew_record.public_id) == normalized_crew_id)
+            )
+        ]
+        selected_connection_ids.update(entry.connection_id for entry in entries)
         totals = {
             "worked_minutes": sum(item.worked_minutes for item in entries),
             "entry_count": len(entries),
         }
-        for entry in entries:
-            entry.worker_display_name = _display_name(entry.connection.candidate)
-            entry.duration_label = (
-                f"{entry.worked_minutes // 60}:{entry.worked_minutes % 60:02d}"
-            )
-            entry.decimal_hours_label = f"{entry.decimal_hours:.2f}"
 
-    scheduled_shifts = []
-    if permissions["schedule"]:
-        scheduled_shifts = list(
-            ScheduledWorkShift.objects.filter(
-                organization=organization,
-                connection__in=allowed_connections,
-                work_date__range=(selected_date_from, selected_date_to),
-            )
-            .select_related("connection__candidate", "connection__vacancy")
-            .order_by("work_date", "starts_at", "id")
-        )
-        for shift in scheduled_shifts:
-            shift.worker_display_name = _display_name(shift.connection.candidate)
-
-    totals["duration_label"] = (
-        f"{totals['worked_minutes'] // 60}:{totals['worked_minutes'] % 60:02d}"
-    )
+    totals["planned_minutes"] = sum(item.planned_minutes for item in scheduled_shifts)
+    totals["submitted_count"] = sum(item.status == WorkTimeEntry.STATUS_SUBMITTED for item in entries)
+    totals["confirmed_count"] = sum(item.status == WorkTimeEntry.STATUS_CONFIRMED for item in entries)
+    totals["discrepancy_count"] = sum(item.has_discrepancy for item in entries)
+    totals["duration_label"] = _time_duration_label(totals["worked_minutes"])
     totals["decimal_hours_label"] = f"{totals['worked_minutes'] / 60:.2f}"
+    totals["planned_duration_label"] = _time_duration_label(totals["planned_minutes"])
+    totals["planned_decimal_label"] = f"{totals['planned_minutes'] / 60:.2f}"
+
+    week_days = [
+        SimpleNamespace(date=selected_date_from + timedelta(days=offset), weekday=offset)
+        for offset in range((selected_date_to - selected_date_from).days + 1)
+    ]
+    shifts_by_key = {}
+    for shift in scheduled_shifts:
+        shifts_by_key.setdefault((shift.connection_id, shift.work_date), []).append(shift)
+    entries_by_key = {(entry.connection_id, entry.work_date): entry for entry in entries}
+    visible_workers = [worker for worker in all_workers if worker.id in selected_connection_ids]
+    if not normalized_project_id and not normalized_crew_id and not normalized_status:
+        visible_workers = [
+            worker for worker in all_workers
+            if any((worker.id, day.date) in shifts_by_key or (worker.id, day.date) in entries_by_key for day in week_days)
+        ]
+    worker_rows = []
+    for worker in visible_workers:
+        cells = []
+        row_planned = 0
+        row_worked = 0
+        for day in week_days:
+            day_shifts = shifts_by_key.get((worker.id, day.date), [])
+            entry = entries_by_key.get((worker.id, day.date))
+            planned_minutes = sum(shift.planned_minutes for shift in day_shifts)
+            row_planned += planned_minutes
+            row_worked += entry.worked_minutes if entry else 0
+            cells.append(SimpleNamespace(
+                date=day.date,
+                shifts=day_shifts,
+                entry=entry,
+                planned_minutes=planned_minutes,
+                planned_label=_time_duration_label(planned_minutes),
+            ))
+        worker_rows.append(SimpleNamespace(
+            worker=worker,
+            cells=cells,
+            planned_label=_time_duration_label(row_planned),
+            worked_label=_time_duration_label(row_worked),
+            decimal_label=f"{row_worked / 60:.2f}",
+        ))
+
     return {
         "organization": organization,
         "membership": membership,
@@ -3307,8 +3459,20 @@ def timekeeping_snapshot(*, user, organization_public_id=None, date_from=None, d
         "permissions": permissions,
         "date_from": selected_date_from,
         "date_to": selected_date_to,
-        "workers": workers,
+        "workers": all_workers,
+        "worker_rows": worker_rows,
+        "week_days": week_days,
         "entries": entries,
         "scheduled_shifts": scheduled_shifts,
         "totals": totals,
+        "previous_anchor": selected_date_from - timedelta(days=7),
+        "next_anchor": selected_date_from + timedelta(days=7),
+        "today": today,
+        "project_choices": sorted(project_choices.items(), key=lambda item: item[1].casefold()),
+        "crew_choices": sorted(crew_choices.items(), key=lambda item: item[1].casefold()),
+        "selected_project_id": normalized_project_id,
+        "selected_crew_id": normalized_crew_id,
+        "selected_worker_id": normalized_worker_id,
+        "selected_status": normalized_status,
+        "status_choices": WorkTimeEntry.STATUS_CHOICES,
     }
