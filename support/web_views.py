@@ -168,6 +168,7 @@ from .services.project_crews import (
 )
 from .services.conversations import (
     mark_conversation_read,
+    open_manager_conversation_for_staff,
     require_conversation_access,
     send_text_message,
 )
@@ -274,6 +275,7 @@ def _candidate_application_operation(request, *, snapshot):
                 approve_application(actor=request.user, application=application)
                 message_key = "support_applications_approved"
         elif action in {
+            "connection_chat",
             "connection_documents",
             "connection_coordinator",
             "connection_active_worker",
@@ -285,6 +287,17 @@ def _candidate_application_operation(request, *, snapshot):
                 organization=organization,
                 is_archived=False,
             )
+            if action == "connection_chat":
+                conversation, _ = open_manager_conversation_for_staff(
+                    actor=request.user,
+                    connection=connection,
+                )
+                return redirect(
+                    reverse(
+                        "support:conversation-detail",
+                        kwargs={"conversation_public_id": conversation.public_id},
+                    )
+                )
             next_stage = {
                 "connection_documents": SupportConnection.STAGE_DOCUMENTS,
                 "connection_coordinator": SupportConnection.STAGE_COORDINATOR,

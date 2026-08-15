@@ -101,7 +101,7 @@
             </div>
 
             <div class="jh-actions" style="margin-top:12px">
-              {% if connection.chat_url %}<a class="jh-btn" href="{{ connection.chat_url }}">{{ employer_t.support_applications_open_chat }}</a>{% endif %}
+              {% if connection.chat_url %}<a class="jh-btn" href="{{ connection.chat_url }}">{{ employer_t.support_applications_open_chat }}</a>{% else %}<form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.public_id }}"><input type="hidden" name="filter" value="approved"><input type="hidden" name="view" value="processing"><button class="jh-btn" name="action" value="connection_chat" type="submit">{{ employer_t.support_applications_open_chat }}</button></form>{% endif %}
               {% if permissions.document_request %}<a class="jh-btn" href="{{ connection.documents_url }}">{{ employer_t.support_processing_manage_documents }}</a>{% endif %}
               <form method="post" class="jh-actions">
                 {% csrf_token %}

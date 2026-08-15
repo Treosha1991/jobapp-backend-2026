@@ -96,6 +96,65 @@ def open_manager_conversation(*, candidate, connection):
     return conversation, created
 
 
+def open_manager_conversation_for_staff(*, actor, connection):
+    """Create or reopen the approved manager chat from the staff workspace."""
+
+    with transaction.atomic():
+        connection = (
+            SupportConnection.objects.select_for_update()
+            .select_related("organization", "assigned_manager__user")
+            .get(pk=connection.pk)
+        )
+        if connection.is_archived or connection.stage not in {
+            SupportConnection.STAGE_MANAGER,
+            SupportConnection.STAGE_DOCUMENTS,
+        }:
+            raise ValidationError({"connection": "manager_chat_not_available_at_current_stage"})
+        actor_membership = active_membership_for(
+            user=actor,
+            organization=connection.organization,
+        )
+        if actor_membership is None or not has_permission(
+            user=actor,
+            organization=connection.organization,
+            permission_code=CHAT_MANAGE,
+        ):
+            raise PermissionDenied("support_permission_denied")
+        manager_membership = connection.assigned_manager or actor_membership
+        if not manager_membership.is_active:
+            raise ValidationError({"connection": "assigned_manager_not_available"})
+
+        conversation, created = SupportConversation.objects.get_or_create(
+            connection=connection,
+            kind=SupportConversation.KIND_MANAGER,
+            defaults={
+                "organization": connection.organization,
+                "created_by": actor,
+            },
+        )
+        SupportConversationMember.objects.get_or_create(
+            conversation=conversation,
+            user=connection.candidate,
+            defaults={"role": SupportConversationMember.ROLE_WORKER},
+        )
+        SupportConversationMember.objects.get_or_create(
+            conversation=conversation,
+            user=manager_membership.user,
+            defaults={
+                "organization_membership": manager_membership,
+                "role": SupportConversationMember.ROLE_STAFF,
+            },
+        )
+        record_audit_event(
+            organization=connection.organization,
+            actor=actor,
+            action="conversation.manager_opened_by_staff",
+            target=conversation,
+            details={"created": created},
+        )
+    return conversation, created
+
+
 def _active_member_or_denied(*, user, conversation):
     member = SupportConversationMember.objects.filter(
         conversation=conversation,

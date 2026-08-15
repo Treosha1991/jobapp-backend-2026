@@ -4600,6 +4600,7 @@ TRANSLATIONS["ru"].update({
     "support_processing_manage_documents": "Запросы документов",
     "support_processing_close": "Закрыть оформление",
     "support_processing_empty": "Кандидатов на оформлении пока нет.",
+    "support_applications_notice": "Одобрение заявки открывает кандидату связь с менеджером, но не обещает трудоустройство. До передачи координатору кандидат находится во вкладке «Оформление» и не входит в общий список работников.",
 })
 TRANSLATIONS["en"].update({
     "support_applications_title": "Applications and onboarding",
@@ -4616,6 +4617,7 @@ TRANSLATIONS["en"].update({
     "support_processing_manage_documents": "Document requests",
     "support_processing_close": "Close onboarding",
     "support_processing_empty": "No candidates are awaiting onboarding.",
+    "support_applications_notice": "Approving an application opens communication with a manager but does not promise employment. Until hand-off to a coordinator, the candidate remains in Onboarding and is not included in the worker list.",
 })
 TRANSLATIONS["pl"].update({
     "support_applications_title": "Zgłoszenia i formalności",
@@ -4632,6 +4634,7 @@ TRANSLATIONS["pl"].update({
     "support_processing_manage_documents": "Prośby o dokumenty",
     "support_processing_close": "Zamknij formalności",
     "support_processing_empty": "Brak kandydatów oczekujących na formalności.",
+    "support_applications_notice": "Zatwierdzenie zgłoszenia otwiera kontakt z menedżerem, ale nie gwarantuje zatrudnienia. Do przekazania koordynatorowi kandydat pozostaje w zakładce Formalności i nie trafia na listę pracowników.",
 })
 TRANSLATIONS["uk"].update({
     "support_applications_title": "Заявки та оформлення",
@@ -4648,4 +4651,5 @@ TRANSLATIONS["uk"].update({
     "support_processing_manage_documents": "Запити документів",
     "support_processing_close": "Закрити оформлення",
     "support_processing_empty": "Кандидатів на оформленні поки немає.",
+    "support_applications_notice": "Схвалення заявки відкриває зв’язок із менеджером, але не обіцяє працевлаштування. До передачі координатору кандидат залишається у вкладці «Оформлення» і не входить до загального списку працівників.",
 })

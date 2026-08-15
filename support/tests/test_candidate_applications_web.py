@@ -218,6 +218,38 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.assertEqual(self.application.status, SupportApplication.STATUS_DECLINED)
         self.assertContains(declined, "Заявка отклонена.")
 
+    def test_onboarding_tab_can_create_manager_chat(self):
+        self.post_action(
+            {
+                "action": "application_approve",
+                "application_id": self.application.public_id,
+            },
+            status_filter="approved",
+        )
+        connection = self.application.support_connection
+        self.post_action(
+            {
+                "action": "connection_documents",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+
+        processing_page = self.client.get(f"{self.url}&view=processing")
+        self.assertContains(processing_page, "Открыть чат")
+
+        opened_chat = self.post_action(
+            {
+                "action": "connection_chat",
+                "connection_id": connection.public_id,
+                "view": "processing",
+            },
+            status_filter="approved",
+        )
+        self.assertEqual(opened_chat.status_code, 200)
+        self.assertTrue(connection.conversations.filter(archived_at__isnull=True).exists())
+        self.assertIn("/employer/support/conversations/", opened_chat.request["PATH_INFO"])
+
     def test_candidate_can_answer_manager_clarification_once(self):
         self.post_action(
             {
