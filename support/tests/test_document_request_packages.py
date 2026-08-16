@@ -203,3 +203,25 @@ class DocumentRequestPackageTests(TestCase):
         package = DocumentRequestPackage.objects.get()
         self.assertEqual(package.recipient_email, "documents@agency.example")
         self.assertEqual([item["type"] for item in package.requested_items], ["passport", "visa", "custom"])
+
+    def test_worker_card_explains_missing_verified_document_email(self):
+        self.organization.verified_document_email = ""
+        self.organization.save(update_fields=["verified_document_email", "updated_at"])
+        self.client.force_login(self.manager)
+        url = f"/employer/support/workers/{self.connection.public_id}/"
+
+        response = self.client.post(
+            url,
+            {
+                "action": "document_package_create",
+                "document_type": ["passport"],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "The company has no verified document e-mail. Add the company address and try again.",
+        )
+        self.assertFalse(DocumentRequestPackage.objects.exists())

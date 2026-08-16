@@ -34,6 +34,7 @@ DEMO_WORKER_EMAIL = "support-worker@jobhub.test"
 DEMO_COORDINATOR_EMAIL = "support-coordinator@jobhub.test"
 DEMO_CANDIDATE_EMAIL = "support-candidate@jobhub.test"
 DEMO_SECOND_CANDIDATE_EMAIL = "support-candidate-02@jobhub.test"
+DEMO_DOCUMENT_EMAIL = "theeasyexp@gmail.com"
 DEMO_EXTRA_WORKERS = (
     ("support-demo-worker-01@jobhub.test", "Алина", "Бондарь", "coordinator"),
     ("support-demo-worker-02@jobhub.test", "Игорь", "Коваль", "coordinator"),
@@ -205,6 +206,9 @@ class Command(BaseCommand):
                 "created_by": owner,
             },
         )
+        if not organization.verified_document_email.strip():
+            organization.verified_document_email = DEMO_DOCUMENT_EMAIL
+            organization.save(update_fields=["verified_document_email", "updated_at"])
         if created:
             membership = OrganizationMembership.objects.create(
                 organization=organization,

@@ -979,6 +979,19 @@ def _project_operation_error_key(error):
     return "support_project_operation_error"
 
 
+def _document_operation_error_key(error):
+    """Return a precise message for document-request validation failures."""
+
+    detail = str(getattr(error, "detail", error))
+    if "verified_document_email_required" in detail:
+        return "support_documents_error_email_required"
+    if "document_type_required" in detail:
+        return "support_documents_error_type_required"
+    if "document_custom_label_invalid" in detail:
+        return "support_documents_error_custom_label"
+    return _worker_operation_error_key(error)
+
+
 def _worker_card_operation(request, *, snapshot):
     """Create or publish an operational draft through the existing services."""
 
@@ -1968,12 +1981,16 @@ def _worker_card_operation(request, *, snapshot):
             "support_worker_housing_check_out_error"
             if action == "housing_check_out"
             else (
-                _transport_operation_error_key(error)
-                if action == "route_create"
-                or action == "transport_schedule_crew_create"
-                or action == "transport_crew_driver_replace"
-                or action.startswith("transport_schedule_passenger_")
-                else _worker_operation_error_key(error)
+                _document_operation_error_key(error)
+                if action.startswith("document_package_")
+                else (
+                    _transport_operation_error_key(error)
+                    if action == "route_create"
+                    or action == "transport_schedule_crew_create"
+                    or action == "transport_crew_driver_replace"
+                    or action.startswith("transport_schedule_passenger_")
+                    else _worker_operation_error_key(error)
+                )
             )
         )
         messages.error(request, tr(request, message_key))

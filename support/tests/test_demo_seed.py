@@ -7,6 +7,7 @@ from django.test import TestCase
 
 from support.management.commands.seed_support_demo import (
     DEMO_CANDIDATE_EMAIL,
+    DEMO_DOCUMENT_EMAIL,
     DEMO_EXTRA_WORKERS,
     DEMO_OWNER_EMAIL,
     DEMO_SECOND_CANDIDATE_EMAIL,
@@ -18,6 +19,7 @@ from support.models import (
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
+    SupportOrganization,
 )
 
 
@@ -33,6 +35,10 @@ class SupportDemoSeedTests(TestCase):
 
         expected_worker_count = 1 + len(DEMO_EXTRA_WORKERS)
         owner = get_user_model().objects.get(username=DEMO_OWNER_EMAIL)
+        organization = SupportOrganization.objects.get(
+            legal_name="JobHub Support Demo B.V."
+        )
+        self.assertEqual(organization.verified_document_email, DEMO_DOCUMENT_EMAIL)
         self.assertEqual(SupportConnection.objects.count(), expected_worker_count)
         self.assertEqual(SupportConversation.objects.count(), expected_worker_count)
         self.assertEqual(
