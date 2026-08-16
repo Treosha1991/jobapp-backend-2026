@@ -278,6 +278,18 @@ def _candidate_application_operation(request, *, snapshot):
             else:
                 approve_application(actor=request.user, application=application)
                 message_key = "support_applications_approved"
+        elif action.startswith("document_package_"):
+            connection = get_object_or_404(
+                SupportConnection.objects.select_related("organization", "candidate"),
+                public_id=request.POST.get("connection_id"),
+                organization=organization,
+                is_archived=False,
+            )
+            message_key = _perform_document_package_operation(
+                request,
+                organization=organization,
+                connection=connection,
+            )
         elif action in {
             "connection_chat",
             "connection_documents",
@@ -320,7 +332,9 @@ def _candidate_application_operation(request, *, snapshot):
             raise ValueError("candidate_application_operation_unknown")
     except (APIException, ValueError) as error:
         error_text = str(getattr(error, "detail", error))
-        if "candidate_has_active_support_assignment" in error_text:
+        if action.startswith("document_package_"):
+            message_key = _document_operation_error_key(error)
+        elif "candidate_has_active_support_assignment" in error_text:
             message_key = "support_applications_error_already_employed"
         elif "unsupported_connection_transition" in error_text:
             message_key = "support_applications_error_wrong_stage"
@@ -464,15 +478,6 @@ def candidate_applications_workspace(request):
             )
             if connection.manager_conversation is not None
             else None
-        )
-        connection.documents_url = (
-            reverse(
-                "support:worker-card",
-                kwargs={"connection_public_id": connection.public_id},
-            )
-            + "?"
-            + urlencode({"documents": "1", "organization": snapshot["organization"].public_id})
-            + "#documents"
         )
         for package in connection.document_packages:
             labels = []
@@ -992,6 +997,69 @@ def _document_operation_error_key(error):
     return _worker_operation_error_key(error)
 
 
+def _perform_document_package_operation(request, *, organization, connection):
+    """Run the shared document hand-off workflow from any employer workspace."""
+
+    action = (request.POST.get("action") or "").strip()
+    if action == "document_package_create":
+        requested_items = []
+        for document_type in request.POST.getlist("document_type"):
+            normalized = document_type.strip()
+            if normalized not in DOCUMENT_TYPE_KEYS:
+                raise ValueError("document_type_invalid")
+            custom_label = ""
+            if normalized == "custom":
+                custom_label = (request.POST.get("custom_document_label") or "").strip()
+                if not custom_label or len(custom_label) > 80:
+                    raise ValueError("document_custom_label_invalid")
+            item = {"type": normalized, "custom_label": custom_label}
+            if item not in requested_items:
+                requested_items.append(item)
+        if not requested_items:
+            raise ValueError("document_type_required")
+        create_document_request_package(
+            actor=request.user,
+            organization=organization,
+            connection=connection,
+            requested_items=requested_items,
+            additional_instructions=(request.POST.get("additional_instructions") or "").strip(),
+        )
+        return "support_document_package_created"
+
+    if action in {
+        "document_package_correction",
+        "document_package_complete",
+        "document_package_not_required",
+        "document_package_cancel",
+    }:
+        package = get_object_or_404(
+            DocumentRequestPackage.objects.filter(
+                organization=organization,
+                connection=connection,
+            ).select_related("organization", "connection"),
+            public_id=request.POST.get("package_id"),
+        )
+        data = _validated_post(
+            DocumentRequestPackageDecisionSerializer,
+            request,
+            ignored_fields=("package_id", "connection_id", "filter", "view"),
+        )
+        review_document_request_package(
+            actor=request.user,
+            package=package,
+            action={
+                "document_package_correction": "needs_correction",
+                "document_package_complete": "complete",
+                "document_package_not_required": "not_required",
+                "document_package_cancel": "cancel",
+            }[action],
+            manager_note=data["manager_note"],
+        )
+        return "support_document_package_updated"
+
+    raise ValueError("document_package_operation_unknown")
+
+
 def _worker_card_operation(request, *, snapshot):
     """Create or publish an operational draft through the existing services."""
 
@@ -1006,55 +1074,13 @@ def _worker_card_operation(request, *, snapshot):
                 has_driving_license=request.POST.get("has_driving_license") == "1",
             )
             messages.success(request, tr(request, "support_worker_driving_license_updated"))
-        elif action == "document_package_create":
-            requested_items = []
-            for document_type in request.POST.getlist("document_type"):
-                normalized = document_type.strip()
-                if normalized not in DOCUMENT_TYPE_KEYS:
-                    raise ValueError("document_type_invalid")
-                custom_label = ""
-                if normalized == "custom":
-                    custom_label = (request.POST.get("custom_document_label") or "").strip()
-                    if not custom_label or len(custom_label) > 80:
-                        raise ValueError("document_custom_label_invalid")
-                item = {"type": normalized, "custom_label": custom_label}
-                if item not in requested_items:
-                    requested_items.append(item)
-            if not requested_items:
-                raise ValueError("document_type_required")
-            create_document_request_package(
-                actor=request.user,
+        elif action.startswith("document_package_"):
+            message_key = _perform_document_package_operation(
+                request,
                 organization=organization,
                 connection=connection,
-                requested_items=requested_items,
-                additional_instructions=(request.POST.get("additional_instructions") or "").strip(),
             )
-            messages.success(request, tr(request, "support_document_package_created"))
-        elif action in {"document_package_correction", "document_package_complete", "document_package_not_required", "document_package_cancel"}:
-            package = get_object_or_404(
-                DocumentRequestPackage.objects.filter(
-                    organization=organization,
-                    connection=connection,
-                ).select_related("organization", "connection"),
-                public_id=request.POST.get("package_id"),
-            )
-            data = _validated_post(
-                DocumentRequestPackageDecisionSerializer,
-                request,
-                ignored_fields=("package_id",),
-            )
-            review_document_request_package(
-                actor=request.user,
-                package=package,
-                action={
-                    "document_package_correction": "needs_correction",
-                    "document_package_complete": "complete",
-                    "document_package_not_required": "not_required",
-                    "document_package_cancel": "cancel",
-                }[action],
-                manager_note=data["manager_note"],
-            )
-            messages.success(request, tr(request, "support_document_package_updated"))
+            messages.success(request, tr(request, message_key))
         elif action == "housing_draft":
             place = get_object_or_404(
                 HousingPlace.objects.filter(room__site__organization=organization),

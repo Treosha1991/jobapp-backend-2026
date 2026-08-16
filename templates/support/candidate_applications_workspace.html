@@ -17,6 +17,19 @@
   .processing-documents { display:grid; gap:7px; margin-top:11px; }
   .processing-document { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; padding:9px 10px; border:1px solid rgba(183,224,255,.13); border-radius:12px; background:rgba(3,18,30,.22); }
   .processing-document p { margin:3px 0 0; color:var(--muted); font-size:11px; }
+  .processing-document-dialog { width:min(860px,calc(100vw - 24px)); max-height:min(88vh,820px); padding:0; color:var(--text); border:1px solid rgba(110,199,255,.35); border-radius:20px; background:#0b2d49; box-shadow:0 28px 80px rgba(0,0,0,.55); }
+  .processing-document-dialog::backdrop { background:rgba(1,12,22,.78); backdrop-filter:blur(3px); }
+  .processing-document-dialog-inner { padding:18px; overflow:auto; max-height:min(88vh,820px); }
+  .processing-document-dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:12px; }
+  .processing-document-dialog-head h2 { margin:0; font-size:22px; }
+  .processing-document-dialog-head p { margin:5px 0 0; color:var(--muted); }
+  .processing-document-dialog-close { min-width:38px; min-height:38px; padding:4px 10px; font-size:22px; line-height:1; }
+  .processing-document-dialog .processing-documents { margin:12px 0; }
+  .processing-document-form { margin-top:14px; padding:14px; border:1px solid rgba(24,223,103,.24); border-radius:15px; background:rgba(24,223,103,.05); }
+  .processing-document-form h3 { margin:0 0 7px; }
+  .processing-document-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 14px; margin-top:10px; }
+  .processing-document-form-grid > label:not(.jh-field) { display:flex; align-items:center; gap:7px; min-height:30px; }
+  .processing-document-form-grid .jh-field { min-width:0; }
   .applications-filter { text-decoration:none; }
   .applications-filter.active { border-color:rgba(24,223,103,.7); background:rgba(24,223,103,.14); color:#bafbd2; }
   .questionnaire-filters { margin:12px 0 18px; padding:12px; border:1px solid rgba(183,224,255,.16); border-radius:15px; background:rgba(3,18,30,.22); }
@@ -51,7 +64,7 @@
   .application-empty { padding:32px 18px; border:1px dashed var(--line); border-radius:16px; text-align:center; color:var(--muted); }
   @media (max-width:1000px) { .questionnaire-filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .questionnaire-details-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width:900px) { .application-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-  @media (max-width:620px) { .application-head { grid-template-columns:1fr; } .application-grid,.questionnaire-filter-grid,.questionnaire-details-grid { grid-template-columns:1fr; } }
+  @media (max-width:620px) { .application-head { grid-template-columns:1fr; } .application-grid,.questionnaire-filter-grid,.questionnaire-details-grid,.processing-document-form-grid { grid-template-columns:1fr; } }
 </style>
 {% endblock %}
 
@@ -102,7 +115,7 @@
 
             <div class="jh-actions" style="margin-top:12px">
               {% if connection.chat_url %}<a class="jh-btn" href="{{ connection.chat_url }}">{{ employer_t.support_applications_open_chat }}</a>{% else %}<form method="post">{% csrf_token %}<input type="hidden" name="connection_id" value="{{ connection.public_id }}"><input type="hidden" name="filter" value="approved"><input type="hidden" name="view" value="processing"><button class="jh-btn" name="action" value="connection_chat" type="submit">{{ employer_t.support_applications_open_chat }}</button></form>{% endif %}
-              {% if permissions.document_request %}<a class="jh-btn" href="{{ connection.documents_url }}">{{ employer_t.support_processing_manage_documents }}</a>{% endif %}
+              {% if permissions.document_request %}<button class="jh-btn" type="button" data-document-dialog-open="document-dialog-{{ connection.public_id }}">{{ employer_t.support_processing_manage_documents }}</button>{% endif %}
               <form method="post" class="jh-actions">
                 {% csrf_token %}
                 <input type="hidden" name="connection_id" value="{{ connection.public_id }}">
@@ -112,6 +125,53 @@
                 <button class="jh-btn danger" name="action" value="connection_close" type="submit">{{ employer_t.support_processing_close }}</button>
               </form>
             </div>
+
+            {% if permissions.document_request %}
+              <dialog class="processing-document-dialog" id="document-dialog-{{ connection.public_id }}">
+                <div class="processing-document-dialog-inner">
+                  <div class="processing-document-dialog-head">
+                    <div><h2>{{ employer_t.support_documents_title }} · {{ connection.candidate_display_name }}</h2><p>{{ employer_t.support_documents_text }}</p></div>
+                    <button class="jh-btn processing-document-dialog-close" type="button" data-document-dialog-close aria-label="Close">×</button>
+                  </div>
+
+                  <div class="jh-actions">
+                    {% if connection.chat_url %}<a class="jh-btn" href="{{ connection.chat_url }}">{{ employer_t.support_applications_open_chat }}</a>{% endif %}
+                  </div>
+
+                  <div class="processing-documents">
+                    {% for package in connection.document_packages %}
+                      <div class="processing-document">
+                        <div><strong>{{ package.requested_items_label|default:employer_t.support_documents_title }}</strong><p>{{ employer_t.support_documents_recipient }}: {{ package.recipient_email }}<br>{{ employer_t.support_documents_code }}: {{ package.account_reference.reference_code }} · {{ package.updated_at|date:'d.m.Y H:i' }}{% if package.additional_instructions %}<br>{{ package.additional_instructions }}{% endif %}{% if package.manager_note %}<br>{{ employer_t.support_documents_note }}: {{ package.manager_note }}{% endif %}</p></div>
+                        <span class="jh-status {% if package.status == 'completed' %}success{% elif package.status == 'needs_correction' %}warning{% else %}info{% endif %}">{{ package.status_label }}</span>
+                      </div>
+                    {% empty %}<div class="application-empty">{{ employer_t.support_processing_no_document_requests }}</div>{% endfor %}
+                  </div>
+
+                  <form class="processing-document-form" method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="document_package_create">
+                    <input type="hidden" name="connection_id" value="{{ connection.public_id }}">
+                    <input type="hidden" name="filter" value="approved">
+                    <input type="hidden" name="view" value="processing">
+                    <h3>{{ employer_t.support_documents_create }}</h3>
+                    <p class="jh-subtitle">{{ employer_t.support_documents_types }}</p>
+                    <div class="processing-document-form-grid">
+                      <label><input type="checkbox" name="document_type" value="passport"> {{ employer_t.support_document_passport }}</label>
+                      <label><input type="checkbox" name="document_type" value="visa"> {{ employer_t.support_document_visa }}</label>
+                      <label><input type="checkbox" name="document_type" value="residence_permit"> {{ employer_t.support_document_residence_permit }}</label>
+                      <label><input type="checkbox" name="document_type" value="pesel"> {{ employer_t.support_document_pesel }}</label>
+                      <label><input type="checkbox" name="document_type" value="bsn"> {{ employer_t.support_document_bsn }}</label>
+                      <label><input type="checkbox" name="document_type" value="bank_account"> {{ employer_t.support_document_bank_account }}</label>
+                      <label><input type="checkbox" name="document_type" value="driving_license"> {{ employer_t.support_document_driving_license }}</label>
+                      <label><input type="checkbox" name="document_type" value="custom"> {{ employer_t.support_documents_custom }}</label>
+                      <label class="jh-field"><span>{{ employer_t.support_documents_custom_label }}</span><input class="jh-input" name="custom_document_label" maxlength="80"></label>
+                      <label class="jh-field"><span>{{ employer_t.support_documents_instructions }}</span><input class="jh-input" name="additional_instructions" maxlength="500"></label>
+                    </div>
+                    <div class="jh-actions" style="margin-top:12px"><button class="jh-btn primary" type="submit">{{ employer_t.support_documents_send }}</button></div>
+                  </form>
+                </div>
+              </dialog>
+            {% endif %}
           </article>
         {% empty %}<div class="application-empty">{{ employer_t.support_processing_empty }}</div>{% endfor %}
       </div>
@@ -258,6 +318,20 @@
     };
     window.addEventListener('pageshow', clearRestoredDefault);
     clearRestoredDefault();
+
+    document.querySelectorAll('[data-document-dialog-open]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const dialog = document.getElementById(button.dataset.documentDialogOpen);
+        if (dialog && typeof dialog.showModal === 'function') dialog.showModal();
+      });
+    });
+    document.querySelectorAll('.processing-document-dialog').forEach((dialog) => {
+      const closeButton = dialog.querySelector('[data-document-dialog-close]');
+      if (closeButton) closeButton.addEventListener('click', () => dialog.close());
+      dialog.addEventListener('click', (event) => {
+        if (event.target === dialog) dialog.close();
+      });
+    });
   })();
 </script>
 {% endblock %}

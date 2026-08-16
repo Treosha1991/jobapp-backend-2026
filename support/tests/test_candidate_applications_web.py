@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 
 from support.models import (
     ApplicationDecisionEvent,
+    DocumentRequestPackage,
     SupportAccessGrant,
     SupportApplication,
     SupportConnection,
@@ -254,6 +255,65 @@ class CandidateApplicationsWorkspaceTests(TestCase):
             opened_chat.request["QUERY_STRING"],
             f"organization={self.organization.public_id}",
         )
+
+    def test_onboarding_tab_creates_document_request_without_worker_card(self):
+        self.organization.verified_document_email = "documents@candidate-flow.example"
+        self.organization.save(update_fields=["verified_document_email", "updated_at"])
+        self.post_action(
+            {
+                "action": "application_approve",
+                "application_id": self.application.public_id,
+            },
+            status_filter="approved",
+        )
+        connection = self.application.support_connection
+        self.post_action(
+            {
+                "action": "connection_documents",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+
+        created = self.post_action(
+            {
+                "action": "document_package_create",
+                "connection_id": connection.public_id,
+                "document_type": ["passport", "visa"],
+                "additional_instructions": "Use the account code in the subject.",
+                "view": "processing",
+            },
+            status_filter="approved",
+        )
+
+        self.assertContains(created, "Запрос документов создан")
+        package = DocumentRequestPackage.objects.get(connection=connection)
+        self.assertEqual(package.recipient_email, "documents@candidate-flow.example")
+        self.assertEqual(
+            [item["type"] for item in package.requested_items],
+            ["passport", "visa"],
+        )
+        processing_page = self.client.get(f"{self.url}&view=processing")
+        self.assertContains(processing_page, "Паспорт, Виза")
+        self.assertContains(processing_page, "documents@candidate-flow.example")
+        worker_url = reverse(
+            "support:worker-card",
+            kwargs={"connection_public_id": connection.public_id},
+        )
+        self.assertNotContains(processing_page, worker_url)
+
+        self.post_action(
+            {
+                "action": "connection_coordinator",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+        worker_page = self.client.get(
+            f"{worker_url}?organization={self.organization.public_id}&documents=1"
+        )
+        self.assertContains(worker_page, "Паспорт, Виза")
+        self.assertContains(worker_page, package.account_reference.reference_code)
 
     def test_onboarding_tab_restores_archived_legacy_manager_chat(self):
         self.post_action(
