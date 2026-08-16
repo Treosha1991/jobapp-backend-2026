@@ -303,6 +303,10 @@ class CandidateApplicationsWorkspaceTests(TestCase):
             conversation=conversation,
             body="Первое сообщение",
         )
+        rendered_chat = self.client.get(detail_url)
+        self.assertContains(rendered_chat, 'class="jh-chat-message-menu"')
+        self.assertContains(rendered_chat, 'data-chat-action="reply"')
+        self.assertContains(rendered_chat, "autofocus")
         replied = self.client.post(
             detail_url,
             {
