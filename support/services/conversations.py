@@ -253,6 +253,7 @@ def send_text_message(
     original_language,
     client_message_id,
     reply_to=None,
+    forwarded_from=None,
 ):
     with transaction.atomic():
         conversation = SupportConversation.objects.select_for_update().get(pk=conversation.pk)
@@ -280,6 +281,7 @@ def send_text_message(
                 "body": body.strip(),
                 "original_language": original_language,
                 "reply_to": reply_to,
+                "forwarded_from": forwarded_from,
             },
         )
         if not created and message.sender_id != sender.id:
@@ -317,6 +319,138 @@ def send_text_message(
                     ),
                 )
     return message, created
+
+
+def forward_text_message(*, sender, source_message, recipient, client_message_id):
+    """Copy a Support message into a private in-organization conversation.
+
+    The recipient is resolved server-side from the current organization.  A
+    posted user id can therefore never be used to forward content outside the
+    employer's active staff and worker directory.
+    """
+
+    source_conversation = source_message.conversation
+    organization = source_conversation.organization
+    require_conversation_access(user=sender, conversation=source_conversation)
+    if (
+        recipient.id == sender.id
+        or source_message.deleted_at is not None
+        or source_message.conversation.organization_id != organization.id
+    ):
+        raise ValidationError({"recipient": "support_forward_recipient_not_available"})
+
+    recipient_membership = active_membership_for(
+        user=recipient,
+        organization=organization,
+    )
+    recipient_connection = None
+    if recipient_membership is not None and has_permission(
+        user=recipient,
+        organization=organization,
+        permission_code=CHAT_MANAGE,
+    ):
+        recipient_role = SupportConversationMember.ROLE_STAFF
+    else:
+        recipient_connection = (
+            SupportConnection.objects.filter(
+                organization=organization,
+                candidate=recipient,
+                is_archived=False,
+            )
+            .exclude(stage=SupportConnection.STAGE_CLOSED)
+            .order_by("-updated_at", "-id")
+            .first()
+        )
+        if (
+            recipient_connection is None
+            or support_access_snapshot_for(recipient)["state"] != "active"
+        ):
+            raise PermissionDenied("support_forward_recipient_not_available")
+        recipient_role = SupportConversationMember.ROLE_WORKER
+
+    sender_membership = active_membership_for(
+        user=sender,
+        organization=organization,
+    )
+    if sender_membership is None or not has_permission(
+        user=sender,
+        organization=organization,
+        permission_code=CHAT_MANAGE,
+    ):
+        raise PermissionDenied("support_permission_denied")
+
+    with transaction.atomic():
+        organization.__class__.objects.select_for_update().get(pk=organization.pk)
+        possible_conversations = list(
+            SupportConversation.objects.filter(
+                organization=organization,
+                state=SupportConversation.STATE_ACTIVE,
+                members__user=sender,
+                members__left_at__isnull=True,
+            )
+            .filter(
+                members__user=recipient,
+                members__left_at__isnull=True,
+            )
+            .exclude(kind=SupportConversation.KIND_GROUP)
+            .prefetch_related("members")
+            .distinct()
+            .order_by("-updated_at", "-id")
+        )
+        target_conversation = next(
+            (
+                item
+                for item in possible_conversations
+                if {
+                    member.user_id
+                    for member in item.members.all()
+                    if member.left_at is None
+                }
+                == {sender.id, recipient.id}
+            ),
+            None,
+        )
+        if target_conversation is None:
+            target_conversation = SupportConversation.objects.create(
+                organization=organization,
+                connection=(
+                    recipient_connection
+                    if recipient_role == SupportConversationMember.ROLE_WORKER
+                    else None
+                ),
+                kind=SupportConversation.KIND_JOBHUB,
+                title="",
+                created_by=sender,
+            )
+            SupportConversationMember.objects.bulk_create(
+                [
+                    SupportConversationMember(
+                        conversation=target_conversation,
+                        user=sender,
+                        organization_membership=sender_membership,
+                        role=SupportConversationMember.ROLE_STAFF,
+                    ),
+                    SupportConversationMember(
+                        conversation=target_conversation,
+                        user=recipient,
+                        organization_membership=(
+                            recipient_membership
+                            if recipient_role == SupportConversationMember.ROLE_STAFF
+                            else None
+                        ),
+                        role=recipient_role,
+                    ),
+                ]
+            )
+        message, created = send_text_message(
+            sender=sender,
+            conversation=target_conversation,
+            body=source_message.body,
+            original_language=source_message.original_language,
+            client_message_id=client_message_id,
+            forwarded_from=source_message,
+        )
+    return target_conversation, message, created
 
 
 def mark_conversation_read(*, user, conversation):

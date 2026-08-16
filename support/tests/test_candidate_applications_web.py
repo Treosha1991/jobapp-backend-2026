@@ -19,7 +19,7 @@ from support.models import (
 )
 from support.services.conversations import open_manager_conversation
 from support.services.organizations import activate_organization, create_organization
-from support.services.pipeline import submit_application
+from support.services.pipeline import approve_application, submit_application
 
 
 @override_settings(SUPPORT_FEATURE_ENABLED=True)
@@ -360,6 +360,93 @@ class CandidateApplicationsWorkspaceTests(TestCase):
             ),
             worker_detail.context["counterpart_profile_url"],
         )
+
+    def test_chat_share_forwards_message_to_an_internal_worker(self):
+        self.post_action(
+            {
+                "action": "application_approve",
+                "application_id": self.application.public_id,
+            },
+            status_filter="approved",
+        )
+        source_connection = self.application.support_connection
+        source_conversation, _ = open_manager_conversation(
+            candidate=self.candidate,
+            connection=source_connection,
+        )
+        source_message = SupportMessage.objects.create(
+            conversation=source_conversation,
+            sender=self.candidate,
+            body="Сообщение для внутренней пересылки",
+            original_language=SupportMessage.LANGUAGE_RU,
+        )
+
+        other_candidate = User.objects.create_user(
+            username="candidate-web-share-recipient",
+            email="candidate-web-share-recipient@example.com",
+            password="password",
+            first_name="Anna",
+            last_name="Worker",
+        )
+        SupportAccessGrant.objects.create(
+            user=other_candidate,
+            organization=self.organization,
+            granted_by=self.operator,
+            ends_at=timezone.now() + timedelta(days=30),
+            reason=SupportAccessGrant.REASON_TECHNICAL,
+        )
+        other_application = submit_application(
+            candidate=other_candidate,
+            vacancy=self.vacancy,
+            preferred_language="ru",
+            citizenship_country_code="BY",
+            current_country_code="PL",
+            availability_note="Готова приступить.",
+            partner_reference_code="",
+            consent_version="support-application-v1",
+        )
+        approve_application(actor=self.owner, application=other_application)
+
+        detail_url = (
+            reverse(
+                "support:conversation-detail",
+                kwargs={"conversation_public_id": source_conversation.public_id},
+            )
+            + f"?organization={self.organization.public_id}"
+        )
+        detail = self.client.get(detail_url)
+        self.assertContains(detail, "Переслать внутри JobHub")
+        self.assertContains(detail, "Anna Worker")
+        self.assertContains(detail, 'name="recipient_id"')
+        self.assertNotContains(detail, "navigator.share")
+
+        shared = self.client.post(
+            detail_url,
+            {
+                "action": "share",
+                "message_id": source_message.id,
+                "recipient_id": other_candidate.id,
+            },
+            follow=True,
+        )
+        self.assertEqual(shared.status_code, 200)
+        self.assertContains(shared, "Сообщение переслано: Anna Worker.")
+        target_conversation = (
+            SupportConversation.objects.filter(
+                organization=self.organization,
+                kind=SupportConversation.KIND_JOBHUB,
+                members__user=self.owner,
+            )
+            .filter(members__user=other_candidate)
+            .distinct()
+            .get()
+        )
+        forwarded = SupportMessage.objects.get(
+            conversation=target_conversation,
+            sender=self.owner,
+        )
+        self.assertEqual(forwarded.body, source_message.body)
+        self.assertEqual(forwarded.forwarded_from, source_message)
 
     def test_onboarding_tab_creates_document_request_without_worker_card(self):
         self.organization.verified_document_email = "documents@candidate-flow.example"

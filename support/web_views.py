@@ -22,7 +22,8 @@ from jobs.avatar_utils import avatar_public_url
 from jobs.models import UserBlock
 
 from .feature_flags import is_support_feature_enabled
-from .permissions import worker_connection_queryset_for
+from .permissions import has_permission, worker_connection_queryset_for
+from .permission_codes import CHAT_MANAGE
 from .questionnaire import (
     DURATION_CHOICES,
     EXPERIENCE_SECTORS,
@@ -148,6 +149,7 @@ from .services.pipeline import (
     request_application_clarification,
     transition_connection,
 )
+from .services.entitlements import support_access_snapshot_for
 from .services.documents import (
     DOCUMENT_TYPE_KEYS,
     create_document_request_package,
@@ -177,6 +179,7 @@ from .services.project_crews import (
     restore_worker_schedule_days_off,
 )
 from .services.conversations import (
+    forward_text_message,
     mark_conversation_read,
     open_manager_conversation_for_staff,
     require_conversation_access,
@@ -732,6 +735,59 @@ def _support_chat_candidate_url(*, conversation, organization):
     return reverse("support:candidate-applications") + "?" + urlencode(query)
 
 
+def _support_chat_share_recipients(*, sender, organization):
+    """Return active users from this firm who can receive an internal forward."""
+
+    recipients = {}
+    staff_memberships = (
+        OrganizationMembership.objects.filter(
+            organization=organization,
+            state=OrganizationMembership.STATE_ACTIVE,
+        )
+        .exclude(user=sender)
+        .select_related("user")
+    )
+    for membership in staff_memberships:
+        if has_permission(
+            user=membership.user,
+            organization=organization,
+            permission_code=CHAT_MANAGE,
+        ):
+            recipients[membership.user_id] = {
+                "user": membership.user,
+                "name": _support_chat_display_name(membership.user),
+                "kind": "staff",
+            }
+
+    worker_connections = (
+        SupportConnection.objects.filter(
+            organization=organization,
+            is_archived=False,
+        )
+        .exclude(stage=SupportConnection.STAGE_CLOSED)
+        .exclude(candidate=sender)
+        .select_related("candidate")
+        .order_by("candidate_id", "-updated_at", "-id")
+    )
+    seen_workers = set()
+    for connection in worker_connections:
+        if connection.candidate_id in seen_workers or connection.candidate_id in recipients:
+            continue
+        seen_workers.add(connection.candidate_id)
+        if support_access_snapshot_for(connection.candidate)["state"] != "active":
+            continue
+        recipients[connection.candidate_id] = {
+            "user": connection.candidate,
+            "name": _support_chat_display_name(connection.candidate),
+            "kind": "worker",
+        }
+
+    return sorted(
+        recipients.values(),
+        key=lambda item: (0 if item["kind"] == "staff" else 1, item["name"].casefold()),
+    )
+
+
 @login_required(login_url="employer:login")
 def conversation_detail(request, conversation_public_id):
     """Employer Support chat with the same interaction model as JobHub chat."""
@@ -750,7 +806,12 @@ def conversation_detail(request, conversation_public_id):
             members__left_at__isnull=True,
         )
         .select_related("connection", "connection__candidate", "connection__vacancy")
-        .prefetch_related("members__user", "messages__sender", "messages__reply_to")
+        .prefetch_related(
+            "members__user",
+            "messages__sender",
+            "messages__reply_to",
+            "messages__forwarded_from__sender",
+        )
         .distinct(),
         public_id=conversation_public_id,
     )
@@ -776,6 +837,10 @@ def conversation_detail(request, conversation_public_id):
     blocked_by_other = bool(
         counterpart
         and UserBlock.objects.filter(blocker=counterpart, blocked_user=request.user).exists()
+    )
+    share_recipients = _support_chat_share_recipients(
+        sender=request.user,
+        organization=snapshot["organization"],
     )
     if request.method == "POST":
         action = request.POST.get("action") or "send"
@@ -855,6 +920,47 @@ def conversation_detail(request, conversation_public_id):
                     item.body = body
                     item.edited_at = timezone.now()
                     item.save(update_fields=["body", "edited_at"])
+        elif action == "share":
+            try:
+                message_id = int(request.POST.get("message_id"))
+                recipient_id = int(request.POST.get("recipient_id"))
+            except (TypeError, ValueError):
+                message_id = recipient_id = None
+            source_message = SupportMessage.objects.select_related(
+                "conversation__organization",
+                "sender",
+            ).filter(
+                id=message_id,
+                conversation=conversation,
+                deleted_at__isnull=True,
+            ).first()
+            recipient_option = next(
+                (
+                    item
+                    for item in share_recipients
+                    if item["user"].id == recipient_id
+                ),
+                None,
+            )
+            if source_message is None or recipient_option is None:
+                messages.error(request, tr(request, "chat_share_recipient_missing"))
+            else:
+                try:
+                    forward_text_message(
+                        sender=request.user,
+                        source_message=source_message,
+                        recipient=recipient_option["user"],
+                        client_message_id=uuid.uuid4(),
+                    )
+                except APIException:
+                    messages.error(request, tr(request, "chat_share_error"))
+                else:
+                    messages.success(
+                        request,
+                        tr(request, "chat_share_success").format(
+                            name=recipient_option["name"],
+                        ),
+                    )
         elif action == "report" and counterpart is not None:
             reason = (request.POST.get("reason") or "").strip()
             allowed_reasons = {item[0] for item in SupportConversationReport.REASON_CHOICES}
@@ -901,8 +1007,11 @@ def conversation_detail(request, conversation_public_id):
                     "sender",
                     "reply_to",
                     "reply_to__sender",
+                    "forwarded_from",
+                    "forwarded_from__sender",
                 ).order_by("created_at", "id")[:500]
             ),
+            "share_recipients": share_recipients,
             "blocked_by_me": blocked_by_me,
             "blocked_by_other": blocked_by_other,
             "report_reasons": SupportConversationReport.REASON_CHOICES,

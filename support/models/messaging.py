@@ -147,6 +147,13 @@ class SupportMessage(models.Model):
         blank=True,
         related_name="replies",
     )
+    forwarded_from = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="forwards",
+    )
     body = models.TextField(max_length=1500)
     original_language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES)
     client_message_id = models.UUIDField(default=uuid.uuid4)

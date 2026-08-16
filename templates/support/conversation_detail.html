@@ -25,6 +25,8 @@
     .jh-chat-message.mine .jh-chat-message-meta { color:rgba(6,36,21,.72); }
     .jh-chat-reply-preview { margin:0 0 7px; padding:6px 8px; border-left:3px solid var(--blue); border-radius:7px; background:rgba(5,22,36,.2); color:rgba(223,244,255,.82); font-size:11px; line-height:1.35; white-space:pre-wrap; overflow-wrap:anywhere; }
     .jh-chat-message.mine .jh-chat-reply-preview { border-left-color:#063d28; background:rgba(6,36,21,.12); color:rgba(6,36,21,.78); }
+    .jh-chat-forwarded { margin:0 0 5px; color:rgba(223,244,255,.72); font-size:10px; font-weight:800; }
+    .jh-chat-message.mine .jh-chat-forwarded { color:rgba(6,36,21,.66); }
     .jh-chat-message-menu { position:relative; flex:0 0 auto; }
     .jh-chat-message-menu summary { width:22px; height:18px; display:grid; place-items:center; border:0; border-radius:7px; color:rgba(223,244,255,.78); background:rgba(5,22,36,.18); cursor:pointer; font-size:15px; font-weight:900; line-height:1; list-style:none; }
     .jh-chat-message-menu summary::-webkit-details-marker { display:none; }
@@ -44,6 +46,18 @@
     .jh-chat-report form { position:absolute; z-index:3; top:calc(100% + 4px); right:0; width:min(340px,calc(100vw - 48px)); display:grid; gap:7px; margin:0; padding:10px; border:1px solid rgba(255,125,139,.32); border-radius:13px; background:#123b5c; box-shadow:0 16px 38px rgba(0,0,0,.32); }
     .jh-chat-report .jh-input { min-height:34px; padding:7px 9px; font-size:12px; }
     .jh-chat-report .jh-btn { justify-self:start; }
+    .jh-chat-share-dialog { width:min(460px,calc(100vw - 28px)); max-height:min(620px,calc(100vh - 28px)); overflow:hidden; padding:0; border:1px solid var(--line); border-radius:18px; color:var(--text); background:#123b5c; box-shadow:0 24px 70px rgba(0,0,0,.5); }
+    .jh-chat-share-dialog::backdrop { background:rgba(2,13,22,.72); backdrop-filter:blur(3px); }
+    .jh-chat-share-form { display:flex; flex-direction:column; gap:10px; max-height:min(620px,calc(100vh - 28px)); padding:16px; }
+    .jh-chat-share-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    .jh-chat-share-head h2 { margin:0; font-size:19px; }
+    .jh-chat-share-list { display:grid; gap:6px; min-height:0; max-height:330px; overflow-y:auto; padding-right:2px; }
+    .jh-chat-share-recipient { display:flex; align-items:center; gap:9px; padding:9px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.22); cursor:pointer; }
+    .jh-chat-share-recipient:has(input:checked) { border-color:var(--green); background:rgba(24,223,103,.1); }
+    .jh-chat-share-recipient input { accent-color:var(--green); }
+    .jh-chat-share-recipient strong { display:block; font-size:13px; }
+    .jh-chat-share-recipient small { color:var(--muted); }
+    .jh-chat-share-actions { display:flex; justify-content:flex-end; gap:8px; }
     @media (max-width:760px) { .jh-chat-shell { height:auto; min-height:calc(100vh - 118px); overflow:visible; } .jh-chat-toolbar { grid-template-columns:auto 1fr auto; } .jh-chat-head h1 { max-width:120px; font-size:14px; } .jh-chat-head .jh-muted { display:none; } .jh-chat-thread { min-height:280px; max-height:calc(100vh - 285px); } .jh-chat-message { max-width:90%; } .jh-chat-compose { grid-template-columns:1fr; } .jh-chat-toolbar-actions { gap:4px; } .jh-chat-toolbar .jh-btn { padding:6px 8px; font-size:11px; } }
   </style>
 {% endblock %}
@@ -67,6 +81,7 @@
       {% for message in chat_messages %}
         <article class="jh-chat-message{% if message.sender_id == request.user.id %} mine{% endif %}{% if message.deleted_at %} deleted{% endif %}" tabindex="0" data-message-id="{{ message.id }}" data-message-body="{{ message.body|escapejs }}">
           {% if message.reply_to %}<div class="jh-chat-reply-preview">{% if message.reply_to.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ message.reply_to.body|truncatechars:180 }}{% endif %}</div>{% endif %}
+          {% if message.forwarded_from %}<div class="jh-chat-forwarded">↪ {{ employer_t.chat_forwarded_from }}: {% if message.forwarded_from.sender %}{{ message.forwarded_from.sender.get_full_name|default:message.forwarded_from.sender.username }}{% else %}JobHub{% endif %}</div>{% endif %}
           <div class="jh-chat-message-body">{% if message.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ message.body|urlize }}{% endif %}</div>
           <div class="jh-chat-message-footer">
             <div class="jh-chat-message-meta"><time>{{ message.created_at|date:"H:i" }}</time>{% if message.edited_at %}<span>{{ employer_t.chat_edited }}</span>{% endif %}</div>
@@ -77,6 +92,19 @@
     </div>
     {% if blocked_by_me or blocked_by_other %}<div class="jh-chat-blocked">{% if blocked_by_me %}{{ employer_t.chat_blocked_by_me }}{% else %}{{ employer_t.chat_blocked_by_other }}{% endif %}</div>{% else %}<form method="post" class="jh-chat-compose" autocomplete="off">{% csrf_token %}<input type="hidden" name="action" value="send"><input type="hidden" name="reply_to_id" value=""><textarea class="jh-input" name="body" maxlength="1500" placeholder="{{ employer_t.chat_message_placeholder }}" autofocus required></textarea><button class="jh-btn primary" type="submit">{{ employer_t.chat_send }}</button></form>{% endif %}
   </section>
+  <dialog class="jh-chat-share-dialog" id="shareMessageDialog">
+    <form method="post" class="jh-chat-share-form" id="shareMessageForm">
+      {% csrf_token %}<input type="hidden" name="action" value="share"><input type="hidden" name="message_id" value="">
+      <div class="jh-chat-share-head"><div><h2>{{ employer_t.chat_share_title }}</h2><p class="jh-muted">{{ employer_t.chat_share_hint }}</p></div><button class="jh-btn" type="button" data-share-close aria-label="{{ employer_t.chat_share_close }}">×</button></div>
+      {% if share_recipients %}
+        <input class="jh-input" id="shareRecipientSearch" type="search" placeholder="{{ employer_t.chat_share_search }}" autocomplete="off">
+        <div class="jh-chat-share-list" id="shareRecipientList">
+          {% for recipient in share_recipients %}<label class="jh-chat-share-recipient" data-share-recipient data-search-text="{{ recipient.name|lower }}"><input type="radio" name="recipient_id" value="{{ recipient.user.id }}" required><span><strong>{{ recipient.name }}</strong><small>{% if recipient.kind == 'staff' %}{{ employer_t.chat_share_staff }}{% else %}{{ employer_t.chat_share_worker }}{% endif %}</small></span></label>{% endfor %}
+        </div>
+        <div class="jh-chat-share-actions"><button class="jh-btn" type="button" data-share-close>{{ employer_t.chat_share_cancel }}</button><button class="jh-btn primary" type="submit">{{ employer_t.chat_share_send }}</button></div>
+      {% else %}<div class="jh-empty">{{ employer_t.chat_share_empty }}</div><div class="jh-chat-share-actions"><button class="jh-btn" type="button" data-share-close>{{ employer_t.chat_share_close }}</button></div>{% endif %}
+    </form>
+  </dialog>
 {% endblock %}
 {% block extra_body %}
   <script>
@@ -84,7 +112,11 @@
     const composeForm=document.querySelector('.jh-chat-compose'); const replyInput=composeForm?.querySelector('[name="reply_to_id"]'); const composer=composeForm?.querySelector('textarea'); const csrfToken=document.querySelector('[name=csrfmiddlewaretoken]')?.value||''; requestAnimationFrame(()=>composer?.focus({preventScroll:true}));
     composer?.addEventListener('keydown',(event)=>{if(event.key!=='Enter')return;if(event.ctrlKey){event.preventDefault();composer.setRangeText('\n',composer.selectionStart,composer.selectionEnd,'end');composer.dispatchEvent(new Event('input',{bubbles:true}));return;}event.preventDefault();if(composer.value.trim())composeForm.requestSubmit();});
     const postAction=(action,messageId,body='')=>{const form=document.createElement('form');form.method='post';form.innerHTML=`<input type="hidden" name="csrfmiddlewaretoken" value="${csrfToken}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="message_id" value="${messageId}"><input type="hidden" name="body" value="">`;form.querySelector('[name=body]').value=body;document.body.appendChild(form);form.submit();};
-    document.addEventListener('click',async(event)=>{const link=event.target.closest('.jh-chat-message-body a');if(link&&!confirm('{{ employer_t.chat_external_link_confirm|escapejs }}')){event.preventDefault();return;}const button=event.target.closest('[data-chat-action]');if(!button){if(!event.target.closest('.jh-chat-message-menu'))document.querySelectorAll('.jh-chat-message-menu[open]').forEach((menu)=>menu.removeAttribute('open'));return;}const bubble=button.closest('[data-message-id]');button.closest('.jh-chat-message-menu')?.removeAttribute('open');const action=button.dataset.chatAction;const messageId=bubble.dataset.messageId;const body=bubble.dataset.messageBody||'';if(action==='reply'&&composer&&replyInput){replyInput.value=messageId;composer.placeholder='{{ employer_t.chat_replying_to|escapejs }}';composer.focus();}if(action==='copy')await navigator.clipboard?.writeText(body);if(action==='share'){if(navigator.share)await navigator.share({text:body});else await navigator.clipboard?.writeText(body);}if(action==='edit'){const updated=prompt('{{ employer_t.chat_edit_prompt|escapejs }}',body);if(updated!==null)postAction('edit',messageId,updated);}if(action==='delete'&&confirm('{{ employer_t.chat_delete_confirm|escapejs }}'))postAction('delete',messageId);});
+    const shareDialog=document.getElementById('shareMessageDialog');const shareForm=document.getElementById('shareMessageForm');const shareSearch=document.getElementById('shareRecipientSearch');
+    const openShareDialog=(messageId)=>{if(!shareDialog||!shareForm)return;shareForm.reset();shareForm.querySelector('[name="message_id"]').value=messageId;if(shareSearch){shareSearch.value='';document.querySelectorAll('[data-share-recipient]').forEach((item)=>item.hidden=false);}shareDialog.showModal();requestAnimationFrame(()=>shareSearch?.focus());};
+    shareSearch?.addEventListener('input',()=>{const query=shareSearch.value.trim().toLocaleLowerCase();document.querySelectorAll('[data-share-recipient]').forEach((item)=>{item.hidden=Boolean(query&&!item.dataset.searchText.includes(query));});});
+    document.querySelectorAll('[data-share-close]').forEach((button)=>button.addEventListener('click',()=>shareDialog?.close()));shareDialog?.addEventListener('click',(event)=>{if(event.target===shareDialog)shareDialog.close();});
+    document.addEventListener('click',async(event)=>{const link=event.target.closest('.jh-chat-message-body a');if(link&&!confirm('{{ employer_t.chat_external_link_confirm|escapejs }}')){event.preventDefault();return;}const button=event.target.closest('[data-chat-action]');if(!button){if(!event.target.closest('.jh-chat-message-menu'))document.querySelectorAll('.jh-chat-message-menu[open]').forEach((menu)=>menu.removeAttribute('open'));return;}const bubble=button.closest('[data-message-id]');button.closest('.jh-chat-message-menu')?.removeAttribute('open');const action=button.dataset.chatAction;const messageId=bubble.dataset.messageId;const body=bubble.dataset.messageBody||'';if(action==='reply'&&composer&&replyInput){replyInput.value=messageId;composer.placeholder='{{ employer_t.chat_replying_to|escapejs }}';composer.focus();}if(action==='copy')await navigator.clipboard?.writeText(body);if(action==='share')openShareDialog(messageId);if(action==='edit'){const updated=prompt('{{ employer_t.chat_edit_prompt|escapejs }}',body);if(updated!==null)postAction('edit',messageId,updated);}if(action==='delete'&&confirm('{{ employer_t.chat_delete_confirm|escapejs }}'))postAction('delete',messageId);});
     const refreshThread=async()=>{if(!thread||document.hidden||composer?.value.trim())return;const nearBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<48;try{const response=await fetch(window.location.href,{credentials:'same-origin'});if(!response.ok)return;const parsed=new DOMParser().parseFromString(await response.text(),'text/html');const nextThread=parsed.getElementById('chatThread');if(!nextThread||nextThread.innerHTML===thread.innerHTML)return;thread.innerHTML=nextThread.innerHTML;if(nearBottom)scrollThreadToBottom();}catch(_){}}; setInterval(refreshThread,15000);
   </script>
 {% endblock %}

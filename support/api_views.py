@@ -452,6 +452,12 @@ def _message_payload(message, *, viewer):
         "created_at": message.created_at,
         "edited_at": message.edited_at,
         "deleted_at": message.deleted_at,
+        "is_forwarded": message.forwarded_from_id is not None,
+        "forwarded_from_sender_display_name": (
+            _user_display_name(message.forwarded_from.sender)
+            if message.forwarded_from_id and message.forwarded_from.sender
+            else ""
+        ),
     }
 
 
@@ -2053,7 +2059,10 @@ class SupportConversationMessageListAPIView(SupportFeatureAPIView):
             public_id=conversation_public_id,
         )
         require_conversation_access(user=request.user, conversation=conversation)
-        messages = conversation.messages.select_related("sender").all()
+        messages = conversation.messages.select_related(
+            "sender",
+            "forwarded_from__sender",
+        ).all()
         return Response(
             {
                 "conversation": _conversation_payload(conversation, viewer=request.user),
