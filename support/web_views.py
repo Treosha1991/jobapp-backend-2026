@@ -842,6 +842,15 @@ def conversation_detail(request, conversation_public_id):
         sender=request.user,
         organization=snapshot["organization"],
     )
+    try:
+        share_message_id = int(request.GET.get("share_message") or "")
+    except (TypeError, ValueError):
+        share_message_id = None
+    if share_message_id and not conversation.messages.filter(
+        id=share_message_id,
+        deleted_at__isnull=True,
+    ).exists():
+        share_message_id = None
     if request.method == "POST":
         action = request.POST.get("action") or "send"
         if action == "block" and counterpart is not None:
@@ -1012,6 +1021,7 @@ def conversation_detail(request, conversation_public_id):
                 ).order_by("created_at", "id")[:500]
             ),
             "share_recipients": share_recipients,
+            "share_message_id": share_message_id,
             "blocked_by_me": blocked_by_me,
             "blocked_by_other": blocked_by_other,
             "report_reasons": SupportConversationReport.REASON_CHOICES,

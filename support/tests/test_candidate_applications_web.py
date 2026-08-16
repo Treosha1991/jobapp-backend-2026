@@ -420,6 +420,20 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.assertContains(detail, 'name="recipient_id"')
         self.assertNotContains(detail, "navigator.share")
 
+        share_picker = self.client.get(
+            detail_url + f"&share_message={source_message.id}"
+        )
+        self.assertContains(
+            share_picker,
+            f'name="message_id" value="{source_message.id}"',
+            html=False,
+        )
+        self.assertNotContains(
+            share_picker,
+            'id="shareMessageDialog" role="dialog" aria-modal="true" aria-labelledby="shareMessageTitle" hidden',
+            html=False,
+        )
+
         shared = self.client.post(
             detail_url,
             {
