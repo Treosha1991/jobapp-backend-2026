@@ -250,6 +250,10 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.assertEqual(opened_chat.status_code, 200)
         self.assertTrue(connection.conversations.filter(archived_at__isnull=True).exists())
         self.assertIn("/employer/support/conversations/", opened_chat.request["PATH_INFO"])
+        self.assertEqual(
+            opened_chat.request["QUERY_STRING"],
+            f"organization={self.organization.public_id}",
+        )
 
     def test_onboarding_tab_restores_archived_legacy_manager_chat(self):
         self.post_action(

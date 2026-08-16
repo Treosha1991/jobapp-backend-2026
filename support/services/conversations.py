@@ -27,7 +27,6 @@ def open_manager_conversation(*, candidate, connection):
     with transaction.atomic():
         connection = (
             SupportConnection.objects.select_for_update()
-            .select_related("organization", "assigned_manager__user")
             .get(pk=connection.pk)
         )
         if connection.candidate_id != candidate.id or connection.is_archived:
@@ -108,7 +107,6 @@ def open_manager_conversation_for_staff(*, actor, connection):
     with transaction.atomic():
         connection = (
             SupportConnection.objects.select_for_update()
-            .select_related("organization", "assigned_manager__user")
             .get(pk=connection.pk)
         )
         if connection.is_archived or connection.stage not in {

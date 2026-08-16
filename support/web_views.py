@@ -296,11 +296,12 @@ def _candidate_application_operation(request, *, snapshot):
                     actor=request.user,
                     connection=connection,
                 )
+                conversation_url = reverse(
+                    "support:conversation-detail",
+                    kwargs={"conversation_public_id": conversation.public_id},
+                )
                 return redirect(
-                    reverse(
-                        "support:conversation-detail",
-                        kwargs={"conversation_public_id": conversation.public_id},
-                    )
+                    f"{conversation_url}?{urlencode({'organization': organization.public_id})}"
                 )
             next_stage = {
                 "connection_documents": SupportConnection.STAGE_DOCUMENTS,
