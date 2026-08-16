@@ -30,6 +30,7 @@
     .jh-chat-message-menu summary::-webkit-details-marker { display:none; }
     .jh-chat-message.mine .jh-chat-message-menu summary { color:rgba(6,36,21,.74); background:rgba(6,36,21,.1); }
     .jh-chat-message-actions { position:absolute; z-index:8; right:0; bottom:calc(100% + 5px); width:max-content; min-width:132px; display:none; gap:2px; padding:5px; border:1px solid var(--line); border-radius:10px; background:#123b5c; box-shadow:0 12px 28px rgba(0,0,0,.32); }
+    .jh-chat-message:not(.mine) .jh-chat-message-actions { right:auto; bottom:0; left:calc(100% + 5px); }
     .jh-chat-message-menu[open] .jh-chat-message-actions { display:grid; }
     .jh-chat-message-action { width:100%; border:0; border-radius:7px; padding:6px 9px; background:none; color:#dff4ff; font:inherit; font-size:11px; font-weight:800; text-align:left; cursor:pointer; }
     .jh-chat-message-action:hover,.jh-chat-message-action:focus-visible { background:rgba(110,199,255,.14); color:#fff; }
