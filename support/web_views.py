@@ -1,4 +1,5 @@
 import csv
+import logging
 import uuid
 from datetime import datetime, timedelta
 from urllib.parse import urlencode, urlsplit
@@ -87,6 +88,9 @@ from .serializers import (
     ProjectCreateSerializer,
     ProjectScheduleTemplateCreateSerializer,
 )
+
+
+logger = logging.getLogger(__name__)
 from .services.operations import (
     add_passenger_to_driver_schedule,
     apply_transport_crew_schedule_override,
@@ -324,6 +328,13 @@ def _candidate_application_operation(request, *, snapshot):
         else:
             message_key = "support_applications_operation_error"
         messages.error(request, tr(request, message_key))
+    except Exception:
+        logger.exception(
+            "[SUPPORT-CANDIDATE-OPERATION-ERROR] action=%s connection_id=%s",
+            action,
+            request.POST.get("connection_id"),
+        )
+        messages.error(request, tr(request, "support_applications_operation_error"))
     else:
         messages.success(request, tr(request, message_key))
     return _candidate_applications_redirect(
