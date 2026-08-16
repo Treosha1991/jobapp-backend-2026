@@ -11,6 +11,7 @@ from support.models import (
     SupportAccessGrant,
     SupportApplication,
     SupportConnection,
+    SupportConversation,
     SupportVacancy,
 )
 from support.services.conversations import open_manager_conversation
@@ -248,6 +249,53 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         )
         self.assertEqual(opened_chat.status_code, 200)
         self.assertTrue(connection.conversations.filter(archived_at__isnull=True).exists())
+        self.assertIn("/employer/support/conversations/", opened_chat.request["PATH_INFO"])
+
+    def test_onboarding_tab_restores_archived_legacy_manager_chat(self):
+        self.post_action(
+            {
+                "action": "application_approve",
+                "application_id": self.application.public_id,
+            },
+            status_filter="approved",
+        )
+        connection = self.application.support_connection
+        conversation, _ = open_manager_conversation(
+            candidate=self.candidate,
+            connection=connection,
+        )
+        archived_at = timezone.now()
+        conversation.state = SupportConversation.STATE_ARCHIVED
+        conversation.archived_at = archived_at
+        conversation.save(update_fields=["state", "archived_at", "updated_at"])
+        conversation.members.update(left_at=archived_at)
+
+        self.post_action(
+            {
+                "action": "connection_documents",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+        opened_chat = self.post_action(
+            {
+                "action": "connection_chat",
+                "connection_id": connection.public_id,
+                "view": "processing",
+            },
+            status_filter="approved",
+        )
+
+        self.assertEqual(opened_chat.status_code, 200)
+        conversation.refresh_from_db()
+        self.assertEqual(conversation.state, SupportConversation.STATE_ACTIVE)
+        self.assertIsNone(conversation.archived_at)
+        self.assertTrue(
+            conversation.members.filter(user=self.candidate, left_at__isnull=True).exists()
+        )
+        self.assertTrue(
+            conversation.members.filter(user=self.owner, left_at__isnull=True).exists()
+        )
         self.assertIn("/employer/support/conversations/", opened_chat.request["PATH_INFO"])
 
     def test_candidate_can_answer_manager_clarification_once(self):

@@ -97,7 +97,13 @@ def open_manager_conversation(*, candidate, connection):
 
 
 def open_manager_conversation_for_staff(*, actor, connection):
-    """Create or reopen the approved manager chat from the staff workspace."""
+    """Create or restore the manager chat from the staff workspace.
+
+    Staging and migrated organizations may already have an archived manager
+    conversation or members whose ``left_at`` value is set.  Opening the chat
+    must therefore repair that state instead of trying to create a parallel
+    conversation protected by the one-manager-chat constraint.
+    """
 
     with transaction.atomic():
         connection = (
@@ -120,10 +126,6 @@ def open_manager_conversation_for_staff(*, actor, connection):
             permission_code=CHAT_MANAGE,
         ):
             raise PermissionDenied("support_permission_denied")
-        manager_membership = connection.assigned_manager or actor_membership
-        if not manager_membership.is_active:
-            raise ValidationError({"connection": "assigned_manager_not_available"})
-
         conversation, created = SupportConversation.objects.get_or_create(
             connection=connection,
             kind=SupportConversation.KIND_MANAGER,
@@ -132,19 +134,71 @@ def open_manager_conversation_for_staff(*, actor, connection):
                 "created_by": actor,
             },
         )
-        SupportConversationMember.objects.get_or_create(
-            conversation=conversation,
+        conversation_updates = []
+        if conversation.organization_id != connection.organization_id:
+            conversation.organization = connection.organization
+            conversation_updates.append("organization")
+        if conversation.state != SupportConversation.STATE_ACTIVE:
+            conversation.state = SupportConversation.STATE_ACTIVE
+            conversation_updates.append("state")
+        if conversation.archived_at is not None:
+            conversation.archived_at = None
+            conversation_updates.append("archived_at")
+        if conversation_updates:
+            conversation.save(update_fields=[*conversation_updates, "updated_at"])
+
+        def restore_member(*, user, role, organization_membership=None):
+            member, member_created = SupportConversationMember.objects.get_or_create(
+                conversation=conversation,
+                user=user,
+                defaults={
+                    "organization_membership": organization_membership,
+                    "role": role,
+                },
+            )
+            if member_created:
+                return
+            member_updates = []
+            if member.role != role:
+                member.role = role
+                member_updates.append("role")
+            expected_membership_id = (
+                organization_membership.id if organization_membership else None
+            )
+            if member.organization_membership_id != expected_membership_id:
+                member.organization_membership = organization_membership
+                member_updates.append("organization_membership")
+            if member.left_at is not None:
+                member.left_at = None
+                member_updates.append("left_at")
+            if member_updates:
+                member.save(update_fields=member_updates)
+
+        restore_member(
             user=connection.candidate,
-            defaults={"role": SupportConversationMember.ROLE_WORKER},
+            role=SupportConversationMember.ROLE_WORKER,
         )
-        SupportConversationMember.objects.get_or_create(
-            conversation=conversation,
-            user=manager_membership.user,
-            defaults={
-                "organization_membership": manager_membership,
-                "role": SupportConversationMember.ROLE_STAFF,
-            },
+        restore_member(
+            user=actor,
+            role=SupportConversationMember.ROLE_STAFF,
+            organization_membership=actor_membership,
         )
+        manager_membership = connection.assigned_manager
+        if (
+            manager_membership is not None
+            and manager_membership.is_active
+            and manager_membership.user_id != actor.id
+            and has_permission(
+                user=manager_membership.user,
+                organization=connection.organization,
+                permission_code=CHAT_MANAGE,
+            )
+        ):
+            restore_member(
+                user=manager_membership.user,
+                role=SupportConversationMember.ROLE_STAFF,
+                organization_membership=manager_membership,
+            )
         record_audit_event(
             organization=connection.organization,
             actor=actor,
