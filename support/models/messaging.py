@@ -140,6 +140,13 @@ class SupportMessage(models.Model):
         null=True,
         related_name="sent_support_messages",
     )
+    reply_to = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="replies",
+    )
     body = models.TextField(max_length=1500)
     original_language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES)
     client_message_id = models.UUIDField(default=uuid.uuid4)
@@ -156,6 +163,48 @@ class SupportMessage(models.Model):
             ),
         ]
         indexes = [models.Index(fields=("conversation", "created_at"))]
+
+
+class SupportConversationReport(models.Model):
+    """A moderation report created from a Support conversation."""
+
+    REASON_CHOICES = [
+        ("spam", "Spam or advertising"),
+        ("scam", "Scam or fraud"),
+        ("abuse", "Abuse or harassment"),
+        ("inappropriate", "Inappropriate content"),
+        ("other", "Other"),
+    ]
+    STATUS_CHOICES = [
+        ("new", "New"),
+        ("in_review", "In review"),
+        ("resolved", "Resolved"),
+        ("rejected", "Rejected"),
+    ]
+
+    conversation = models.ForeignKey(
+        SupportConversation,
+        on_delete=models.CASCADE,
+        related_name="reports",
+    )
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="filed_support_conversation_reports",
+    )
+    reported_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="received_support_conversation_reports",
+    )
+    reason = models.CharField(max_length=20, choices=REASON_CHOICES)
+    message = models.TextField(blank=True, max_length=1000)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="new")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+        indexes = [models.Index(fields=("status", "created_at"))]
 
 
 class SupportMessageTranslation(models.Model):

@@ -14,6 +14,8 @@ from django.db.models import Prefetch, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
+from jobs.avatar_utils import avatar_public_url
+
 from support.models import (
     DocumentRequestPackage,
     DriverVehicleAssignment,
@@ -34,6 +36,7 @@ from support.models import (
     SupportApplication,
     SupportConnection,
     SupportConversation,
+    SupportMessage,
     TransportCrewResourceOverride,
     TransportCrewScheduleOverride,
     TransportPassengerAssignment,
@@ -694,17 +697,42 @@ def conversation_workspace_snapshot(*, user, organization_public_id=None):
             members__user=user,
             members__left_at__isnull=True,
         )
-        .prefetch_related("members__user")
+        .select_related("connection", "connection__candidate", "connection__candidate__profile")
+        .prefetch_related("members__user", "members__user__profile")
         .distinct()
         .order_by("-updated_at", "-id")[:100]
     )
     rows = []
     for conversation in conversations:
+        active_members = [item for item in conversation.members.all() if item.left_at is None]
         participant_names = [
             _display_name(item.user)
-            for item in conversation.members.all()
-            if item.left_at is None and item.user_id != user.id
+            for item in active_members
+            if item.user_id != user.id
         ]
+        counterpart = (
+            conversation.connection.candidate
+            if conversation.connection_id
+            else next((item.user for item in active_members if item.user_id != user.id), None)
+        )
+        own_member = next((item for item in active_members if item.user_id == user.id), None)
+        last_message = (
+            SupportMessage.objects.filter(conversation=conversation)
+            .select_related("sender")
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        unread_messages = SupportMessage.objects.filter(
+            conversation=conversation,
+        ).exclude(sender=user)
+        if own_member is not None and own_member.last_read_at is not None:
+            unread_messages = unread_messages.filter(created_at__gt=own_member.last_read_at)
+        avatar_url = ""
+        if counterpart is not None:
+            try:
+                avatar_url = avatar_public_url(counterpart.profile.avatar_key)
+            except AttributeError:
+                pass
         rows.append(
             {
                 "conversation_id": str(conversation.public_id),
@@ -712,6 +740,14 @@ def conversation_workspace_snapshot(*, user, organization_public_id=None):
                 "title": conversation.title,
                 "participants": participant_names,
                 "updated_at": conversation.updated_at,
+                "counterpart_name": (
+                    _display_name(counterpart)
+                    if counterpart is not None
+                    else (conversation.title or "")
+                ),
+                "counterpart_avatar_url": avatar_url,
+                "last_message": last_message,
+                "unread_count": unread_messages.count(),
             }
         )
     return {

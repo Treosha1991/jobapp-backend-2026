@@ -6,6 +6,7 @@ from urllib.parse import urlencode, urlsplit
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import Q
 from django.http import Http404, HttpResponse
@@ -17,6 +18,8 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from rest_framework.exceptions import APIException, ValidationError
 
 from jobs.web_i18n import get_lang, tr
+from jobs.avatar_utils import avatar_public_url
+from jobs.models import UserBlock
 
 from .feature_flags import is_support_feature_enabled
 from .permissions import worker_connection_queryset_for
@@ -44,6 +47,9 @@ from .models import (
     SupportApplication,
     SupportConnection,
     SupportConversation,
+    SupportConversationMember,
+    SupportConversationReport,
+    SupportMessage,
     TransportCrew,
     TransportPassengerAssignment,
     TransportRoute,
@@ -392,6 +398,7 @@ def candidate_applications_workspace(request):
         return _candidate_application_operation(request, snapshot=snapshot)
 
     page_language = get_lang(request)
+    focused_connection_id = (request.GET.get("focus") or "").strip()
     application_items = list(snapshot["applications"])
     known_application_ids = {item.id for item in application_items}
     for connection in snapshot["processing_connections"]:
@@ -429,6 +436,7 @@ def candidate_applications_workspace(request):
                 f"support_application_event_{event.action}",
             )
         if item.connection_record is not None:
+            item.is_focused = str(item.connection_record.public_id) == focused_connection_id
             item.connection_record.stage_label = tr(
                 request,
                 f"support_stage_{item.connection_record.stage}",
@@ -469,6 +477,7 @@ def candidate_applications_workspace(request):
         DocumentRequestPackage.STATUS_CANCELLED: tr(request, "support_documents_status_cancelled"),
     }
     for connection in snapshot["processing_connections"]:
+        connection.is_focused = str(connection.public_id) == focused_connection_id
         connection.application_record = connection.application
         connection.stage_label = tr(request, f"support_stage_{connection.stage}")
         connection.chat_url = (
@@ -489,6 +498,8 @@ def candidate_applications_workspace(request):
                     labels.append(tr(request, f"support_document_{item_type}"))
             package.requested_items_label = ", ".join(label for label in labels if label)
             package.status_label = document_status_labels[package.status]
+
+    snapshot["focused_connection_id"] = focused_connection_id
 
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
@@ -682,9 +693,48 @@ def conversations_workspace(request):
     return render(request, "support/conversations.html", snapshot)
 
 
+def _support_chat_display_name(user):
+    return user.get_full_name().strip() or user.username
+
+
+def _support_chat_avatar_url(user):
+    try:
+        avatar_key = user.profile.avatar_key
+    except (AttributeError, ObjectDoesNotExist):
+        avatar_key = ""
+    return avatar_public_url(avatar_key)
+
+
+def _support_chat_candidate_url(*, conversation, organization):
+    connection = conversation.connection
+    if connection is None:
+        return ""
+    if connection.stage in {
+        SupportConnection.STAGE_COORDINATOR,
+        SupportConnection.STAGE_ACTIVE_WORKER,
+    }:
+        return (
+            reverse(
+                "support:worker-card",
+                kwargs={"connection_public_id": connection.public_id},
+            )
+            + "?"
+            + urlencode({"organization": organization.public_id})
+        )
+    query = {
+        "organization": organization.public_id,
+        "focus": connection.public_id,
+    }
+    if connection.stage == SupportConnection.STAGE_DOCUMENTS:
+        query["view"] = "processing"
+    else:
+        query.update({"view": "applications", "filter": "approved"})
+    return reverse("support:candidate-applications") + "?" + urlencode(query)
+
+
 @login_required(login_url="employer:login")
 def conversation_detail(request, conversation_public_id):
-    """Safe browser view for one Support chat, with text messages only."""
+    """Employer Support chat with the same interaction model as JobHub chat."""
 
     if not is_support_feature_enabled():
         raise Http404("support_not_available")
@@ -699,7 +749,8 @@ def conversation_detail(request, conversation_public_id):
             members__user=request.user,
             members__left_at__isnull=True,
         )
-        .prefetch_related("members__user", "messages__sender")
+        .select_related("connection", "connection__candidate", "connection__vacancy")
+        .prefetch_related("members__user", "messages__sender", "messages__reply_to")
         .distinct(),
         public_id=conversation_public_id,
     )
@@ -712,23 +763,113 @@ def conversation_detail(request, conversation_public_id):
         f"{reverse('support:conversation-detail', kwargs={'conversation_public_id': conversation.public_id})}"
         f"?organization={snapshot['organization'].public_id}"
     )
+    active_members = [item for item in conversation.members.all() if item.left_at is None]
+    counterpart = (
+        conversation.connection.candidate
+        if conversation.connection_id
+        else next((item.user for item in active_members if item.user_id != request.user.id), None)
+    )
+    blocked_by_me = bool(
+        counterpart
+        and UserBlock.objects.filter(blocker=request.user, blocked_user=counterpart).exists()
+    )
+    blocked_by_other = bool(
+        counterpart
+        and UserBlock.objects.filter(blocker=counterpart, blocked_user=request.user).exists()
+    )
     if request.method == "POST":
-        body = (request.POST.get("body") or "").strip()
-        if not body or len(body) > 1500 or "\x00" in body:
-            messages.error(request, tr(request, "support_chat_message_invalid"))
-        else:
-            try:
-                send_text_message(
-                    sender=request.user,
+        action = request.POST.get("action") or "send"
+        if action == "block" and counterpart is not None:
+            UserBlock.objects.get_or_create(blocker=request.user, blocked_user=counterpart)
+            messages.success(request, tr(request, "chat_blocked_success"))
+        elif action == "unblock" and counterpart is not None:
+            UserBlock.objects.filter(blocker=request.user, blocked_user=counterpart).delete()
+            messages.success(request, tr(request, "chat_unblocked_success"))
+        elif action == "send":
+            body = (request.POST.get("body") or "").strip()
+            reply_to = None
+            reply_to_id = (request.POST.get("reply_to_id") or "").strip()
+            if reply_to_id:
+                reply_to = SupportMessage.objects.filter(
+                    id=reply_to_id,
                     conversation=conversation,
-                    body=body,
-                    original_language=get_lang(request),
-                    client_message_id=uuid.uuid4(),
-                )
-            except APIException:
-                messages.error(request, tr(request, "support_chat_send_error"))
+                ).first()
+                if reply_to is None:
+                    messages.error(request, tr(request, "chat_reply_missing"))
+                    return redirect(detail_url)
+            if blocked_by_me or blocked_by_other:
+                messages.error(request, tr(request, "chat_unavailable"))
+            elif not body or len(body) > 1500 or "\x00" in body:
+                messages.error(request, tr(request, "support_chat_message_invalid"))
+            elif SupportMessage.objects.filter(
+                sender=request.user,
+                created_at__gte=timezone.now() - timedelta(minutes=1),
+            ).count() >= 20:
+                messages.error(request, tr(request, "chat_rate_limited"))
             else:
-                return redirect(detail_url)
+                try:
+                    send_text_message(
+                        sender=request.user,
+                        conversation=conversation,
+                        body=body,
+                        original_language=get_lang(request),
+                        client_message_id=uuid.uuid4(),
+                        reply_to=reply_to,
+                    )
+                except APIException:
+                    messages.error(request, tr(request, "support_chat_send_error"))
+        elif action in {"edit", "delete"}:
+            try:
+                message_id = int(request.POST.get("message_id"))
+            except (TypeError, ValueError):
+                message_id = None
+            item = SupportMessage.objects.filter(
+                id=message_id,
+                conversation=conversation,
+            ).first()
+            read_by_other = bool(
+                item
+                and SupportConversationMember.objects.filter(
+                    conversation=conversation,
+                    left_at__isnull=True,
+                    last_read_at__gte=item.created_at,
+                ).exclude(user=request.user).exists()
+            )
+            can_modify = bool(
+                item
+                and item.sender_id == request.user.id
+                and not item.deleted_at
+                and not read_by_other
+            )
+            if not can_modify:
+                messages.error(request, tr(request, "chat_message_already_read"))
+            elif action == "delete":
+                item.body = ""
+                item.deleted_at = timezone.now()
+                item.save(update_fields=["body", "deleted_at"])
+            else:
+                body = (request.POST.get("body") or "").strip()
+                if not body or len(body) > 1500 or "\x00" in body:
+                    messages.error(request, tr(request, "support_chat_message_invalid"))
+                else:
+                    item.body = body
+                    item.edited_at = timezone.now()
+                    item.save(update_fields=["body", "edited_at"])
+        elif action == "report" and counterpart is not None:
+            reason = (request.POST.get("reason") or "").strip()
+            allowed_reasons = {item[0] for item in SupportConversationReport.REASON_CHOICES}
+            if reason not in allowed_reasons:
+                messages.error(request, tr(request, "chat_report_reason_required"))
+            else:
+                SupportConversationReport.objects.create(
+                    conversation=conversation,
+                    reporter=request.user,
+                    reported_user=counterpart,
+                    reason=reason,
+                    message=(request.POST.get("message") or "").strip()[:1000],
+                )
+                messages.success(request, tr(request, "chat_report_sent"))
+        return redirect(detail_url)
     else:
         mark_conversation_read(user=request.user, conversation=conversation)
 
@@ -742,7 +883,29 @@ def conversation_detail(request, conversation_public_id):
             "conversation": conversation,
             "conversation_kind_label": tr(request, f"support_chat_kind_{conversation.kind}"),
             "participant_names": participant_names,
-            "messages": list(conversation.messages.select_related("sender").order_by("created_at", "id")[:500]),
+            "counterpart": counterpart,
+            "counterpart_name": (
+                _support_chat_display_name(counterpart)
+                if counterpart is not None
+                else (conversation.title or tr(request, f"support_chat_kind_{conversation.kind}"))
+            ),
+            "counterpart_avatar_url": (
+                _support_chat_avatar_url(counterpart) if counterpart is not None else ""
+            ),
+            "counterpart_profile_url": _support_chat_candidate_url(
+                conversation=conversation,
+                organization=snapshot["organization"],
+            ),
+            "chat_messages": list(
+                conversation.messages.select_related(
+                    "sender",
+                    "reply_to",
+                    "reply_to__sender",
+                ).order_by("created_at", "id")[:500]
+            ),
+            "blocked_by_me": blocked_by_me,
+            "blocked_by_other": blocked_by_other,
+            "report_reasons": SupportConversationReport.REASON_CHOICES,
         }
     )
     return render(request, "support/conversation_detail.html", snapshot)

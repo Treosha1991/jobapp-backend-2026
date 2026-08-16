@@ -13,6 +13,7 @@
   .applications-count { min-width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; padding:0 7px; border-radius:999px; background:rgba(255,255,255,.1); font-size:11px; }
   .processing-list { display:grid; gap:12px; margin-top:15px; }
   .processing-card { padding:15px; border:1px solid rgba(255,211,106,.25); border-radius:17px; background:linear-gradient(135deg,rgba(255,211,106,.055),rgba(5,22,36,.28)); }
+  .processing-card.is-focused,.application-card.is-focused { border-color:rgba(24,223,103,.78); box-shadow:0 0 0 3px rgba(24,223,103,.13); }
   .processing-meta { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; color:var(--muted); font-size:12px; }
   .processing-documents { display:grid; gap:7px; margin-top:11px; }
   .processing-document { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; padding:9px 10px; border:1px solid rgba(183,224,255,.13); border-radius:12px; background:rgba(3,18,30,.22); }
@@ -84,7 +85,7 @@
       <div class="applications-note">{{ employer_t.support_processing_notice }}</div>
       <div class="processing-list">
         {% for connection in processing_connections %}
-          <article class="processing-card">
+          <article class="processing-card{% if connection.is_focused %} is-focused{% endif %}" id="candidate-{{ connection.public_id }}">
             <div class="application-head">
               <div>
                 <h2>{{ connection.candidate_display_name }}</h2>
@@ -98,7 +99,7 @@
               <span>· {{ employer_t.support_documents_code }}: {% if connection.latest_document_package %}{{ connection.latest_document_package.account_reference.reference_code }}{% else %}—{% endif %}</span>
             </div>
 
-            <details class="questionnaire-details">
+            <details class="questionnaire-details"{% if connection.is_focused %} open{% endif %}>
               <summary>{{ employer_t.support_processing_open_application }}</summary>
               {% if connection.application_record.questionnaire_tags %}<div class="application-tags">{% for tag in connection.application_record.questionnaire_tags %}<span class="application-tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
               <div class="questionnaire-sections">{% for section in connection.application_record.questionnaire_sections %}<section class="questionnaire-section"><h3>{{ section.label }}</h3><div class="questionnaire-details-grid">{% for fact in section.facts %}<div class="application-fact"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div></section>{% endfor %}</div>
@@ -230,7 +231,7 @@
 
     <div class="applications-list">
       {% for item in applications %}
-        <article class="application-card">
+        <article class="application-card{% if item.is_focused %} is-focused{% endif %}"{% if item.connection_record %} id="candidate-{{ item.connection_record.public_id }}"{% endif %}>
           <div class="application-head">
             <div>
               <h2>{{ item.candidate_display_name }}</h2>
@@ -247,7 +248,7 @@
           </div>
           {% if item.questionnaire_tags %}<div class="application-tags">{% for tag in item.questionnaire_tags %}<span class="application-tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
           {% if item.questionnaire_sections %}
-            <details class="questionnaire-details">
+            <details class="questionnaire-details"{% if item.is_focused %} open{% endif %}>
               <summary>{{ employer_t.support_questionnaire_answers }} · {% if item.questionnaire_complete %}{{ employer_t.support_questionnaire_complete }}{% else %}{{ employer_t.support_questionnaire_incomplete }}{% endif %}</summary>
               <div class="questionnaire-sections">{% for section in item.questionnaire_sections %}<section class="questionnaire-section"><h3>{{ section.label }}</h3><div class="questionnaire-details-grid">{% for fact in section.facts %}<div class="application-fact"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div></section>{% endfor %}</div>
             </details>
@@ -332,6 +333,10 @@
         if (event.target === dialog) dialog.close();
       });
     });
+    const focusedCandidate = document.querySelector('.is-focused');
+    if (focusedCandidate) {
+      requestAnimationFrame(() => focusedCandidate.scrollIntoView({ block: 'center' }));
+    }
   })();
 </script>
 {% endblock %}

@@ -16,6 +16,7 @@ from .organization import (
 )
 from .messaging import (
     SupportConversation,
+    SupportConversationReport,
     SupportConversationMember,
     SupportMessage,
     SupportMessageTranslation,
@@ -136,6 +137,7 @@ __all__ = [
     "SupportApplication",
     "SupportConnection",
     "SupportConversation",
+    "SupportConversationReport",
     "SupportConversationMember",
     "SupportMessage",
     "SupportMessageTranslation",

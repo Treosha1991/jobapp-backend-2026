@@ -1,6 +1,9 @@
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
+
+from jobs.models import UserBlock
 
 from support.models import (
     OrganizationMembership,
@@ -242,7 +245,15 @@ def require_conversation_access(*, user, conversation):
     return member
 
 
-def send_text_message(*, sender, conversation, body, original_language, client_message_id):
+def send_text_message(
+    *,
+    sender,
+    conversation,
+    body,
+    original_language,
+    client_message_id,
+    reply_to=None,
+):
     with transaction.atomic():
         conversation = SupportConversation.objects.select_for_update().get(pk=conversation.pk)
         if conversation.state != SupportConversation.STATE_ACTIVE:
@@ -250,6 +261,17 @@ def send_text_message(*, sender, conversation, body, original_language, client_m
         member = require_conversation_access(user=sender, conversation=conversation)
         if not member.can_send:
             raise PermissionDenied("support_message_sending_not_available")
+        other_user_ids = SupportConversationMember.objects.filter(
+            conversation=conversation,
+            left_at__isnull=True,
+        ).exclude(user=sender).values_list("user_id", flat=True)
+        if UserBlock.objects.filter(
+            Q(blocker=sender, blocked_user_id__in=other_user_ids)
+            | Q(blocked_user=sender, blocker_id__in=other_user_ids)
+        ).exists():
+            raise PermissionDenied("support_conversation_blocked")
+        if reply_to is not None and reply_to.conversation_id != conversation.id:
+            raise ValidationError({"reply_to": "support_reply_message_not_available"})
         message, created = SupportMessage.objects.get_or_create(
             conversation=conversation,
             client_message_id=client_message_id,
@@ -257,6 +279,7 @@ def send_text_message(*, sender, conversation, body, original_language, client_m
                 "sender": sender,
                 "body": body.strip(),
                 "original_language": original_language,
+                "reply_to": reply_to,
             },
         )
         if not created and message.sender_id != sender.id:

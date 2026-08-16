@@ -13,6 +13,8 @@ from support.models import (
     SupportApplication,
     SupportConnection,
     SupportConversation,
+    SupportConversationReport,
+    SupportMessage,
     SupportVacancy,
 )
 from support.services.conversations import open_manager_conversation
@@ -254,6 +256,105 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.assertEqual(
             opened_chat.request["QUERY_STRING"],
             f"organization={self.organization.public_id}",
+        )
+
+    def test_support_chat_matches_jobhub_actions_and_avatar_routes_by_stage(self):
+        self.post_action(
+            {
+                "action": "application_approve",
+                "application_id": self.application.public_id,
+            },
+            status_filter="approved",
+        )
+        connection = self.application.support_connection
+        conversation, _ = open_manager_conversation(
+            candidate=self.candidate,
+            connection=connection,
+        )
+        self.post_action(
+            {
+                "action": "connection_documents",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+        detail_url = (
+            reverse(
+                "support:conversation-detail",
+                kwargs={"conversation_public_id": conversation.public_id},
+            )
+            + f"?organization={self.organization.public_id}"
+        )
+
+        detail = self.client.get(detail_url)
+
+        self.assertEqual(detail.status_code, 200)
+        self.assertContains(detail, "Pavel Candidate")
+        self.assertContains(detail, 'class="jh-chat-head"')
+        self.assertIn("view=processing", detail.context["counterpart_profile_url"])
+        self.assertIn(f"focus={connection.public_id}", detail.context["counterpart_profile_url"])
+
+        sent = self.client.post(
+            detail_url,
+            {"action": "send", "body": "Первое сообщение"},
+        )
+        self.assertRedirects(sent, detail_url)
+        first = SupportMessage.objects.get(
+            conversation=conversation,
+            body="Первое сообщение",
+        )
+        replied = self.client.post(
+            detail_url,
+            {
+                "action": "send",
+                "body": "Ответ",
+                "reply_to_id": first.id,
+            },
+        )
+        self.assertRedirects(replied, detail_url)
+        reply = SupportMessage.objects.get(conversation=conversation, body="Ответ")
+        self.assertEqual(reply.reply_to, first)
+
+        edited = self.client.post(
+            detail_url,
+            {"action": "edit", "message_id": reply.id, "body": "Исправленный ответ"},
+        )
+        self.assertRedirects(edited, detail_url)
+        reply.refresh_from_db()
+        self.assertEqual(reply.body, "Исправленный ответ")
+        self.assertIsNotNone(reply.edited_at)
+
+        reported = self.client.post(
+            detail_url,
+            {"action": "report", "reason": "other", "message": "Проверка"},
+        )
+        self.assertRedirects(reported, detail_url)
+        self.assertTrue(
+            SupportConversationReport.objects.filter(
+                conversation=conversation,
+                reporter=self.owner,
+                reported_user=self.candidate,
+            ).exists()
+        )
+
+        processing_focus = self.client.get(detail.context["counterpart_profile_url"])
+        self.assertContains(processing_focus, f'id="candidate-{connection.public_id}"')
+        self.assertContains(processing_focus, "is-focused")
+
+        self.post_action(
+            {
+                "action": "connection_coordinator",
+                "connection_id": connection.public_id,
+            },
+            status_filter="approved",
+        )
+        worker_detail = self.client.get(detail_url)
+        self.assertIn(
+            reverse(
+                "support:worker-card",
+                kwargs={"connection_public_id": connection.public_id},
+            ),
+            worker_detail.context["counterpart_profile_url"],
         )
 
     def test_onboarding_tab_creates_document_request_without_worker_card(self):

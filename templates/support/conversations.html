@@ -1,34 +1,38 @@
 {% extends "employer/base.html" %}
-
 {% block title %}{{ employer_t.support_nav_staff_chats }} — JobHub Support{% endblock %}
-
 {% block extra_head %}
-<style>
-  .support-chat-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
-  .support-conversation-list { display:grid; gap:10px; }
-  .support-conversation { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:center; padding:15px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); text-decoration:none; }
-  .support-conversation:hover { border-color:rgba(24,223,103,.52); background:rgba(24,223,103,.07); }
-  .support-conversation-main { min-width:0; display:grid; gap:5px; }
-  .support-conversation-title { font-size:16px; font-weight:900; }
-  .support-conversation-people { overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
-  .support-conversation-meta { color:var(--muted); font-size:11px; white-space:nowrap; }
-</style>
+  <style>
+    .jh-chat-list { display:grid; gap:10px; }
+    .jh-chat-row { display:grid; grid-template-columns:48px minmax(0,1fr) auto; gap:12px; align-items:center; padding:13px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); text-decoration:none; }
+    .jh-chat-row:hover { border-color:rgba(24,223,103,.52); background:rgba(24,223,103,.07); }
+    .jh-chat-avatar { width:48px; height:48px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:rgba(24,223,103,.14); color:var(--green); font-weight:900; }
+    .jh-chat-avatar img { width:100%; height:100%; object-fit:cover; }
+    .jh-chat-row-main { min-width:0; }
+    .jh-chat-name { display:flex; align-items:center; gap:8px; font-weight:900; }
+    .jh-chat-preview, .jh-chat-kind { display:block; overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+    .jh-chat-kind { margin-top:3px; color:#d7edf9; }
+    .jh-chat-meta { display:grid; justify-items:end; gap:6px; color:var(--muted); font-size:11px; }
+    .jh-chat-unread { min-width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:0 6px; background:var(--green); color:#052012; font-size:11px; font-weight:900; }
+  </style>
 {% endblock %}
-
+{% block extra_body %}
+  <script>setInterval(() => { if (!document.hidden) window.location.reload(); }, 15000);</script>
+{% endblock %}
 {% block content %}
   <section class="jh-card">
-    <p class="support-chat-kicker">JobHub Support · {{ organization.display_name }}</p>
     <h1 class="jh-title">{{ employer_t.support_nav_staff_chats }}</h1>
     <p class="jh-subtitle">{{ employer_t.support_chats_subtitle }}</p>
     {% if conversation_rows %}
-      <div class="support-conversation-list">
+      <div class="jh-chat-list">
         {% for item in conversation_rows %}
-          <a class="support-conversation" href="{{ item.detail_url }}?organization={{ organization.public_id }}">
-            <span class="support-conversation-main">
-              <span class="support-conversation-title">{% if item.title %}{{ item.title }}{% else %}{{ item.kind_label }}{% endif %}</span>
-              <span class="support-conversation-people">{% if item.participants %}{{ item.participants|join:", " }}{% else %}{{ employer_t.support_chats_no_other_participants }}{% endif %}</span>
+          <a class="jh-chat-row" href="{{ item.detail_url }}?organization={{ organization.public_id }}">
+            <span class="jh-chat-avatar">{% if item.counterpart_avatar_url %}<img src="{{ item.counterpart_avatar_url }}" alt="">{% else %}{{ item.counterpart_name|first|upper }}{% endif %}</span>
+            <span class="jh-chat-row-main">
+              <span class="jh-chat-name">{{ item.counterpart_name|default:item.kind_label }}</span>
+              <span class="jh-chat-kind">{% if item.title %}{{ item.title }}{% else %}{{ item.kind_label }}{% endif %}</span>
+              <span class="jh-chat-preview">{% if item.last_message %}{% if item.last_message.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ item.last_message.body }}{% endif %}{% else %}{{ employer_t.support_chats_empty_messages }}{% endif %}</span>
             </span>
-            <span class="support-conversation-meta">{{ item.updated_at|date:"d.m H:i" }}</span>
+            <span class="jh-chat-meta"><span>{% if item.last_message %}{{ item.last_message.created_at|date:"d.m H:i" }}{% else %}{{ item.updated_at|date:"d.m H:i" }}{% endif %}</span>{% if item.unread_count %}<span class="jh-chat-unread">{{ item.unread_count }}</span>{% endif %}</span>
           </a>
         {% endfor %}
       </div>
