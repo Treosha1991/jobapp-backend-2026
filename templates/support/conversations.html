@@ -38,7 +38,7 @@
         panes.forEach((pane) => { pane.hidden = pane.dataset.chatPane !== name; });
         if (updateUrl && window.history && window.history.replaceState) {
           const url = new URL(window.location.href);
-          if (name === 'workers') url.searchParams.set('view', 'workers');
+          if (name === 'staff') url.searchParams.set('view', 'staff');
           else url.searchParams.delete('view');
           window.history.replaceState({}, '', url);
         }
@@ -73,16 +73,16 @@
     <h1 class="jh-title">{{ employer_t.support_nav_staff_chats }}</h1>
     <p class="jh-subtitle">{{ employer_t.support_chats_subtitle }}</p>
     <div class="jh-chat-tabs" role="tablist" aria-label="{{ employer_t.support_nav_staff_chats }}">
-      <button class="jh-btn jh-chat-tab" type="button" role="tab" data-chat-tab="staff" aria-selected="{% if active_chat_tab == 'staff' %}true{% else %}false{% endif %}">{{ employer_t.support_chats_staff_tab }}</button>
       <button class="jh-btn jh-chat-tab" type="button" role="tab" data-chat-tab="workers" aria-selected="{% if active_chat_tab == 'workers' %}true{% else %}false{% endif %}">{{ employer_t.support_chats_workers_tab }}</button>
+      <button class="jh-btn jh-chat-tab" type="button" role="tab" data-chat-tab="staff" aria-selected="{% if active_chat_tab == 'staff' %}true{% else %}false{% endif %}">{{ employer_t.support_chats_staff_tab }}</button>
     </div>
-    <section class="jh-chat-pane" data-chat-pane="staff"{% if active_chat_tab != 'staff' %} hidden{% endif %}>
-      <input class="jh-chat-search" type="search" data-chat-filter autocomplete="off" placeholder="{{ employer_t.support_chats_search_staff }}" aria-label="{{ employer_t.support_chats_search_staff }}">
-      {% include "support/_conversation_list.html" with rows=staff_conversation_rows empty_text=employer_t.support_chats_staff_empty %}
-    </section>
     <section class="jh-chat-pane" data-chat-pane="workers"{% if active_chat_tab != 'workers' %} hidden{% endif %}>
       <input class="jh-chat-search" type="search" data-chat-filter autocomplete="off" placeholder="{{ employer_t.support_chats_search_workers }}" aria-label="{{ employer_t.support_chats_search_workers }}">
       {% include "support/_conversation_list.html" with rows=worker_conversation_rows empty_text=employer_t.support_chats_workers_empty %}
+    </section>
+    <section class="jh-chat-pane" data-chat-pane="staff"{% if active_chat_tab != 'staff' %} hidden{% endif %}>
+      <input class="jh-chat-search" type="search" data-chat-filter autocomplete="off" placeholder="{{ employer_t.support_chats_search_staff }}" aria-label="{{ employer_t.support_chats_search_staff }}">
+      {% include "support/_conversation_list.html" with rows=staff_conversation_rows empty_text=employer_t.support_chats_staff_empty %}
     </section>
   </section>
 {% endblock %}

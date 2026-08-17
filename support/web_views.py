@@ -704,7 +704,7 @@ def conversations_workspace(request):
         item for item in snapshot["conversation_rows"] if item["audience"] == "workers"
     ]
     snapshot["active_chat_tab"] = (
-        "workers" if request.GET.get("view") == "workers" else "staff"
+        "staff" if request.GET.get("view") == "staff" else "workers"
     )
     return render(request, "support/conversations.html", snapshot)
 

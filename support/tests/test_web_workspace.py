@@ -374,7 +374,29 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "Unread")
         self.assertContains(response, "Read")
         body = response.content.decode()
+        self.assertLess(
+            body.index('data-chat-tab="workers"'),
+            body.index('data-chat-tab="staff"'),
+        )
+        self.assertContains(
+            response,
+            'data-chat-tab="workers" aria-selected="true"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'data-chat-pane="workers"',
+            html=False,
+        )
         self.assertLess(body.index("Unread Worker"), body.index("Andrei Worker"))
+
+        staff_response = self.client.get(f"{url}&view=staff")
+        self.assertEqual(staff_response.status_code, 200)
+        self.assertContains(
+            staff_response,
+            'data-chat-tab="staff" aria-selected="true"',
+            html=False,
+        )
 
     def test_opening_chat_marks_conversation_and_bell_notification_read(self):
         owner_membership = OrganizationMembership.objects.get(
