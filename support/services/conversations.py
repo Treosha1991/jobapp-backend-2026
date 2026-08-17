@@ -6,6 +6,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from jobs.models import UserBlock
 
 from support.models import (
+    InAppNotification,
     OrganizationMembership,
     SupportConnection,
     SupportConversation,
@@ -454,7 +455,23 @@ def forward_text_message(*, sender, source_message, recipient, client_message_id
 
 
 def mark_conversation_read(*, user, conversation):
+    """Mark the conversation and its notification-center entries as read.
+
+    The native phone notification uses the same stable target key.  Mobile
+    clients clear that target from the system tray when this endpoint is
+    called/opened, while this update removes the matching unread items from
+    JobHub's in-app bell.
+    """
+
     member = require_conversation_access(user=user, conversation=conversation)
-    member.last_read_at = timezone.now()
-    member.save(update_fields=["last_read_at"])
+    read_at = timezone.now()
+    with transaction.atomic():
+        member.last_read_at = read_at
+        member.save(update_fields=["last_read_at"])
+        InAppNotification.objects.filter(
+            recipient=user,
+            read_at__isnull=True,
+            outbox__target_kind="conversation",
+            outbox__target_public_id=conversation.public_id,
+        ).update(read_at=read_at)
     return member

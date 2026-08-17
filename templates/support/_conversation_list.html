@@ -1,0 +1,22 @@
+{% if rows %}
+  <div class="jh-chat-list">
+    {% for item in rows %}
+      <a class="jh-chat-row{% if item.unread_count %} is-unread{% endif %}" data-chat-row data-search-text="{{ item.search_names|lower }} {{ item.title|lower }}" href="{{ item.detail_url }}?organization={{ organization.public_id }}">
+        <span class="jh-chat-avatar">{% if item.counterpart_avatar_url %}<img src="{{ item.counterpart_avatar_url }}" alt="">{% else %}{{ item.counterpart_name|first|upper }}{% endif %}</span>
+        <span class="jh-chat-row-main">
+          <span class="jh-chat-name">{{ item.counterpart_name|default:item.kind_label }}</span>
+          <span class="jh-chat-kind">{% if item.title %}{{ item.title }}{% else %}{{ item.kind_label }}{% endif %}</span>
+          <span class="jh-chat-preview">{% if item.last_message %}{% if item.last_message.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ item.last_message.body }}{% endif %}{% else %}{{ employer_t.support_chats_empty_messages }}{% endif %}</span>
+        </span>
+        <span class="jh-chat-meta">
+          <span>{% if item.last_message %}{{ item.last_message.created_at|date:"d.m H:i" }}{% else %}{{ item.updated_at|date:"d.m H:i" }}{% endif %}</span>
+          {% if item.unread_count %}<span class="jh-chat-unread" aria-label="{{ employer_t.support_chats_unread }}">{{ item.unread_count }}</span>{% endif %}
+          <span class="jh-chat-read-state{% if item.unread_count %} is-unread{% endif %}">{{ item.read_state_label }}</span>
+        </span>
+      </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="jh-empty"><p>{{ empty_text }}</p></div>
+{% endif %}
+<div class="jh-empty jh-chat-search-empty" data-chat-search-empty><p>{{ employer_t.support_chats_search_empty }}</p></div>

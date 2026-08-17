@@ -178,7 +178,6 @@
             {% if employer_support_header.fleet %}<a class="jh-btn{% if employer_support_header.active.fleet %} primary{% endif %}" href="{% url 'support:fleet' %}?{{ employer_support_header.query }}">{{ employer_t.support_nav_fleet }}</a>{% endif %}
             {% if employer_support_header.housing %}<a class="jh-btn{% if employer_support_header.active.housing %} primary{% endif %}" href="{% url 'support:housing' %}?{{ employer_support_header.query }}">{{ employer_t.support_nav_housing }}</a>{% endif %}
             {% if employer_support_header.staff_chats %}<a class="jh-btn{% if employer_support_header.active.staff_chats %} primary{% endif %}" href="{% url 'support:conversations' %}?{{ employer_support_header.query }}">{{ employer_t.support_nav_staff_chats }}</a>{% endif %}
-            <a class="jh-btn{% if employer_support_header.active.general_chat %} primary{% endif %}" href="{% url 'employer:chat_list' %}">{{ employer_t.support_nav_general_chat }}{% if employer_chat_unread_count %}<span class="jh-chat-badge">{{ employer_chat_unread_count }}</span>{% endif %}</a>
           {% endif %}
         {% endif %}
         <details class="jh-menu">
@@ -196,6 +195,7 @@
               <span class="jh-wallet"><span>{{ employer_t.wallet_balance }}</span><strong>{{ employer_wallet_total|default:0 }}</strong><span>{{ employer_t.credits }}</span></span>
               <div class="jh-menu-separator"></div>
               {% if employer_support_workspace_available %}
+                <a class="jh-btn{% if employer_support_header.active.general_chat %} primary{% endif %}" href="{% url 'employer:chat_list' %}">{{ employer_t.support_nav_general_chat }}{% if employer_chat_unread_count %}<span class="jh-chat-badge">{{ employer_chat_unread_count }}</span>{% endif %}</a>
                 {% if employer_support_header.time %}<a class="jh-btn" href="{% url 'support:time' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_time }}</a>{% endif %}
                 {% if employer_support_header.transport %}<a class="jh-btn" href="{% url 'support:transport' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_transport }}</a>{% endif %}
                 {% if employer_support_header.team %}<a class="jh-btn" href="{% url 'support:team' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_team }}</a>{% endif %}

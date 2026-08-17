@@ -36,6 +36,7 @@ from support.models import (
     SupportApplication,
     SupportConnection,
     SupportConversation,
+    SupportConversationMember,
     SupportMessage,
     TransportCrewResourceOverride,
     TransportCrewScheduleOverride,
@@ -716,6 +717,12 @@ def conversation_workspace_snapshot(*, user, organization_public_id=None):
             else next((item.user for item in active_members if item.user_id != user.id), None)
         )
         own_member = next((item for item in active_members if item.user_id == user.id), None)
+        other_members = [item for item in active_members if item.user_id != user.id]
+        audience = (
+            "workers"
+            if any(item.role == SupportConversationMember.ROLE_WORKER for item in other_members)
+            else "staff"
+        )
         last_message = (
             SupportMessage.objects.filter(conversation=conversation)
             .select_related("sender")
@@ -748,8 +755,13 @@ def conversation_workspace_snapshot(*, user, organization_public_id=None):
                 "counterpart_avatar_url": avatar_url,
                 "last_message": last_message,
                 "unread_count": unread_messages.count(),
+                "audience": audience,
+                "search_names": " ".join(participant_names),
+                "activity_at": last_message.created_at if last_message else conversation.updated_at,
             }
         )
+    rows.sort(key=lambda item: item["activity_at"], reverse=True)
+    rows.sort(key=lambda item: item["unread_count"] > 0, reverse=True)
     return {
         "organization": organization,
         "membership": membership,

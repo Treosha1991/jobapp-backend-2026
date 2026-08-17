@@ -2,42 +2,87 @@
 {% block title %}{{ employer_t.support_nav_staff_chats }} — JobHub Support{% endblock %}
 {% block extra_head %}
   <style>
-    .jh-chat-list { display:grid; gap:10px; }
-    .jh-chat-row { display:grid; grid-template-columns:48px minmax(0,1fr) auto; gap:12px; align-items:center; padding:13px; border:1px solid var(--line); border-radius:17px; background:rgba(5,22,36,.28); text-decoration:none; }
+    .jh-chat-tabs { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 14px; }
+    .jh-chat-tab[aria-selected="true"] { background:linear-gradient(135deg,var(--green),var(--green-2)); border-color:rgba(24,223,103,.7); color:#052012; }
+    .jh-chat-pane[hidden] { display:none; }
+    .jh-chat-search { width:100%; margin:0 0 12px; }
+    .jh-chat-list { display:grid; gap:8px; }
+    .jh-chat-row { display:grid; grid-template-columns:44px minmax(0,1fr) auto; gap:11px; align-items:center; padding:11px 12px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.28); text-decoration:none; }
     .jh-chat-row:hover { border-color:rgba(24,223,103,.52); background:rgba(24,223,103,.07); }
-    .jh-chat-avatar { width:48px; height:48px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:rgba(24,223,103,.14); color:var(--green); font-weight:900; }
+    .jh-chat-row.is-unread { border-color:rgba(24,223,103,.38); background:rgba(24,223,103,.055); }
+    .jh-chat-avatar { width:44px; height:44px; display:grid; place-items:center; overflow:hidden; border-radius:50%; background:rgba(24,223,103,.14); color:var(--green); font-weight:900; }
     .jh-chat-avatar img { width:100%; height:100%; object-fit:cover; }
     .jh-chat-row-main { min-width:0; }
     .jh-chat-name { display:flex; align-items:center; gap:8px; font-weight:900; }
     .jh-chat-preview, .jh-chat-kind { display:block; overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
-    .jh-chat-kind { margin-top:3px; color:#d7edf9; }
-    .jh-chat-meta { display:grid; justify-items:end; gap:6px; color:var(--muted); font-size:11px; }
+    .jh-chat-kind { margin-top:2px; color:#d7edf9; }
+    .jh-chat-meta { display:grid; min-width:78px; justify-items:end; gap:4px; color:var(--muted); font-size:10px; }
     .jh-chat-unread { min-width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:0 6px; background:var(--green); color:#052012; font-size:11px; font-weight:900; }
+    .jh-chat-read-state.is-unread { color:#9fffc0; font-weight:800; }
+    .jh-chat-search-empty { display:none; }
+    @media (max-width:620px) {
+      .jh-chat-row { grid-template-columns:40px minmax(0,1fr); }
+      .jh-chat-avatar { width:40px; height:40px; }
+      .jh-chat-meta { grid-column:2; display:flex; justify-content:flex-start; align-items:center; }
+    }
   </style>
 {% endblock %}
 {% block extra_body %}
-  <script>setInterval(() => { if (!document.hidden) window.location.reload(); }, 15000);</script>
+  <script>
+    (() => {
+      const tabs = [...document.querySelectorAll('[data-chat-tab]')];
+      const panes = [...document.querySelectorAll('[data-chat-pane]')];
+
+      function activateTab(name, updateUrl = true) {
+        tabs.forEach((tab) => tab.setAttribute('aria-selected', tab.dataset.chatTab === name ? 'true' : 'false'));
+        panes.forEach((pane) => { pane.hidden = pane.dataset.chatPane !== name; });
+        if (updateUrl && window.history && window.history.replaceState) {
+          const url = new URL(window.location.href);
+          if (name === 'workers') url.searchParams.set('view', 'workers');
+          else url.searchParams.delete('view');
+          window.history.replaceState({}, '', url);
+        }
+      }
+
+      tabs.forEach((tab) => tab.addEventListener('click', () => activateTab(tab.dataset.chatTab)));
+      document.querySelectorAll('[data-chat-filter]').forEach((input) => {
+        input.addEventListener('input', () => {
+          const pane = input.closest('[data-chat-pane]');
+          const query = input.value.trim().toLocaleLowerCase();
+          let visible = 0;
+          pane.querySelectorAll('[data-chat-row]').forEach((row) => {
+            const matches = !query || (row.dataset.searchText || '').toLocaleLowerCase().includes(query);
+            row.hidden = !matches;
+            if (matches) visible += 1;
+          });
+          const empty = pane.querySelector('[data-chat-search-empty]');
+          if (empty) empty.style.display = visible === 0 && query ? 'block' : 'none';
+        });
+      });
+
+      activateTab('{{ active_chat_tab|escapejs }}', false);
+      window.setInterval(() => {
+        const searching = [...document.querySelectorAll('[data-chat-filter]')].some((input) => input.value.trim());
+        if (!document.hidden && !searching) window.location.reload();
+      }, 15000);
+    })();
+  </script>
 {% endblock %}
 {% block content %}
   <section class="jh-card">
     <h1 class="jh-title">{{ employer_t.support_nav_staff_chats }}</h1>
     <p class="jh-subtitle">{{ employer_t.support_chats_subtitle }}</p>
-    {% if conversation_rows %}
-      <div class="jh-chat-list">
-        {% for item in conversation_rows %}
-          <a class="jh-chat-row" href="{{ item.detail_url }}?organization={{ organization.public_id }}">
-            <span class="jh-chat-avatar">{% if item.counterpart_avatar_url %}<img src="{{ item.counterpart_avatar_url }}" alt="">{% else %}{{ item.counterpart_name|first|upper }}{% endif %}</span>
-            <span class="jh-chat-row-main">
-              <span class="jh-chat-name">{{ item.counterpart_name|default:item.kind_label }}</span>
-              <span class="jh-chat-kind">{% if item.title %}{{ item.title }}{% else %}{{ item.kind_label }}{% endif %}</span>
-              <span class="jh-chat-preview">{% if item.last_message %}{% if item.last_message.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ item.last_message.body }}{% endif %}{% else %}{{ employer_t.support_chats_empty_messages }}{% endif %}</span>
-            </span>
-            <span class="jh-chat-meta"><span>{% if item.last_message %}{{ item.last_message.created_at|date:"d.m H:i" }}{% else %}{{ item.updated_at|date:"d.m H:i" }}{% endif %}</span>{% if item.unread_count %}<span class="jh-chat-unread">{{ item.unread_count }}</span>{% endif %}</span>
-          </a>
-        {% endfor %}
-      </div>
-    {% else %}
-      <div class="jh-empty"><h2>{{ employer_t.support_chats_empty_title }}</h2><p>{{ employer_t.support_chats_empty_text }}</p></div>
-    {% endif %}
+    <div class="jh-chat-tabs" role="tablist" aria-label="{{ employer_t.support_nav_staff_chats }}">
+      <button class="jh-btn jh-chat-tab" type="button" role="tab" data-chat-tab="staff" aria-selected="{% if active_chat_tab == 'staff' %}true{% else %}false{% endif %}">{{ employer_t.support_chats_staff_tab }}</button>
+      <button class="jh-btn jh-chat-tab" type="button" role="tab" data-chat-tab="workers" aria-selected="{% if active_chat_tab == 'workers' %}true{% else %}false{% endif %}">{{ employer_t.support_chats_workers_tab }}</button>
+    </div>
+    <section class="jh-chat-pane" data-chat-pane="staff"{% if active_chat_tab != 'staff' %} hidden{% endif %}>
+      <input class="jh-chat-search" type="search" data-chat-filter autocomplete="off" placeholder="{{ employer_t.support_chats_search_staff }}" aria-label="{{ employer_t.support_chats_search_staff }}">
+      {% include "support/_conversation_list.html" with rows=staff_conversation_rows empty_text=employer_t.support_chats_staff_empty %}
+    </section>
+    <section class="jh-chat-pane" data-chat-pane="workers"{% if active_chat_tab != 'workers' %} hidden{% endif %}>
+      <input class="jh-chat-search" type="search" data-chat-filter autocomplete="off" placeholder="{{ employer_t.support_chats_search_workers }}" aria-label="{{ employer_t.support_chats_search_workers }}">
+      {% include "support/_conversation_list.html" with rows=worker_conversation_rows empty_text=employer_t.support_chats_workers_empty %}
+    </section>
   </section>
 {% endblock %}

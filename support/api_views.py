@@ -420,6 +420,16 @@ def _conversation_payload(conversation, *, viewer):
         (member for member in conversation.members.all() if member.user_id == viewer.id),
         None,
     )
+    last_message = conversation.messages.order_by("-created_at", "-id").first()
+    unread_messages = conversation.messages.exclude(sender=viewer)
+    if viewer_member is not None and viewer_member.last_read_at is not None:
+        unread_messages = unread_messages.filter(created_at__gt=viewer_member.last_read_at)
+    unread_count = unread_messages.count()
+    audience = (
+        "workers"
+        if any(member.role == SupportConversationMember.ROLE_WORKER for member in other_members)
+        else "staff"
+    )
     return {
         "id": str(conversation.public_id),
         "kind": conversation.kind,
@@ -433,7 +443,14 @@ def _conversation_payload(conversation, *, viewer):
             {"display_name": _user_display_name(member.user), "role": member.role}
             for member in other_members
         ],
+        "audience": audience,
         "updated_at": conversation.updated_at,
+        "last_message_preview": (
+            "" if last_message is None or last_message.deleted_at else last_message.body
+        ),
+        "last_message_at": last_message.created_at if last_message is not None else None,
+        "unread_count": unread_count,
+        "is_read": unread_count == 0,
         "group_push_enabled": (
             viewer_member.group_push_enabled
             if conversation.kind == SupportConversation.KIND_GROUP and viewer_member is not None
@@ -2017,6 +2034,10 @@ class MySupportConversationListAPIView(SupportFeatureAPIView):
             except PermissionDenied:
                 continue
             visible.append(_conversation_payload(conversation, viewer=request.user))
+        # Keep recent activity inside each group, but always surface chats that
+        # still require the viewer's attention before already-read chats.
+        visible.sort(key=lambda item: item["updated_at"], reverse=True)
+        visible.sort(key=lambda item: item["unread_count"] > 0, reverse=True)
         return Response({"results": visible})
 
 
@@ -2109,7 +2130,12 @@ class SupportConversationReadAPIView(SupportFeatureAPIView):
             public_id=conversation_public_id,
         )
         member = mark_conversation_read(user=request.user, conversation=conversation)
-        return Response({"last_read_at": member.last_read_at})
+        return Response(
+            {
+                "last_read_at": member.last_read_at,
+                "notification_target": f"support:conversation:{conversation.public_id}",
+            }
+        )
 
 
 class SupportMessageTranslationAPIView(SupportFeatureAPIView):

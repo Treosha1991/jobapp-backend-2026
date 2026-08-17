@@ -12,6 +12,7 @@ from support.models import (
     HousingPlace,
     HousingRoom,
     HousingSite,
+    InAppNotification,
     MembershipInvitation,
     DriverVehicleAssignment,
     NotificationOutbox,
@@ -36,6 +37,7 @@ from support.models import (
     WorkProject,
     Worksite,
 )
+from support.services.notifications import enqueue_support_notification
 from support.services.organizations import activate_organization, create_organization
 
 
@@ -274,6 +276,162 @@ class SupportWorkspaceWebTests(TestCase):
                 sender=self.owner,
             ).exists()
         )
+
+    def test_chat_directory_splits_staff_and_workers_and_surfaces_unread_first(self):
+        owner_membership = OrganizationMembership.objects.get(
+            organization=self.organization,
+            user=self.owner,
+        )
+        limited_membership = OrganizationMembership.objects.get(
+            organization=self.organization,
+            user=self.limited_member,
+        )
+        staff_chat = SupportConversation.objects.create(
+            organization=self.organization,
+            kind=SupportConversation.KIND_GROUP,
+            title="Office coordinators",
+            created_by=self.owner,
+        )
+        SupportConversationMember.objects.create(
+            conversation=staff_chat,
+            user=self.owner,
+            organization_membership=owner_membership,
+            role=SupportConversationMember.ROLE_STAFF,
+        )
+        SupportConversationMember.objects.create(
+            conversation=staff_chat,
+            user=self.limited_member,
+            organization_membership=limited_membership,
+            role=SupportConversationMember.ROLE_STAFF,
+        )
+
+        read_worker_chat = SupportConversation.objects.create(
+            organization=self.organization,
+            kind=SupportConversation.KIND_MANAGER,
+            title="Read worker chat",
+            created_by=self.owner,
+        )
+        read_owner_member = SupportConversationMember.objects.create(
+            conversation=read_worker_chat,
+            user=self.owner,
+            organization_membership=owner_membership,
+            role=SupportConversationMember.ROLE_STAFF,
+        )
+        SupportConversationMember.objects.create(
+            conversation=read_worker_chat,
+            user=self.candidate,
+            role=SupportConversationMember.ROLE_WORKER,
+        )
+        SupportMessage.objects.create(
+            conversation=read_worker_chat,
+            sender=self.candidate,
+            body="Already handled",
+            original_language="ru",
+        )
+        read_owner_member.last_read_at = timezone.now()
+        read_owner_member.save(update_fields=["last_read_at"])
+
+        unread_worker = self.worker_connection.candidate
+        unread_worker.first_name = "Unread"
+        unread_worker.last_name = "Worker"
+        unread_worker.save(update_fields=["first_name", "last_name"])
+        unread_worker_chat = SupportConversation.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            kind=SupportConversation.KIND_MANAGER,
+            title="Unread worker chat",
+            created_by=self.owner,
+        )
+        SupportConversationMember.objects.create(
+            conversation=unread_worker_chat,
+            user=self.owner,
+            organization_membership=owner_membership,
+            role=SupportConversationMember.ROLE_STAFF,
+        )
+        SupportConversationMember.objects.create(
+            conversation=unread_worker_chat,
+            user=unread_worker,
+            role=SupportConversationMember.ROLE_WORKER,
+        )
+        SupportMessage.objects.create(
+            conversation=unread_worker_chat,
+            sender=unread_worker,
+            body="Needs attention",
+            original_language="ru",
+        )
+
+        self.client.force_login(self.owner)
+        url = f"/employer/support/conversations/?organization={self.organization.public_id}"
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Employees")
+        self.assertContains(response, "Workers")
+        self.assertContains(response, "Search employees by name")
+        self.assertContains(response, "Search workers by name")
+        self.assertContains(response, "Office coordinators")
+        self.assertContains(response, "Unread Worker")
+        self.assertContains(response, "Unread")
+        self.assertContains(response, "Read")
+        body = response.content.decode()
+        self.assertLess(body.index("Unread Worker"), body.index("Andrei Worker"))
+
+    def test_opening_chat_marks_conversation_and_bell_notification_read(self):
+        owner_membership = OrganizationMembership.objects.get(
+            organization=self.organization,
+            user=self.owner,
+        )
+        conversation = SupportConversation.objects.create(
+            organization=self.organization,
+            kind=SupportConversation.KIND_GROUP,
+            title="Unread office chat",
+            created_by=self.limited_member,
+        )
+        owner_member = SupportConversationMember.objects.create(
+            conversation=conversation,
+            user=self.owner,
+            organization_membership=owner_membership,
+            role=SupportConversationMember.ROLE_STAFF,
+        )
+        SupportConversationMember.objects.create(
+            conversation=conversation,
+            user=self.limited_member,
+            organization_membership=OrganizationMembership.objects.get(
+                organization=self.organization,
+                user=self.limited_member,
+            ),
+            role=SupportConversationMember.ROLE_STAFF,
+        )
+        SupportMessage.objects.create(
+            conversation=conversation,
+            sender=self.limited_member,
+            body="Please read this",
+            original_language="en",
+        )
+        outbox, _ = enqueue_support_notification(
+            organization=self.organization,
+            recipient=self.owner,
+            notification_code="conversation.message",
+            target_kind="conversation",
+            target_public_id=conversation.public_id,
+            target_key=f"support:conversation:{conversation.public_id}",
+            collapse_key=f"support:conversation:{conversation.public_id}",
+            dedupe_key=f"web-read-test:{conversation.public_id}",
+        )
+        notification = InAppNotification.objects.get(outbox=outbox)
+
+        self.client.force_login(self.owner)
+        detail_url = (
+            f"/employer/support/conversations/{conversation.public_id}/"
+            f"?organization={self.organization.public_id}"
+        )
+        response = self.client.get(detail_url)
+
+        self.assertEqual(response.status_code, 200)
+        owner_member.refresh_from_db()
+        notification.refresh_from_db()
+        self.assertIsNotNone(owner_member.last_read_at)
+        self.assertIsNotNone(notification.read_at)
 
     def test_limited_member_gets_workspace_but_no_candidate_or_worker_data(self):
         self.client.force_login(self.limited_member)

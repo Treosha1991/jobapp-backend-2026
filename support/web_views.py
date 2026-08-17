@@ -679,7 +679,7 @@ def workers_workspace(request):
 
 @login_required(login_url="employer:login")
 def conversations_workspace(request):
-    """List only Support chats assigned to the current employee."""
+    """List assigned Support chats, split into staff and worker tabs."""
 
     if not is_support_feature_enabled():
         raise Http404("support_not_available")
@@ -693,6 +693,19 @@ def conversations_workspace(request):
             "support:conversation-detail",
             kwargs={"conversation_public_id": item["conversation_id"]},
         )
+        item["read_state_label"] = tr(
+            request,
+            "support_chats_unread" if item["unread_count"] else "support_chats_read",
+        )
+    snapshot["staff_conversation_rows"] = [
+        item for item in snapshot["conversation_rows"] if item["audience"] == "staff"
+    ]
+    snapshot["worker_conversation_rows"] = [
+        item for item in snapshot["conversation_rows"] if item["audience"] == "workers"
+    ]
+    snapshot["active_chat_tab"] = (
+        "workers" if request.GET.get("view") == "workers" else "staff"
+    )
     return render(request, "support/conversations.html", snapshot)
 
 
