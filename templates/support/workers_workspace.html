@@ -7,6 +7,11 @@
   .workers-head { margin-bottom:18px; }
   .workers-head h1 { margin:0 0 5px; font-size:32px; }
   .workers-head p { margin:0; color:var(--muted); }
+  .workers-search { display:flex; align-items:end; gap:9px; max-width:520px; margin:0 0 16px; }
+  .workers-search .jh-field { flex:1; margin:0; }
+  .workers-search .jh-input { width:100%; }
+  .workers-search-clear { flex:0 0 auto; }
+  .workers-search-empty { display:none; margin-top:14px; }
   .support-readiness { min-width:132px; }
   .support-readiness > span { display:grid; gap:5px; font-size:11px; font-weight:800; }
   .support-readiness small { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
@@ -42,6 +47,13 @@
     <p>{{ employer_t.support_workspace_workers_subtitle }}</p>
   </header>
   {% if worker_rows %}
+    <div class="workers-search">
+      <label class="jh-field">
+        <span>{{ employer_t.support_workers_search }}</span>
+        <input class="jh-input" type="search" data-worker-search autocomplete="off" placeholder="{{ employer_t.support_workers_search_placeholder }}">
+      </label>
+      <button class="jh-btn workers-search-clear" type="button" data-worker-search-clear hidden>×</button>
+    </div>
     <div class="jh-table-wrap">
       <table class="jh-table">
         <thead><tr>
@@ -62,6 +74,7 @@
         </tr>{% endfor %}</tbody>
       </table>
     </div>
+    <div class="jh-empty workers-search-empty" data-worker-search-empty>{{ employer_t.support_workers_search_empty }}</div>
   {% else %}
     <div class="jh-empty">{{ employer_t.support_workspace_no_workers }}</div>
   {% endif %}
@@ -74,8 +87,23 @@
   const body = document.querySelector('[data-worker-rows]');
   if (!body) return;
   const controls = [...document.querySelectorAll('.worker-sort')];
+  const search = document.querySelector('[data-worker-search]');
+  const clearSearch = document.querySelector('[data-worker-search-clear]');
+  const searchEmpty = document.querySelector('[data-worker-search-empty]');
   const rows = [...body.querySelectorAll('[data-worker-row]')].map((row, index) => ({ row, index }));
   const nameCompare = (a, b) => a.row.dataset.name.localeCompare(b.row.dataset.name, document.documentElement.lang || undefined, { sensitivity: 'base' });
+
+  function applySearch() {
+    const query = (search?.value || '').trim().toLocaleLowerCase();
+    let visible = 0;
+    rows.forEach(({ row }) => {
+      const matches = !query || row.dataset.name.toLocaleLowerCase().includes(query);
+      row.hidden = !matches;
+      if (matches) visible += 1;
+    });
+    if (clearSearch) clearSearch.hidden = !query;
+    if (searchEmpty) searchEmpty.style.display = query && visible === 0 ? 'block' : 'none';
+  }
 
   function applySort(control) {
     controls.forEach((other) => { if (other !== control) other.value = ''; });
@@ -99,6 +127,12 @@
   }
 
   controls.forEach((control) => control.addEventListener('change', () => applySort(control)));
+  search?.addEventListener('input', applySearch);
+  clearSearch?.addEventListener('click', () => {
+    search.value = '';
+    applySearch();
+    search.focus();
+  });
 })();
 </script>
 {% endblock %}

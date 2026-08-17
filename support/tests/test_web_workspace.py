@@ -244,6 +244,9 @@ class SupportWorkspaceWebTests(TestCase):
         workers = self.client.get(workers_url)
         self.assertEqual(workers.status_code, 200)
         self.assertContains(workers, "workspace-active-worker")
+        self.assertContains(workers, "Search workers")
+        self.assertContains(workers, "Enter a first or last name")
+        self.assertContains(workers, "data-worker-search")
         self.assertContains(
             workers,
             f"/employer/support/workers/{self.worker_connection.public_id}/",
