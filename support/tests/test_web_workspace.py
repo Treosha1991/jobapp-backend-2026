@@ -942,6 +942,10 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(response, "Apple Project BV")
         self.assertContains(response, "Lelystad, Zandbang 22")
         self.assertNotContains(response, "Crew encrypted internal identifier")
+        self.assertContains(response, 'data-fleet-search')
+        self.assertContains(response, "Name, registration, driver, or route")
+        self.assertContains(response, 'data-fleet-search-row')
+        self.assertContains(response, 'data-search-text="project crew car project-123')
         self.assertContains(
             response,
             f'data-fleet-dialog-target="fleet-edit-{vehicle.public_id}"',
@@ -1765,6 +1769,12 @@ class SupportWorkspaceWebTests(TestCase):
         project = WorkProject.objects.get(organization=self.organization, internal_name="Flevosap BV")
         detail_url = f"/employer/support/projects/{project.public_id}/?organization={self.organization.public_id}"
         self.assertRedirects(response, detail_url)
+
+        projects_page = self.client.get(projects_url)
+        self.assertContains(projects_page, 'data-project-search')
+        self.assertContains(projects_page, "Enter a name or address")
+        self.assertContains(projects_page, 'data-project-search-row')
+        self.assertContains(projects_page, 'data-search-text="flevosap bv biddinghuizen')
 
         response = self.client.post(
             detail_url,

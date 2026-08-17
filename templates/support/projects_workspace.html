@@ -24,6 +24,11 @@
   .projects-wide { grid-column:1/-1; }
   .projects-table a { color:#dff4ff; font-weight:850; text-decoration:none; }
   .projects-table a:hover { color:var(--green); }
+  .projects-search { display:flex; align-items:end; gap:9px; max-width:620px; margin:0 0 14px; }
+  .projects-search .jh-field { flex:1; margin:0; }
+  .projects-search .jh-input { width:100%; }
+  .projects-search-clear { flex:0 0 auto; }
+  .projects-search-empty { display:none; margin-top:14px; }
   .projects-empty { padding:12px; text-align:center; border:1px dashed var(--line); border-radius:13px; color:var(--muted); }
   .projects-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:12px; }
   .projects-summary-item, .projects-item { padding:10px; border:1px solid var(--line); border-radius:13px; background:rgba(5,22,36,.28); }
@@ -99,8 +104,15 @@
       <section class="projects-section">
         <h2>{{ employer_t.support_projects_title }}</h2>
         {% if projects %}
+          <div class="projects-search">
+            <label class="jh-field">
+              <span>{{ employer_t.support_projects_search }}</span>
+              <input class="jh-input" type="search" data-project-search autocomplete="off" placeholder="{{ employer_t.support_projects_search_placeholder }}">
+            </label>
+            <button class="jh-btn projects-search-clear" type="button" data-project-search-clear hidden aria-label="{{ employer_t.support_search_clear }}" title="{{ employer_t.support_search_clear }}">×</button>
+          </div>
           <div class="jh-table-wrap"><table class="jh-table projects-table"><thead><tr><th>{{ employer_t.support_project_name }}</th><th>{{ employer_t.support_project_address }}</th><th>{{ employer_t.support_project_occupancy }}</th><th>{{ employer_t.support_project_starts_on }}</th><th>{{ employer_t.support_project_ends_on }}</th><th>{{ employer_t.support_project_edit }}</th></tr></thead><tbody>
-          {% for project in projects %}<tr>
+          {% for project in projects %}<tr data-project-search-row data-search-text="{{ project.worker_visible_name|lower }} {{ project.address_label|lower }}">
             <td><a href="{% url 'support:project-detail' project.public_id %}?organization={{ organization.public_id }}">{{ project.worker_visible_name }}</a></td>
             <td>{{ project.address_label }}</td>
             <td>{{ project.filled_places }}/{{ project.worker_capacity }}{% if project.draft_places %}<br><small>{{ employer_t.support_project_drafts }}: {{ project.draft_places }}</small>{% endif %}</td>
@@ -108,6 +120,7 @@
             <td><a class="jh-btn" href="{% url 'support:project-detail' project.public_id %}?organization={{ organization.public_id }}">{{ employer_t.support_project_edit }}</a></td>
           </tr>{% endfor %}
           </tbody></table></div>
+          <div class="projects-empty projects-search-empty" data-project-search-empty>{{ employer_t.support_projects_search_empty }}</div>
         {% else %}<div class="projects-empty">{{ employer_t.support_projects_empty }}</div>{% endif %}
       </section>
 
@@ -201,6 +214,27 @@
   </section>
   <script>
     document.addEventListener('DOMContentLoaded', function () {
+      const search = document.querySelector('[data-project-search]');
+      const clearSearch = document.querySelector('[data-project-search-clear]');
+      const searchEmpty = document.querySelector('[data-project-search-empty]');
+      const searchRows = [...document.querySelectorAll('[data-project-search-row]')];
+      function applyProjectSearch() {
+        const query = (search?.value || '').trim().toLocaleLowerCase();
+        let visible = 0;
+        searchRows.forEach(function (row) {
+          const matches = !query || (row.dataset.searchText || '').toLocaleLowerCase().includes(query);
+          row.hidden = !matches;
+          if (matches) visible += 1;
+        });
+        if (clearSearch) clearSearch.hidden = !query;
+        if (searchEmpty) searchEmpty.style.display = query && visible === 0 ? 'block' : 'none';
+      }
+      search?.addEventListener('input', applyProjectSearch);
+      clearSearch?.addEventListener('click', function () {
+        search.value = '';
+        applyProjectSearch();
+        search.focus();
+      });
       document.querySelectorAll('[data-project-dialog-target]').forEach(function (button) {
         button.addEventListener('click', function () {
           document.getElementById(button.dataset.projectDialogTarget)?.showModal();
