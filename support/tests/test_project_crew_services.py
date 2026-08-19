@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -45,6 +45,11 @@ from support.services.project_crews import (
 @override_settings(SUPPORT_FEATURE_ENABLED=True)
 class ProjectCrewServiceTests(TestCase):
     def setUp(self):
+        # Substitute-driver operations deliberately reject past dates.  Keep
+        # these fixtures relative to the day the suite runs so the tests do
+        # not expire when the calendar advances.
+        self.future_work_date = timezone.localdate() + timedelta(days=10)
+        self.next_future_work_date = self.future_work_date + timedelta(days=1)
         self.operator = User.objects.create_user(
             username="project-crew-service-operator",
             email="project-crew-service-operator@example.com",
@@ -224,7 +229,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_passenger_can_be_planned_while_driver_is_temporarily_absent(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self._publish(crew, [work_date])
         release_project_crew_member_days(
             actor=self.owner,
@@ -253,7 +258,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_releasing_crew_day_removes_obsolete_crew_absences(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self._publish(crew, [work_date])
         release_project_crew_member_days(
             actor=self.owner,
@@ -283,7 +288,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_released_passenger_day_can_be_restored(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self._publish(crew, [work_date])
         assign_project_crew_passenger(
             actor=self.owner,
@@ -322,7 +327,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_driver_day_off_can_be_cancelled_and_driver_restored(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self._publish(crew, [work_date])
         mark_worker_schedule_days_off(
             actor=self.owner,
@@ -542,7 +547,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_driver_day_off_publishes_crew_day_without_driver(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         mark_worker_schedule_days_off(
             actor=self.owner,
             connection=self.driver,
@@ -561,7 +566,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_driver_absence_keeps_published_crew_day_without_driver(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         shift = self._publish(crew, [work_date])[0]
 
         release_project_crew_member_days(
@@ -586,7 +591,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_substitute_candidates_put_available_crew_passenger_first(self):
         crew = self._crew()
-        dates = [date(2026, 8, 14), date(2026, 8, 15)]
+        dates = [self.future_work_date, self.next_future_work_date]
         self.passenger.has_driving_license = True
         self.passenger.save(update_fields=["has_driving_license", "updated_at"])
         self._publish(crew, dates)
@@ -622,7 +627,7 @@ class ProjectCrewServiceTests(TestCase):
             vehicle=self.second_vehicle,
             name="Other crew",
         )
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self.passenger.has_driving_license = True
         self.passenger.save(update_fields=["has_driving_license", "updated_at"])
         self._publish(target_crew, [work_date])
@@ -649,7 +654,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_substitute_candidates_require_primary_driver_absence(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self._publish(crew, [work_date])
 
         with self.assertRaises(ValidationError) as error:
@@ -665,7 +670,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_substitute_candidates_accept_red_day_without_legacy_absence_row(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         shift = self._publish(crew, [work_date])[0]
         shift.members.filter(role=ProjectCrewShiftMember.ROLE_DRIVER).delete()
 
@@ -692,7 +697,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_assign_substitute_driver_only_on_primary_absence_dates(self):
         crew = self._crew()
-        dates = [date(2026, 8, 14), date(2026, 8, 15)]
+        dates = [self.future_work_date, self.next_future_work_date]
         self.passenger.has_driving_license = True
         self.passenger.save(update_fields=["has_driving_license", "updated_at"])
         self._publish(crew, dates)
@@ -743,7 +748,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_new_substitute_replaces_entire_previous_selection_and_restores_passenger(self):
         crew = self._crew()
-        dates = [date(2026, 8, 14), date(2026, 8, 15)]
+        dates = [self.future_work_date, self.next_future_work_date]
         self.passenger.has_driving_license = True
         self.passenger.save(update_fields=["has_driving_license", "updated_at"])
         self._publish(crew, dates)
@@ -821,7 +826,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_releasing_crew_shift_cancels_active_substitution(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self.passenger.has_driving_license = True
         self.passenger.save(update_fields=["has_driving_license", "updated_at"])
         self._publish(crew, [work_date])
@@ -864,7 +869,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_substitute_day_off_cancels_substitution_and_leaves_no_driver(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self.passenger.has_driving_license = True
         self.passenger.save(update_fields=["has_driving_license", "updated_at"])
         self._publish(crew, [work_date])
@@ -911,7 +916,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_removing_substitute_passenger_closes_substitution_and_membership(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self.passenger.has_driving_license = True
         self.passenger.save(update_fields=["has_driving_license", "updated_at"])
         self._publish(crew, [work_date])
@@ -1063,7 +1068,7 @@ class ProjectCrewServiceTests(TestCase):
 
     def test_permanent_driver_replacement_cancels_future_substitution(self):
         crew = self._crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
         self.passenger.has_driving_license = True
         self.passenger.save(update_fields=["has_driving_license", "updated_at"])
         self._publish(crew, [work_date])

@@ -5,6 +5,8 @@ operations are intentionally isolated until the controlled UI cutover.
 """
 
 from datetime import datetime, time, timedelta
+import hashlib
+import json
 
 from django.db import IntegrityError, transaction
 from django.db.models import F, Q
@@ -12,6 +14,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from support.models import (
+    AuditEvent,
     DriverVehicleAssignment,
     ProjectCrew,
     ProjectCrewDriverSubstitution,
@@ -23,6 +26,7 @@ from support.models import (
     ProjectScheduleTemplate,
     ScheduledWorkShift,
     SupportConnection,
+    SupportOrganization,
     TransportCrew,
     Vehicle,
     WorkerProjectAssignment,
@@ -617,6 +621,7 @@ def assign_project_crew_substitute_driver(
     crew,
     substitute_driver_connection,
     work_dates,
+    request_id=None,
 ):
     """Replace the active substitute selection for a crew.
 
@@ -625,6 +630,19 @@ def assign_project_crew_substitute_driver(
     existing vehicle only on the chosen primary-driver absence dates.
     """
 
+    dates = _normalize_dates(work_dates)
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "crew_id": str(crew.public_id),
+                "substitute_driver_connection_id": str(
+                    substitute_driver_connection.public_id
+                ),
+                "work_dates": [item.isoformat() for item in dates],
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
     crew = ProjectCrew.objects.select_for_update().select_related("organization").get(pk=crew.pk)
     organization = crew.organization
     _require_permissions(actor=actor, organization=organization)
@@ -632,12 +650,34 @@ def assign_project_crew_substitute_driver(
         pk=substitute_driver_connection.pk
     )
     _require_connection(actor=actor, organization=organization, connection=substitute)
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.substitute_driver_assigned",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "driver_substitution_idempotency_key_reused",
+                    "The idempotency key was already used with different substitute-driver data.",
+                )
+            return list(
+                ProjectCrewDriverSubstitution.objects.filter(
+                    crew=crew,
+                    public_id__in=previous.details.get("substitution_ids", []),
+                ).order_by("work_date", "id")
+            )
     if not substitute.has_driving_license:
         _operation_error(
             "driver_licence_not_confirmed",
             "The substitute driver must have a confirmed driving licence.",
         )
-    dates = _normalize_dates(work_dates)
     candidates = project_crew_substitute_driver_candidates(
         crew=crew,
         work_dates=dates,
@@ -736,7 +776,19 @@ def assign_project_crew_substitute_driver(
             "substitute_driver": str(substitute.public_id),
             "work_dates": [item.isoformat() for item in dates],
             "replaced_records": len(active_substitutions),
+            "replaced_work_dates": [
+                item.work_date.isoformat() for item in active_substitutions
+            ],
+            "affected_dates": [
+                item.isoformat()
+                for item in sorted(
+                    set(dates) | {item.work_date for item in active_substitutions}
+                )
+            ],
+            "substitution_ids": [str(item.public_id) for item in created],
+            "request_fingerprint": request_fingerprint,
         },
+        request_id=request_id,
     )
     return created
 
@@ -778,10 +830,50 @@ def create_project_crew(
     vehicle,
     internal_name="",
     starts_on=None,
+    request_id=None,
 ):
     """Create a crew and its first effective driver/vehicle pair atomically."""
 
     _require_permissions(actor=actor, organization=organization)
+    normalized_name = (internal_name or "").strip()
+    if not normalized_name:
+        _operation_error("crew_name_required", "Enter the crew name.")
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "project_id": str(project.public_id),
+                "internal_name": normalized_name,
+                "driver_connection_id": str(driver_connection.public_id),
+                "vehicle_id": str(vehicle.public_id),
+                "starts_on": str(starts_on or timezone.localdate()),
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=organization.pk
+    )
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.created",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "crew_idempotency_key_reused",
+                    "The idempotency key was already used with different crew data.",
+                )
+            return ProjectCrew.objects.select_related("project").get(
+                organization=organization,
+                public_id=previous.target_public_id,
+            )
     project = WorkProject.objects.select_for_update().get(pk=project.pk)
     driver_connection = SupportConnection.objects.select_for_update().get(pk=driver_connection.pk)
     vehicle = Vehicle.objects.select_for_update().get(pk=vehicle.pk)
@@ -868,7 +960,7 @@ def create_project_crew(
     crew = ProjectCrew(
         organization=organization,
         project=project,
-        internal_name=internal_name,
+        internal_name=normalized_name,
         created_by=actor,
     )
     crew.full_clean()
@@ -898,7 +990,38 @@ def create_project_crew(
             "driver": str(driver_connection.public_id),
             "vehicle": str(vehicle.public_id),
             "starts_on": resource.starts_on.isoformat(),
+            "request_fingerprint": request_fingerprint,
         },
+        request_id=request_id,
+    )
+    return crew
+
+
+@transaction.atomic
+def update_project_crew(*, actor, crew, internal_name):
+    """Rename an active crew without changing resources, roster or shifts."""
+
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    organization = crew.organization
+    _require_permissions(actor=actor, organization=organization)
+    if crew.state != ProjectCrew.STATE_ACTIVE or not crew.project.is_active:
+        _operation_error("crew_not_available", "The selected crew is not active.")
+    normalized_name = (internal_name or "").strip()
+    if not normalized_name:
+        _operation_error("crew_name_required", "Enter the crew name.")
+    crew.internal_name = normalized_name
+    crew.full_clean()
+    crew.save(update_fields=("internal_name", "updated_at"))
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.updated",
+        target=crew,
+        details={"project": str(crew.project.public_id)},
     )
     return crew
 
@@ -1050,23 +1173,74 @@ def publish_project_crew_shifts(
     starts_at_time,
     ends_at_time,
     break_minutes=0,
+    request_id=None,
 ):
     """Create or replace directly-entered published shifts for selected days."""
 
-    crew = (
-        ProjectCrew.objects.select_for_update()
-        .select_related("organization", "project")
-        .get(pk=crew.pk)
-    )
-    organization = crew.organization
-    _require_permissions(actor=actor, organization=organization)
     dates = _normalize_dates(work_dates)
+    # Validate the time fields before looking up an idempotent replay. A bad
+    # retry must never inherit the result of an earlier valid operation.
+    sample_starts_at, sample_ends_at = _local_shift_period(
+        work_date=dates[0],
+        starts_at_time=starts_at_time,
+        ends_at_time=ends_at_time,
+    )
     try:
         break_minutes = int(break_minutes)
     except (TypeError, ValueError):
         _operation_error("break_minutes_invalid", "Break must be a whole number of minutes.")
     if break_minutes < 0:
         _operation_error("break_minutes_invalid", "Break cannot be negative.")
+    shift_minutes = int((sample_ends_at - sample_starts_at).total_seconds() // 60)
+    if break_minutes >= shift_minutes:
+        _operation_error(
+            "break_minutes_invalid",
+            "Break must be shorter than the shift.",
+        )
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "crew_id": str(crew.public_id),
+                "work_dates": [item.isoformat() for item in dates],
+                "starts_at_time": starts_at_time.isoformat(),
+                "ends_at_time": ends_at_time.isoformat(),
+                "break_minutes": break_minutes,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    _require_permissions(actor=actor, organization=organization)
+    if crew.state != ProjectCrew.STATE_ACTIVE or not crew.project.is_active:
+        _operation_error("crew_not_available", "The selected crew is not active.")
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.shifts_published",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "shift_idempotency_key_reused",
+                    "The idempotency key was already used with different shift data.",
+                )
+            return list(
+                ProjectCrewShift.objects.filter(crew=crew, work_date__in=dates)
+                .order_by("work_date", "id")
+            )
 
     shifts = []
     created_count = 0
@@ -1136,19 +1310,59 @@ def publish_project_crew_shifts(
             "starts_at_time": starts_at_time.isoformat(),
             "ends_at_time": ends_at_time.isoformat(),
             "break_minutes": break_minutes,
+            "request_fingerprint": request_fingerprint,
         },
+        request_id=request_id,
     )
     return shifts
 
 
 @transaction.atomic
-def release_project_crew_shifts(*, actor, crew, work_dates):
+def release_project_crew_shifts(*, actor, crew, work_dates, request_id=None):
     """Cancel selected crew days without deleting their audit/history context."""
 
-    crew = ProjectCrew.objects.select_for_update().select_related("organization").get(pk=crew.pk)
-    organization = crew.organization
-    _require_permissions(actor=actor, organization=organization)
     dates = _normalize_dates(work_dates)
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "crew_id": str(crew.public_id),
+                "work_dates": [item.isoformat() for item in dates],
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    _require_permissions(actor=actor, organization=organization)
+    if crew.state != ProjectCrew.STATE_ACTIVE or not crew.project.is_active:
+        _operation_error("crew_not_available", "The selected crew is not active.")
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.shifts_released",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "shift_idempotency_key_reused",
+                    "The idempotency key was already used with different shift data.",
+                )
+            return list(
+                ProjectCrewShift.objects.filter(crew=crew, work_date__in=dates)
+                .order_by("work_date", "id")
+            )
     shifts = list(
         ProjectCrewShift.objects.select_for_update()
         .filter(crew=crew, work_date__in=dates)
@@ -1183,7 +1397,9 @@ def release_project_crew_shifts(*, actor, crew, work_dates):
         details={
             "work_dates": [item.isoformat() for item in dates],
             "days_released": len(changed),
+            "request_fingerprint": request_fingerprint,
         },
+        request_id=request_id,
     )
     return changed
 
@@ -1197,20 +1413,87 @@ def assign_project_crew_passenger(
     scope,
     selected_dates=None,
     effective_on=None,
+    request_id=None,
 ):
     """Add a passenger to all future or explicitly selected crew days."""
 
-    crew = ProjectCrew.objects.select_for_update().select_related("organization").get(pk=crew.pk)
-    organization = crew.organization
-    _require_permissions(actor=actor, organization=organization)
-    connection = SupportConnection.objects.select_for_update().get(pk=connection.pk)
-    _require_connection(actor=actor, organization=organization, connection=connection)
     if scope not in PASSENGER_SCOPES:
         _operation_error("passenger_scope_invalid", "Passenger scope must be future or selected.")
+    dates = (
+        _normalize_dates(selected_dates)
+        if scope == PASSENGER_SCOPE_SELECTED
+        else []
+    )
+    effective_on = (
+        effective_on or timezone.localdate()
+        if scope == PASSENGER_SCOPE_FUTURE
+        else None
+    )
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "crew_id": str(crew.public_id),
+                "connection_id": str(connection.public_id),
+                "scope": scope,
+                "effective_on": effective_on.isoformat() if effective_on else None,
+                "work_dates": [item.isoformat() for item in dates],
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    _require_permissions(actor=actor, organization=organization)
+    if crew.state != ProjectCrew.STATE_ACTIVE or not crew.project.is_active:
+        _operation_error("crew_not_available", "The selected crew is not active.")
+    connection = SupportConnection.objects.select_for_update().get(pk=connection.pk)
+    _require_connection(actor=actor, organization=organization, connection=connection)
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.passenger_assigned",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "passenger_idempotency_key_reused",
+                    "The idempotency key was already used with different passenger data.",
+                )
+            replay_dates = [
+                datetime.fromisoformat(item).date()
+                for item in previous.details.get("work_dates", [])
+            ]
+            roster_entry = (
+                ProjectCrewPassenger.objects.filter(
+                    crew=crew,
+                    connection=connection,
+                    ends_on__isnull=True,
+                ).first()
+                if scope == PASSENGER_SCOPE_FUTURE
+                else None
+            )
+            shifts = list(
+                ProjectCrewShift.objects.filter(
+                    crew=crew,
+                    work_date__in=replay_dates,
+                ).order_by("work_date", "id")
+            )
+            return roster_entry, shifts
 
     roster_entry = None
     if scope == PASSENGER_SCOPE_FUTURE:
-        effective_on = effective_on or timezone.localdate()
         roster_entry = ProjectCrewPassenger.objects.select_for_update().filter(
             crew=crew,
             connection=connection,
@@ -1236,7 +1519,6 @@ def assign_project_crew_passenger(
         )
         dates = [shift.work_date for shift in shifts]
     else:
-        dates = _normalize_dates(selected_dates)
         shifts = list(
             ProjectCrewShift.objects.select_for_update()
             .filter(
@@ -1280,7 +1562,10 @@ def assign_project_crew_passenger(
             "scope": scope,
             "work_dates": [item.isoformat() for item in dates],
             "days_added": added_count,
+            "effective_on": effective_on.isoformat() if effective_on else None,
+            "request_fingerprint": request_fingerprint,
         },
+        request_id=request_id,
     )
     return roster_entry, shifts
 
@@ -1302,19 +1587,67 @@ def remove_project_crew_passenger(
     scope,
     selected_dates=None,
     effective_on=None,
+    request_id=None,
 ):
     """Remove a passenger from future or selected crew days and roster state."""
 
-    crew = ProjectCrew.objects.select_for_update().select_related("organization").get(pk=crew.pk)
-    organization = crew.organization
-    _require_permissions(actor=actor, organization=organization)
-    connection = SupportConnection.objects.select_for_update().get(pk=connection.pk)
-    _require_connection(actor=actor, organization=organization, connection=connection)
     if scope not in PASSENGER_SCOPES:
         _operation_error("passenger_scope_invalid", "Passenger scope must be future or selected.")
+    dates = (
+        _normalize_dates(selected_dates)
+        if scope == PASSENGER_SCOPE_SELECTED
+        else []
+    )
+    effective_on = (
+        effective_on or timezone.localdate()
+        if scope == PASSENGER_SCOPE_FUTURE
+        else None
+    )
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "crew_id": str(crew.public_id),
+                "connection_id": str(connection.public_id),
+                "scope": scope,
+                "effective_on": effective_on.isoformat() if effective_on else None,
+                "work_dates": [item.isoformat() for item in dates],
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    _require_permissions(actor=actor, organization=organization)
+    if crew.state != ProjectCrew.STATE_ACTIVE or not crew.project.is_active:
+        _operation_error("crew_not_available", "The selected crew is not active.")
+    connection = SupportConnection.objects.select_for_update().get(pk=connection.pk)
+    _require_connection(actor=actor, organization=organization, connection=connection)
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.passenger_removed",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "passenger_idempotency_key_reused",
+                    "The idempotency key was already used with different passenger data.",
+                )
+            return int(previous.details.get("records_removed", 0))
 
     if scope == PASSENGER_SCOPE_FUTURE:
-        effective_on = effective_on or timezone.localdate()
         for entry in ProjectCrewPassenger.objects.select_for_update().filter(
             crew=crew,
             connection=connection,
@@ -1332,7 +1665,6 @@ def remove_project_crew_passenger(
             work_date__gte=effective_on,
         ).delete()
     else:
-        dates = _normalize_dates(selected_dates)
         shifts = ProjectCrewShift.objects.select_for_update().filter(
             crew=crew,
             work_date__in=dates,
@@ -1364,9 +1696,303 @@ def remove_project_crew_passenger(
             "scope": scope,
             "work_dates": [item.isoformat() for item in sorted(set(dates))],
             "records_removed": removed_count,
+            "effective_on": effective_on.isoformat() if effective_on else None,
+            "request_fingerprint": request_fingerprint,
         },
+        request_id=request_id,
     )
     return removed_count
+
+
+def _driver_exception_fingerprint(*, crew, work_dates, connection=None):
+    payload = {
+        "crew_id": str(crew.public_id),
+        "work_dates": [item.isoformat() for item in sorted(set(work_dates))],
+    }
+    if connection is not None:
+        payload["connection_id"] = str(connection.public_id)
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+@transaction.atomic
+def mark_project_crew_driver_absence(
+    *,
+    actor,
+    crew,
+    work_dates,
+    request_id=None,
+):
+    """Mark the effective primary driver absent on concrete crew days."""
+
+    dates = _normalize_dates(work_dates)
+    request_fingerprint = _driver_exception_fingerprint(
+        crew=crew,
+        work_dates=dates,
+    )
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    _require_permissions(actor=actor, organization=organization)
+    if crew.state != ProjectCrew.STATE_ACTIVE or not crew.project.is_active:
+        _operation_error("crew_not_available", "The selected crew is not active.")
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.driver_absence_marked",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "driver_absence_idempotency_key_reused",
+                    "The idempotency key was already used with different driver-absence data.",
+                )
+            return list(
+                ProjectCrewMemberAbsence.objects.filter(
+                    crew=crew,
+                    public_id__in=previous.details.get("absence_ids", []),
+                ).order_by("work_date", "id")
+            )
+
+    shifts_by_date = {
+        shift.work_date: shift
+        for shift in ProjectCrewShift.objects.select_for_update().filter(
+            crew=crew,
+            work_date__in=dates,
+            state=ProjectCrewShift.STATE_PUBLISHED,
+        )
+    }
+    missing_shift_dates = [item for item in dates if item not in shifts_by_date]
+    if missing_shift_dates:
+        _operation_error(
+            "crew_shift_missing",
+            "A published crew shift is required on every driver-absence date.",
+            work_dates=[item.isoformat() for item in missing_shift_dates],
+        )
+
+    created_or_existing = []
+    primary_driver_ids = set()
+    for work_date in dates:
+        resource = _resource_for_date(crew=crew, work_date=work_date, lock=True)
+        if resource is None:
+            _operation_error(
+                "crew_resource_missing",
+                "The crew has no primary driver and vehicle on one of the selected dates.",
+                work_date=work_date.isoformat(),
+            )
+        primary_driver_ids.add(str(resource.driver_connection.public_id))
+        absence, _ = ProjectCrewMemberAbsence.objects.get_or_create(
+            organization=organization,
+            crew=crew,
+            connection=resource.driver_connection,
+            work_date=work_date,
+            defaults={"created_by": actor},
+        )
+        absence.full_clean()
+        created_or_existing.append(absence)
+        ProjectCrewShiftMember.objects.filter(
+            shift=shifts_by_date[work_date],
+            connection=resource.driver_connection,
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+        ).delete()
+
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.driver_absence_marked",
+        target=crew,
+        details={
+            "primary_drivers": sorted(primary_driver_ids),
+            "work_dates": [item.isoformat() for item in dates],
+            "absence_ids": [str(item.public_id) for item in created_or_existing],
+            "request_fingerprint": request_fingerprint,
+        },
+        request_id=request_id,
+    )
+    return created_or_existing
+
+
+@transaction.atomic
+def cancel_project_crew_driver_absence(
+    *,
+    actor,
+    crew,
+    work_dates,
+    request_id=None,
+):
+    """Cancel primary-driver absence and restore the applicable daily role."""
+
+    dates = _normalize_dates(work_dates)
+    request_fingerprint = _driver_exception_fingerprint(
+        crew=crew,
+        work_dates=dates,
+    )
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    _require_permissions(actor=actor, organization=organization)
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.driver_absence_cancelled",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "driver_absence_idempotency_key_reused",
+                    "The idempotency key was already used with different driver-absence data.",
+                )
+            return [
+                datetime.fromisoformat(item).date()
+                for item in previous.details.get("work_dates", [])
+            ]
+
+    restored_dates = []
+    for work_date in dates:
+        resource = _resource_for_date(crew=crew, work_date=work_date, lock=True)
+        if resource is None:
+            _operation_error(
+                "crew_resource_missing",
+                "The crew has no primary driver and vehicle on one of the selected dates.",
+                work_date=work_date.isoformat(),
+            )
+        absence = ProjectCrewMemberAbsence.objects.select_for_update().filter(
+            crew=crew,
+            connection=resource.driver_connection,
+            work_date=work_date,
+        ).first()
+        if absence is None:
+            _operation_error(
+                "driver_absence_missing",
+                "The primary driver is not marked absent on one of the selected dates.",
+                work_date=work_date.isoformat(),
+            )
+        shift = ProjectCrewShift.objects.select_for_update().filter(
+            crew=crew,
+            work_date=work_date,
+            state=ProjectCrewShift.STATE_PUBLISHED,
+        ).first()
+        if shift is None:
+            _operation_error(
+                "crew_shift_missing",
+                "A published crew shift is required on every driver-absence date.",
+                work_date=work_date.isoformat(),
+            )
+        absence.delete()
+        _restore_connection_to_crew_shift(
+            actor=actor,
+            shift=shift,
+            connection=resource.driver_connection,
+        )
+        restored_dates.append(work_date)
+
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.driver_absence_cancelled",
+        target=crew,
+        details={
+            "work_dates": [item.isoformat() for item in restored_dates],
+            "request_fingerprint": request_fingerprint,
+        },
+        request_id=request_id,
+    )
+    return restored_dates
+
+
+@transaction.atomic
+def cancel_project_crew_substitute_driver(
+    *,
+    actor,
+    crew,
+    work_dates,
+    request_id=None,
+):
+    """Remove active temporary substitutions without cancelling absences."""
+
+    dates = _normalize_dates(work_dates)
+    request_fingerprint = _driver_exception_fingerprint(
+        crew=crew,
+        work_dates=dates,
+    )
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
+    _require_permissions(actor=actor, organization=organization)
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.substitute_driver_cancelled",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "driver_substitution_idempotency_key_reused",
+                    "The idempotency key was already used with different substitute-driver data.",
+                )
+            return [
+                datetime.fromisoformat(item).date()
+                for item in previous.details.get("work_dates", [])
+            ]
+
+    closed = _close_active_substitutions(
+        crew=crew,
+        work_dates=dates,
+        actor=actor,
+        state=ProjectCrewDriverSubstitution.STATE_CANCELLED,
+    )
+    if not closed:
+        _operation_error(
+            "driver_substitution_missing",
+            "No active substitute driver exists on the selected dates.",
+        )
+    closed_dates = sorted({item.work_date for item in closed})
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.substitute_driver_cancelled",
+        target=crew,
+        details={
+            "work_dates": [item.isoformat() for item in closed_dates],
+            "request_fingerprint": request_fingerprint,
+        },
+        request_id=request_id,
+    )
+    return closed_dates
 
 
 @transaction.atomic
@@ -1699,12 +2325,32 @@ def replace_project_crew_driver(
     crew,
     new_driver_connection,
     effective_on=None,
+    request_id=None,
 ):
     """Permanently replace the driver from a date, keeping the crew vehicle."""
 
-    crew = ProjectCrew.objects.select_for_update().select_related("organization").get(pk=crew.pk)
-    organization = crew.organization
+    effective_on = effective_on or timezone.localdate()
+    request_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "crew_id": str(crew.public_id),
+                "new_driver_connection_id": str(new_driver_connection.public_id),
+                "effective_on": effective_on.isoformat(),
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = (
+        ProjectCrew.objects.select_for_update()
+        .select_related("organization", "project")
+        .get(pk=crew.pk)
+    )
     _require_permissions(actor=actor, organization=organization)
+    if crew.state != ProjectCrew.STATE_ACTIVE or not crew.project.is_active:
+        _operation_error("crew_not_available", "The selected crew is not active.")
     new_driver = SupportConnection.objects.select_for_update().get(pk=new_driver_connection.pk)
     _require_connection(actor=actor, organization=organization, connection=new_driver)
     if not new_driver.has_driving_license:
@@ -1712,7 +2358,34 @@ def replace_project_crew_driver(
             "driver_licence_not_confirmed",
             "The selected passenger does not have a confirmed driving licence.",
         )
-    effective_on = effective_on or timezone.localdate()
+    if request_id is not None:
+        previous = (
+            AuditEvent.objects.filter(
+                organization=organization,
+                actor=actor,
+                action="project_crew.driver_replaced",
+                request_id=request_id,
+            )
+            .order_by("id")
+            .first()
+        )
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != request_fingerprint:
+                _operation_error(
+                    "driver_replacement_idempotency_key_reused",
+                    "The idempotency key was already used with different driver replacement data.",
+                )
+            replacement = ProjectCrewResourceAssignment.objects.filter(
+                crew=crew,
+                public_id=previous.details.get("resource_assignment"),
+            ).first()
+            if replacement is None:
+                replacement = _resource_for_date(
+                    crew=crew,
+                    work_date=effective_on,
+                    lock=True,
+                )
+            return replacement
     current = (
         ProjectCrewResourceAssignment.objects.select_for_update()
         .select_related("driver_connection", "vehicle")
@@ -1730,6 +2403,26 @@ def replace_project_crew_driver(
     if effective_on < current.starts_on:
         effective_on = current.starts_on
     if current.driver_connection_id == new_driver.id:
+        if request_id is not None:
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="project_crew.driver_replaced",
+                target=crew,
+                details={
+                    "previous_driver": str(new_driver.public_id),
+                    "new_driver": str(new_driver.public_id),
+                    "vehicle": str(current.vehicle.public_id),
+                    "effective_on": effective_on.isoformat(),
+                    "future_days_updated": 0,
+                    "resource_assignment": str(current.public_id),
+                    "released_other_crew": "",
+                    "released_other_vehicle": "",
+                    "request_fingerprint": request_fingerprint,
+                    "idempotent_noop": True,
+                },
+                request_id=request_id,
+            )
         return current
 
     future_substitution_dates = ProjectCrewDriverSubstitution.objects.filter(
@@ -1890,12 +2583,15 @@ def replace_project_crew_driver(
             "vehicle": str(vehicle.public_id),
             "effective_on": effective_on.isoformat(),
             "future_days_updated": len(shifts),
+            "resource_assignment": str(replacement.public_id),
             "released_other_crew": (
                 str(released_other_crew.public_id) if released_other_crew else ""
             ),
             "released_other_vehicle": (
                 str(released_other_vehicle.public_id) if released_other_vehicle else ""
             ),
+            "request_fingerprint": request_fingerprint,
         },
+        request_id=request_id,
     )
     return replacement

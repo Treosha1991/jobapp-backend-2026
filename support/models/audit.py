@@ -38,6 +38,13 @@ class AuditEvent(models.Model):
 
     class Meta:
         ordering = ("-created_at", "-id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "actor", "action", "request_id"),
+                condition=models.Q(request_id__isnull=False),
+                name="support_unique_audit_request_action",
+            ),
+        ]
         indexes = [
             models.Index(fields=("organization", "created_at")),
             models.Index(fields=("actor", "created_at")),

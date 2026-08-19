@@ -1,7 +1,9 @@
 from support.models import AuditEvent
 
 
-def record_audit_event(*, organization, actor, action, target=None, details=None):
+def record_audit_event(
+    *, organization, actor, action, target=None, details=None, request_id=None
+):
     """Write an append-only Support audit event with safe metadata only.
 
     Callers must pass a deliberately small allow-listed ``details`` mapping.
@@ -18,4 +20,5 @@ def record_audit_event(*, organization, actor, action, target=None, details=None
         target_type=target_type,
         target_public_id=target_public_id,
         details=details or {},
+        request_id=request_id,
     )

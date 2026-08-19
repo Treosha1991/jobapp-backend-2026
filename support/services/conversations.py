@@ -113,10 +113,7 @@ def open_manager_conversation_for_staff(*, actor, connection):
             SupportConnection.objects.select_for_update()
             .get(pk=connection.pk)
         )
-        if connection.is_archived or connection.stage not in {
-            SupportConnection.STAGE_MANAGER,
-            SupportConnection.STAGE_DOCUMENTS,
-        }:
+        if connection.is_archived or connection.stage == SupportConnection.STAGE_CLOSED:
             raise ValidationError({"connection": "manager_chat_not_available_at_current_stage"})
         actor_membership = active_membership_for(
             user=actor,
@@ -211,6 +208,106 @@ def open_manager_conversation_for_staff(*, actor, connection):
     return conversation, created
 
 
+def open_staff_conversation(*, actor, target_membership):
+    """Open a private company chat between two active staff accounts."""
+
+    organization = target_membership.organization
+    actor_membership = active_membership_for(user=actor, organization=organization)
+    if (
+        actor_membership is None
+        or not target_membership.is_active
+        or target_membership.user_id == actor.id
+    ):
+        raise PermissionDenied("support_staff_conversation_not_available")
+
+    with transaction.atomic():
+        candidates = (
+            SupportConversation.objects.select_for_update()
+            .filter(
+                organization=organization,
+                connection__isnull=True,
+                kind=SupportConversation.KIND_JOBHUB,
+                members__user=actor,
+            )
+            .prefetch_related("members__user")
+            .distinct()
+        )
+        conversation = next(
+            (
+                item
+                for item in candidates
+                if {
+                    member.user_id
+                    for member in item.members.all()
+                    if member.left_at is None
+                }
+                == {actor.id, target_membership.user_id}
+                and all(
+                    member.role == SupportConversationMember.ROLE_STAFF
+                    for member in item.members.all()
+                    if member.left_at is None
+                )
+            ),
+            None,
+        )
+        created = conversation is None
+        if conversation is None:
+            conversation = SupportConversation.objects.create(
+                organization=organization,
+                kind=SupportConversation.KIND_JOBHUB,
+                created_by=actor,
+            )
+            SupportConversationMember.objects.bulk_create(
+                [
+                    SupportConversationMember(
+                        conversation=conversation,
+                        user=actor,
+                        organization_membership=actor_membership,
+                        role=SupportConversationMember.ROLE_STAFF,
+                    ),
+                    SupportConversationMember(
+                        conversation=conversation,
+                        user=target_membership.user,
+                        organization_membership=target_membership,
+                        role=SupportConversationMember.ROLE_STAFF,
+                    ),
+                ]
+            )
+        else:
+            updates = []
+            if conversation.state != SupportConversation.STATE_ACTIVE:
+                conversation.state = SupportConversation.STATE_ACTIVE
+                updates.append("state")
+            if conversation.archived_at is not None:
+                conversation.archived_at = None
+                updates.append("archived_at")
+            if updates:
+                conversation.save(update_fields=[*updates, "updated_at"])
+            for membership in (actor_membership, target_membership):
+                member = conversation.members.get(user=membership.user)
+                member_updates = []
+                if member.left_at is not None:
+                    member.left_at = None
+                    member_updates.append("left_at")
+                if member.organization_membership_id != membership.id:
+                    member.organization_membership = membership
+                    member_updates.append("organization_membership")
+                if member_updates:
+                    member.save(update_fields=member_updates)
+
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="conversation.staff_opened",
+            target=conversation,
+            details={
+                "created": created,
+                "target_membership_id": str(target_membership.public_id),
+            },
+        )
+    return conversation, created
+
+
 def _active_member_or_denied(*, user, conversation):
     member = SupportConversationMember.objects.filter(
         conversation=conversation,
@@ -227,6 +324,8 @@ def _can_use_conversation(*, user, conversation, member):
         active_membership = active_membership_for(user=user, organization=conversation.organization)
         if active_membership is None:
             raise PermissionDenied("support_conversation_not_available")
+        if conversation.kind == SupportConversation.KIND_JOBHUB and conversation.connection_id is None:
+            return
         if not has_permission(
             user=user,
             organization=conversation.organization,

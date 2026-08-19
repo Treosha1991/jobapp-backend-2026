@@ -418,6 +418,15 @@ class SupportPipelineTests(TestCase):
             format="json",
         )
         self.assertEqual(documents.status_code, 200, documents.data)
+        processing_queue = self.owner_client.get(
+            f"/api/v2/support/organizations/{self.organization.public_id}/applications/"
+        )
+        self.assertEqual(processing_queue.status_code, 200, processing_queue.data)
+        self.assertEqual(
+            processing_queue.data["processing_results"][0]["connection_id"],
+            first_connection_id,
+        )
+        self.assertTrue(processing_queue.data["permissions"]["document_request"])
         coordinator = self.owner_client.post(
             f"/api/v2/support/connections/{first_connection_id}/transition/",
             {"next_stage": "coordinator_stage"},

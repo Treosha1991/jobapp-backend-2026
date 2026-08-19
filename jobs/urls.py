@@ -42,6 +42,7 @@ from .api import (
     VacancyContactAccessStateAPIView,
     InternalVacancyDeleteAPIView,
     InternalVacancyImportAPIView,
+    InternalVacancyPinAPIView,
 )
 from .auth_api import (
     RegisterAPIView,
@@ -126,6 +127,7 @@ urlpatterns = [
     path("employer/board-publishing/", EmployerBoardPublishingAPIView.as_view(), name="employer-board-publishing"),
     path("internal/import-vacancy/", InternalVacancyImportAPIView.as_view(), name="internal-import-vacancy"),
     path("internal/delete-vacancies/", InternalVacancyDeleteAPIView.as_view(), name="internal-delete-vacancies"),
+    path("internal/pin-vacancy/", InternalVacancyPinAPIView.as_view(), name="internal-pin-vacancy"),
 
     path("vacancies/", VacancyListAPIView.as_view(), name="vacancy-list"),
     path("vacancies/bookmark-status/", VacancyBookmarkStatusAPIView.as_view(), name="vacancy-bookmark-status"),

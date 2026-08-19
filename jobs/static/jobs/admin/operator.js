@@ -827,3 +827,270 @@ document.addEventListener("DOMContentLoaded", () => {
 
   syncHeaderOffset();
 });
+
+/* CODEX_OPERATOR_RESPONSIVE_LAYOUT_START */
+(function () {
+  "use strict";
+
+  var desktopQuery = window.matchMedia("(min-width: 768px)");
+  var selectors = [
+    "#main",
+    ".main",
+    "#content",
+    ".content",
+    "#content-main",
+    "#changelist",
+    ".changelist-form-container",
+    "#changelist-form",
+    ".results",
+    "#result_list",
+    "#changelist-filter"
+  ];
+  var watchedProperties = [
+    "width",
+    "min-width",
+    "max-width",
+    "margin-left",
+    "margin-right",
+    "left",
+    "right"
+  ];
+  var scheduled = false;
+
+  function clearLateSizing() {
+    scheduled = false;
+    if (!desktopQuery.matches || !document.body.classList.contains("change-list")) {
+      return;
+    }
+
+    document.documentElement.classList.add("operator-wide-admin");
+    selectors.forEach(function (selector) {
+      document.querySelectorAll(selector).forEach(function (element) {
+        watchedProperties.forEach(function (property) {
+          element.style.removeProperty(property);
+        });
+      });
+    });
+  }
+
+  function scheduleClear() {
+    if (scheduled) return;
+    scheduled = true;
+    window.requestAnimationFrame(clearLateSizing);
+  }
+
+  document.addEventListener("DOMContentLoaded", clearLateSizing);
+  window.addEventListener("load", clearLateSizing);
+  window.addEventListener("resize", scheduleClear, { passive: true });
+
+  if (document.documentElement) {
+    new MutationObserver(function (mutations) {
+      if (!desktopQuery.matches) return;
+      var needsReset = mutations.some(function (mutation) {
+        return mutation.type === "attributes" && mutation.attributeName === "style";
+      });
+      if (needsReset) scheduleClear();
+    }).observe(document.documentElement, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style"]
+    });
+  }
+
+  [0, 80, 250, 700, 1400].forEach(function (delay) {
+    window.setTimeout(clearLateSizing, delay);
+  });
+})();
+/* CODEX_OPERATOR_RESPONSIVE_LAYOUT_END */
+
+/* operator-desktop-layout-guard-v4 */
+(function () {
+  const media = window.matchMedia("(min-width: 768px)");
+  const selectors = [
+    "#content",
+    "#content-main",
+    "#changelist",
+    ".changelist-form-container",
+    "#changelist-form",
+    "#changelist .results",
+    "#changelist-filter"
+  ];
+  const properties = ["width", "max-width", "min-width", "float"];
+  let frame = 0;
+
+  function clearLateInlineLayout(node) {
+    properties.forEach(function (property) {
+      if (node.style.getPropertyValue(property)) {
+        node.style.removeProperty(property);
+      }
+    });
+  }
+
+  function syncDesktopLayout() {
+    frame = 0;
+    if (!document.body) return;
+    document.body.classList.toggle("operator-desktop-changelist", media.matches);
+    if (!media.matches) return;
+    document.querySelectorAll(selectors.join(",")).forEach(clearLateInlineLayout);
+  }
+
+  function scheduleSync() {
+    if (frame) return;
+    frame = window.requestAnimationFrame(syncDesktopLayout);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", syncDesktopLayout, { once: true });
+  } else {
+    syncDesktopLayout();
+  }
+
+  window.addEventListener("load", syncDesktopLayout);
+  window.addEventListener("resize", scheduleSync);
+  if (media.addEventListener) {
+    media.addEventListener("change", syncDesktopLayout);
+  } else {
+    media.addListener(syncDesktopLayout);
+  }
+
+  [0, 250, 750, 1500, 3000].forEach(function (delay) {
+    window.setTimeout(syncDesktopLayout, delay);
+  });
+
+  const observer = new MutationObserver(scheduleSync);
+  observer.observe(document.documentElement, {
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "style"]
+  });
+})();
+
+
+
+/* OPERATOR_DESKTOP_LAYOUT_FIX_V17_START */
+(function () {
+  const media = window.matchMedia('(min-width: 768px)');
+  let applying = false;
+
+  function important(element, property, value) {
+    if (!element) return;
+    if (
+      element.style.getPropertyValue(property) !== value ||
+      element.style.getPropertyPriority(property) !== 'important'
+    ) {
+      element.style.setProperty(property, value, 'important');
+    }
+  }
+
+  function restoreWideLayout() {
+    if (!media.matches || applying) return;
+    applying = true;
+
+    try {
+      [
+        document.documentElement,
+        document.body,
+        document.getElementById('container'),
+        document.getElementById('main'),
+        document.querySelector('main'),
+        document.getElementById('content'),
+        document.getElementById('content-main'),
+      ].forEach((element) => {
+        important(element, 'width', '100%');
+        important(element, 'max-width', 'none');
+        important(element, 'min-width', '0');
+      });
+
+      const changelist = document.getElementById('changelist');
+      const form = document.getElementById('changelist-form');
+      const filter = document.getElementById('changelist-filter');
+      const results = document.querySelector('#changelist .results');
+      const table = document.getElementById('result_list');
+      const compactTablet = window.innerWidth <= 1100;
+
+      important(changelist, 'width', '100%');
+      important(changelist, 'max-width', 'none');
+      important(changelist, 'min-width', '0');
+      important(changelist, 'display', 'grid');
+      important(
+        changelist,
+        'grid-template-columns',
+        compactTablet
+          ? 'minmax(0, 1fr)'
+          : 'minmax(0, 1fr) minmax(220px, 300px)'
+      );
+      important(changelist, 'gap', '18px');
+
+      important(form, 'width', '100%');
+      important(form, 'max-width', 'none');
+      important(form, 'min-width', '0');
+
+      important(results, 'width', '100%');
+      important(results, 'max-width', 'none');
+      important(results, 'overflow-x', 'auto');
+
+      if (filter) {
+        important(filter, 'width', '100%');
+        important(filter, 'max-width', compactTablet ? 'none' : '300px');
+        important(filter, 'position', 'relative');
+        important(filter, 'inset', 'auto');
+      }
+
+      if (table) {
+        important(table, 'display', 'table');
+        important(table, 'width', '100%');
+        important(table, 'max-width', 'none');
+        important(table, 'min-width', compactTablet ? '900px' : '1050px');
+        important(table, 'table-layout', 'auto');
+        table.querySelectorAll('thead').forEach((element) =>
+          important(element, 'display', 'table-header-group')
+        );
+        table.querySelectorAll('tbody').forEach((element) =>
+          important(element, 'display', 'table-row-group')
+        );
+        table.querySelectorAll('tr').forEach((element) =>
+          important(element, 'display', 'table-row')
+        );
+        table.querySelectorAll('th, td').forEach((element) => {
+          important(element, 'display', 'table-cell');
+          important(element, 'width', 'auto');
+          important(element, 'max-width', 'none');
+        });
+      }
+    } finally {
+      applying = false;
+    }
+  }
+
+  function scheduleRestore() {
+    restoreWideLayout();
+    [0, 50, 150, 300, 600, 1000, 2000, 4000, 7000].forEach((delay) => {
+      window.setTimeout(restoreWideLayout, delay);
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', scheduleRestore, { once: true });
+  } else {
+    scheduleRestore();
+  }
+
+  window.addEventListener('load', scheduleRestore, { once: true });
+  window.addEventListener('resize', restoreWideLayout, { passive: true });
+  if (typeof media.addEventListener === 'function') {
+    media.addEventListener('change', scheduleRestore);
+  }
+
+  const observer = new MutationObserver(() => {
+    if (media.matches) {
+      window.requestAnimationFrame(restoreWideLayout);
+    }
+  });
+  observer.observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+  });
+})();
+/* OPERATOR_DESKTOP_LAYOUT_FIX_V17_END */

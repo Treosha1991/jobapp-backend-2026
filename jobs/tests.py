@@ -987,6 +987,89 @@ class InternalVacancyImportAPITest(TestCase):
         self.assertTrue(service_vacancy.is_rejected)
         self.assertFalse(other_vacancy.is_deleted_by_moderator)
 
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    def test_pins_service_board_vacancy_for_requested_days(self):
+        create_response = self.client.post(
+            self.url,
+            self.payload,
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+        vacancy = Vacancy.objects.get(id=create_response.data["vacancy_id"])
+        self.assertFalse(vacancy.is_pinned_now())
+
+        before = timezone.now()
+        response = self.client.post(
+            "/api/internal/pin-vacancy/",
+            {"vacancy_id": vacancy.id, "days": 7},
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "pinned")
+        self.assertEqual(response.data["vacancy_id"], vacancy.id)
+        self.assertEqual(response.data["days"], 7)
+        self.assertTrue(response.data["is_pinned"])
+        vacancy.refresh_from_db()
+        self.assertTrue(vacancy.is_pinned_now())
+        self.assertGreaterEqual(vacancy.pinned_from, before)
+        self.assertGreaterEqual(vacancy.pinned_until, before + timezone.timedelta(days=7))
+
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    def test_pin_rejects_out_of_range_days(self):
+        create_response = self.client.post(
+            self.url,
+            self.payload,
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        response = self.client.post(
+            "/api/internal/pin-vacancy/",
+            {"vacancy_id": create_response.data["vacancy_id"], "days": 31},
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["error"], "invalid_days")
+
+    @override_settings(INTERNAL_IMPORT_TOKEN="secret-token")
+    def test_pin_rejects_non_board_vacancy(self):
+        other_user = User.objects.create_user(username="other-pin-owner", password="password")
+        vacancy = Vacancy.objects.create(
+            created_by=other_user,
+            title="Other vacancy",
+            country="PL",
+            city="Poznan",
+            city_code="poznan",
+            category="warehouse",
+            audience_country_codes="UA",
+            employment_type="shift",
+            experience_required="without",
+            salary="27 PLN",
+            salary_currency="PLN",
+            description="Visible description",
+            housing_type="none",
+            phone="+48111111111",
+            source="agency",
+            expires_at=timezone.now() + timezone.timedelta(days=30),
+        )
+
+        response = self.client.post(
+            "/api/internal/pin-vacancy/",
+            {"vacancy_id": vacancy.id, "days": 7},
+            format="json",
+            HTTP_X_INTERNAL_IMPORT_TOKEN="secret-token",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["error"], "vacancy_not_found_or_not_allowed")
+        vacancy.refresh_from_db()
+        self.assertIsNone(vacancy.pinned_from)
+        self.assertIsNone(vacancy.pinned_until)
+
 
 class EmployerBoardPublishingAPITests(TestCase):
     def setUp(self):

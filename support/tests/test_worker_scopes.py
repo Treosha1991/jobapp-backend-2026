@@ -184,9 +184,9 @@ class WorkerScopeTests(TestCase):
             "Bed 1",
         )
         self.assertEqual(self.manager_client.get(second_summary_url).status_code, 404)
-        scoped_workspace = self.client.get("/employer/support/")
-        self.assertContains(scoped_workspace, "Ihor First")
-        self.assertNotContains(scoped_workspace, "Olena Second")
+        scoped_workers = self.client.get("/employer/support/workers/")
+        self.assertContains(scoped_workers, "Ihor First")
+        self.assertNotContains(scoped_workers, "Olena Second")
 
         allowed = self.manager_client.post(
             f"{self.base_url}/housing-assignments/",

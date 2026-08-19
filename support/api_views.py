@@ -1,6 +1,8 @@
-from datetime import timedelta
+from datetime import date, timedelta
+import uuid
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Q
 from django.utils.dateparse import parse_date
 from django.shortcuts import get_object_or_404
@@ -10,11 +12,12 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .feature_flags import is_support_feature_enabled
+from .feature_flags import is_project_first_workspace_enabled, is_support_feature_enabled
 from .models import (
     Announcement,
     AnnouncementAcknowledgement,
     ApplicationDecisionEvent,
+    AuditEvent,
     BotContentRevision,
     CalendarMarkBatch,
     CalendarMarkBatchItem,
@@ -29,6 +32,12 @@ from .models import (
     InAppNotification,
     MembershipInvitation,
     OrganizationMembership,
+    ProjectCrew,
+    ProjectCrewDriverSubstitution,
+    ProjectCrewPassenger,
+    ProjectCrewResourceAssignment,
+    ProjectCrewShift,
+    ProjectCrewShiftMember,
     RouteStop,
     ScheduledShiftBatch,
     ScheduledWorkShift,
@@ -55,6 +64,7 @@ from .models import (
 )
 from .permission_codes import (
     ANNOUNCEMENT_MANAGE,
+    CHAT_MANAGE,
     DOCUMENT_REQUEST,
     HOUSING_MANAGE,
     ORGANIZATION_MANAGE,
@@ -71,11 +81,21 @@ from .permission_codes import (
 from .permissions import (
     active_membership_for,
     has_permission,
+    has_unrestricted_worker_access,
     require_permission,
     require_worker_connection_access,
     worker_connection_queryset_for,
 )
 from .selectors.workspace import transport_workspace_snapshot
+from .selectors.project_first import (
+    project_first_creation_options,
+    project_first_crew_days_payload,
+    project_first_crew_payload,
+    project_first_driver_exceptions_payload,
+    project_first_project_payload,
+    project_first_project_list,
+    project_first_project_workspace,
+)
 from .serializers import (
     AnnouncementCreateSerializer,
     ApplicationReviewSerializer,
@@ -90,11 +110,22 @@ from .serializers import (
     GroupPushPreferenceSerializer,
     DriverVehicleAssignmentCreateSerializer,
     HousingAssignmentCreateSerializer,
+    HousingAssignmentCheckOutSerializer,
     HousingPlaceCreateSerializer,
     HousingRoomCreateSerializer,
     HousingSiteCreateSerializer,
     MembershipInvitationCreateSerializer,
     PermissionCodeSerializer,
+    ProjectCreateSerializer,
+    ProjectCrewCreateSerializer,
+    ProjectCrewDriverAbsenceSerializer,
+    ProjectCrewDriverReplaceSerializer,
+    ProjectCrewDriverSubstituteSerializer,
+    ProjectCrewPassengerWriteSerializer,
+    ProjectCrewShiftReleaseSerializer,
+    ProjectCrewShiftReplaceSerializer,
+    ProjectCrewUpdateSerializer,
+    ProjectUpdateSerializer,
     SupportApplicationCreateSerializer,
     SupportMessageCreateSerializer,
     SupportOrganizationCreateSerializer,
@@ -125,6 +156,8 @@ from .services.audit import record_audit_event
 from .services.conversations import (
     mark_conversation_read,
     open_manager_conversation,
+    open_manager_conversation_for_staff,
+    open_staff_conversation,
     require_conversation_access,
     send_text_message,
 )
@@ -155,6 +188,7 @@ from .services.operations import (
     create_transport_route,
     create_worker_project_assignment,
     publish_housing_assignment,
+    schedule_housing_check_out,
     publish_transport_route,
     publish_worker_project_assignment,
 )
@@ -197,12 +231,32 @@ from .services.tasks import (
     worker_change_task_assignment,
 )
 from .services.registries import (
+    create_project,
     create_housing_place,
     create_housing_room,
     create_housing_site,
     create_vehicle,
     create_work_project,
     create_worksite,
+    update_project,
+)
+from .services.project_crews import (
+    PASSENGER_SCOPE_FUTURE,
+    PASSENGER_SCOPE_SELECTED,
+    archive_project,
+    archive_project_crew,
+    assign_project_crew_substitute_driver,
+    assign_project_crew_passenger,
+    cancel_project_crew_driver_absence,
+    cancel_project_crew_substitute_driver,
+    create_project_crew,
+    publish_project_crew_shifts,
+    mark_project_crew_driver_absence,
+    project_crew_substitute_driver_candidates,
+    release_project_crew_shifts,
+    remove_project_crew_passenger,
+    replace_project_crew_driver,
+    update_project_crew,
 )
 from .services.pipeline import (
     application_resubmission_state,
@@ -530,6 +584,391 @@ class OrganizationAccessMixin:
         return organization, membership
 
 
+class ProjectFirstOrganizationAccessMixin(OrganizationAccessMixin):
+    """Guard the whole-crew read model until scoped crew access exists."""
+
+    def get_project_first_organization(self, *, user, organization_public_id):
+        if not is_project_first_workspace_enabled():
+            raise NotFound("project_first_workspace_not_available")
+        organization, membership = self.get_organization(
+            user=user,
+            organization_public_id=organization_public_id,
+        )
+        if not (
+            has_permission(
+                user=user,
+                organization=organization,
+                permission_code=SCHEDULE_MANAGE,
+            )
+            and has_permission(
+                user=user,
+                organization=organization,
+                permission_code=TRANSPORT_MANAGE,
+            )
+            and has_unrestricted_worker_access(
+                user=user,
+                organization=organization,
+            )
+        ):
+            # Match the web workspace and avoid exposing that a project exists.
+            raise NotFound("project_first_workspace_not_found")
+        return organization, membership
+
+
+_PROJECT_FIRST_ERROR_MESSAGES = {
+    "ru": {
+        "invalid_input": "Проверьте заполненные поля.",
+        "idempotency_key_required": "Для создания проекта нужен заголовок Idempotency-Key.",
+        "idempotency_key_invalid": "Idempotency-Key должен быть UUID.",
+        "idempotency_key_reused": "Этот Idempotency-Key уже использован с другими данными проекта.",
+        "project_name_required": "Укажите название проекта.",
+        "project_name_already_exists": "Проект с таким названием уже существует.",
+        "project_patch_empty": "Укажите хотя бы одно изменение проекта.",
+        "country_code_must_be_iso_alpha_2": "Код страны должен состоять из двух латинских букв.",
+        "period_end_must_not_be_before_start": "Дата окончания не может быть раньше даты начала.",
+        "project_capacity_below_permanent_roster": "Количество мест не может быть меньше постоянного состава проекта.",
+        "crew_idempotency_key_required": "Для создания экипажа нужен заголовок Idempotency-Key.",
+        "crew_idempotency_key_invalid": "Idempotency-Key экипажа должен быть UUID.",
+        "crew_idempotency_key_reused": "Этот Idempotency-Key уже использован с другими данными экипажа.",
+        "crew_name_required": "Укажите название экипажа.",
+        "crew_patch_empty": "Укажите хотя бы одно изменение экипажа.",
+        "crew_not_available": "Экипаж недоступен для изменения.",
+        "shift_idempotency_key_required": "Для изменения смен нужен заголовок Idempotency-Key.",
+        "shift_idempotency_key_invalid": "Idempotency-Key смен должен быть UUID.",
+        "shift_idempotency_key_reused": "Этот Idempotency-Key уже использован с другими данными смен.",
+        "passenger_idempotency_key_required": "Для изменения состава пассажиров нужен заголовок Idempotency-Key.",
+        "passenger_idempotency_key_invalid": "Idempotency-Key изменения пассажиров должен быть UUID.",
+        "passenger_idempotency_key_reused": "Этот Idempotency-Key уже использован с другими данными пассажира.",
+        "passenger_scope_invalid": "Выберите изменение на все будущие дни или только на выбранные даты.",
+        "passenger_effective_on_required": "Укажите дату начала изменения постоянного состава.",
+        "passenger_effective_on_not_allowed": "Для выбранных дат отдельная дата начала не используется.",
+        "passenger_work_dates_required": "Выберите хотя бы один опубликованный день экипажа.",
+        "passenger_work_dates_not_allowed": "Для постоянного состава отдельные даты смен не передаются.",
+        "driver_replacement_idempotency_key_required": "Для постоянной замены водителя нужен заголовок Idempotency-Key.",
+        "driver_replacement_idempotency_key_invalid": "Idempotency-Key замены водителя должен быть UUID.",
+        "driver_replacement_idempotency_key_reused": "Этот Idempotency-Key уже использован с другими данными замены водителя.",
+        "driver_absence_idempotency_key_required": "Для изменения отсутствия водителя нужен заголовок Idempotency-Key.",
+        "driver_absence_idempotency_key_invalid": "Idempotency-Key отсутствия водителя должен быть UUID.",
+        "driver_absence_idempotency_key_reused": "Этот Idempotency-Key уже использован с другими датами отсутствия водителя.",
+        "driver_substitution_idempotency_key_required": "Для временной подмены водителя нужен заголовок Idempotency-Key.",
+        "driver_substitution_idempotency_key_invalid": "Idempotency-Key подмены водителя должен быть UUID.",
+        "driver_substitution_idempotency_key_reused": "Этот Idempotency-Key уже использован с другими данными подмены водителя.",
+        "driver_absence_missing": "На одной из выбранных дат основной водитель не отмечен отсутствующим.",
+        "driver_substitution_missing": "На выбранных датах нет активного подменного водителя.",
+        "substitution_date_in_past": "Подменного водителя нельзя назначить на прошедший день.",
+        "substitution_requires_driver_absence": "Подмену можно назначить только на опубликованные дни без основного водителя.",
+        "substitute_driver_unavailable": "Выбранный подменный водитель занят или недоступен на одну из дат.",
+        "replacement_driver_not_in_crew": "Нового водителя можно выбрать только из пассажиров этого экипажа.",
+        "replacement_driver_shift_conflict": "У нового водителя есть пересекающаяся смена на одну из будущих дат экипажа.",
+        "crew_shift_missing": "На одну из выбранных дат нет опубликованной смены экипажа.",
+        "worker_drives_other_crew": "На одну из выбранных дат работник является водителем другого экипажа.",
+        "worker_day_off": "На одну из выбранных дат у работника отмечен выходной.",
+        "worker_absent_from_crew": "На одну из выбранных дат работник отмечен отсутствующим в экипаже.",
+        "worker_is_crew_driver": "Водителя этого экипажа нельзя одновременно добавить пассажиром.",
+        "work_dates_required": "Выберите хотя бы один календарный день.",
+        "shift_time_required": "Укажите время начала и окончания смены.",
+        "break_minutes_invalid": "Проверьте продолжительность паузы.",
+        "crew_resource_missing": "На один из выбранных дней у экипажа нет водителя и автомобиля.",
+        "crew_capacity_exceeded": "На один из выбранных дней превышено количество мест в автомобиле.",
+        "driver_shift_conflict": "У водителя есть пересекающаяся смена в другом экипаже.",
+        "driver_licence_not_confirmed": "У выбранного работника нет подтверждённого водительского удостоверения.",
+        "vehicle_not_available": "Выбранный автомобиль недоступен.",
+        "driver_project_vehicle_locked": "Водитель уже работает в другом проекте и должен сохранить закреплённый автомобиль.",
+        "driver_or_vehicle_already_assigned": "Водитель или автомобиль уже закреплён за другим активным экипажем.",
+        "legacy_driver_or_vehicle_already_assigned": "Автомобиль уже закреплён за другим водителем в автопарке.",
+        "unsupported_support_field": "Запрос содержит неподдерживаемое поле.",
+    },
+    "en": {
+        "invalid_input": "Check the submitted fields.",
+        "idempotency_key_required": "The Idempotency-Key header is required to create a project.",
+        "idempotency_key_invalid": "Idempotency-Key must be a UUID.",
+        "idempotency_key_reused": "This Idempotency-Key was already used with different project data.",
+        "project_name_required": "Enter the project name.",
+        "project_name_already_exists": "A project with this name already exists.",
+        "project_patch_empty": "Provide at least one project change.",
+        "country_code_must_be_iso_alpha_2": "Country code must contain two Latin letters.",
+        "period_end_must_not_be_before_start": "The end date cannot be before the start date.",
+        "project_capacity_below_permanent_roster": "Capacity cannot be lower than the project's permanent roster.",
+        "crew_idempotency_key_required": "The Idempotency-Key header is required to create a crew.",
+        "crew_idempotency_key_invalid": "The crew Idempotency-Key must be a UUID.",
+        "crew_idempotency_key_reused": "This Idempotency-Key was already used with different crew data.",
+        "crew_name_required": "Enter the crew name.",
+        "crew_patch_empty": "Provide at least one crew change.",
+        "crew_not_available": "The crew is not available for changes.",
+        "shift_idempotency_key_required": "The Idempotency-Key header is required to change shifts.",
+        "shift_idempotency_key_invalid": "The shift Idempotency-Key must be a UUID.",
+        "shift_idempotency_key_reused": "This Idempotency-Key was already used with different shift data.",
+        "passenger_idempotency_key_required": "The Idempotency-Key header is required to change the passenger roster.",
+        "passenger_idempotency_key_invalid": "The passenger Idempotency-Key must be a UUID.",
+        "passenger_idempotency_key_reused": "This Idempotency-Key was already used with different passenger data.",
+        "passenger_scope_invalid": "Choose all future crew days or selected dates.",
+        "passenger_effective_on_required": "Enter the effective date for the permanent roster change.",
+        "passenger_effective_on_not_allowed": "An effective date is not used with selected dates.",
+        "passenger_work_dates_required": "Select at least one published crew day.",
+        "passenger_work_dates_not_allowed": "Individual work dates are not used for the permanent roster.",
+        "driver_replacement_idempotency_key_required": "The Idempotency-Key header is required for a permanent driver replacement.",
+        "driver_replacement_idempotency_key_invalid": "The driver replacement Idempotency-Key must be a UUID.",
+        "driver_replacement_idempotency_key_reused": "This Idempotency-Key was already used with different driver replacement data.",
+        "driver_absence_idempotency_key_required": "The Idempotency-Key header is required to change driver absence.",
+        "driver_absence_idempotency_key_invalid": "The driver-absence Idempotency-Key must be a UUID.",
+        "driver_absence_idempotency_key_reused": "This Idempotency-Key was already used with different driver-absence dates.",
+        "driver_substitution_idempotency_key_required": "The Idempotency-Key header is required for a temporary driver substitution.",
+        "driver_substitution_idempotency_key_invalid": "The driver-substitution Idempotency-Key must be a UUID.",
+        "driver_substitution_idempotency_key_reused": "This Idempotency-Key was already used with different substitute-driver data.",
+        "driver_absence_missing": "The primary driver is not marked absent on one of the selected dates.",
+        "driver_substitution_missing": "There is no active substitute driver on the selected dates.",
+        "substitution_date_in_past": "A substitute driver cannot be assigned to a past crew day.",
+        "substitution_requires_driver_absence": "A substitute can be assigned only to published days without the primary driver.",
+        "substitute_driver_unavailable": "The selected substitute driver is busy or unavailable on one of the dates.",
+        "replacement_driver_not_in_crew": "The new driver must be selected from this crew's passengers.",
+        "replacement_driver_shift_conflict": "The new driver has an overlapping shift on one of the crew's future dates.",
+        "crew_shift_missing": "No published crew shift exists on one of the selected dates.",
+        "worker_drives_other_crew": "The worker is a driver of another crew on one of the selected dates.",
+        "worker_day_off": "The worker has a day off on one of the selected dates.",
+        "worker_absent_from_crew": "The worker is marked absent from the crew on one of the selected dates.",
+        "worker_is_crew_driver": "The crew driver cannot also be added as its passenger.",
+        "work_dates_required": "Select at least one calendar day.",
+        "shift_time_required": "Enter the shift start and end times.",
+        "break_minutes_invalid": "Check the break duration.",
+        "crew_resource_missing": "The crew has no driver and vehicle on one of the selected days.",
+        "crew_capacity_exceeded": "Vehicle capacity is exceeded on one of the selected days.",
+        "driver_shift_conflict": "The driver has an overlapping shift in another crew.",
+        "driver_licence_not_confirmed": "The selected worker has no confirmed driving licence.",
+        "vehicle_not_available": "The selected vehicle is unavailable.",
+        "driver_project_vehicle_locked": "The driver already works in another project and must keep the assigned vehicle.",
+        "driver_or_vehicle_already_assigned": "The driver or vehicle is already assigned to another active crew.",
+        "legacy_driver_or_vehicle_already_assigned": "The vehicle is already assigned to another fleet driver.",
+        "unsupported_support_field": "The request contains an unsupported field.",
+    },
+    "pl": {
+        "invalid_input": "Sprawdź wypełnione pola.",
+        "idempotency_key_required": "Do utworzenia projektu wymagany jest nagłówek Idempotency-Key.",
+        "idempotency_key_invalid": "Idempotency-Key musi być identyfikatorem UUID.",
+        "idempotency_key_reused": "Ten Idempotency-Key został już użyty z innymi danymi projektu.",
+        "project_name_required": "Podaj nazwę projektu.",
+        "project_name_already_exists": "Projekt o tej nazwie już istnieje.",
+        "project_patch_empty": "Podaj co najmniej jedną zmianę projektu.",
+        "country_code_must_be_iso_alpha_2": "Kod kraju musi składać się z dwóch liter łacińskich.",
+        "period_end_must_not_be_before_start": "Data zakończenia nie może być wcześniejsza niż data rozpoczęcia.",
+        "project_capacity_below_permanent_roster": "Liczba miejsc nie może być mniejsza niż stały skład projektu.",
+        "crew_idempotency_key_required": "Do utworzenia ekipy wymagany jest nagłówek Idempotency-Key.",
+        "crew_idempotency_key_invalid": "Idempotency-Key ekipy musi być identyfikatorem UUID.",
+        "crew_idempotency_key_reused": "Ten Idempotency-Key został już użyty z innymi danymi ekipy.",
+        "crew_name_required": "Podaj nazwę ekipy.",
+        "crew_patch_empty": "Podaj co najmniej jedną zmianę ekipy.",
+        "crew_not_available": "Ekipa nie jest dostępna do edycji.",
+        "shift_idempotency_key_required": "Do zmiany zmian wymagany jest nagłówek Idempotency-Key.",
+        "shift_idempotency_key_invalid": "Idempotency-Key zmian musi być identyfikatorem UUID.",
+        "shift_idempotency_key_reused": "Ten Idempotency-Key został już użyty z innymi danymi zmian.",
+        "passenger_idempotency_key_required": "Do zmiany listy pasażerów wymagany jest nagłówek Idempotency-Key.",
+        "passenger_idempotency_key_invalid": "Idempotency-Key zmiany pasażerów musi być identyfikatorem UUID.",
+        "passenger_idempotency_key_reused": "Ten Idempotency-Key został już użyty z innymi danymi pasażera.",
+        "passenger_scope_invalid": "Wybierz wszystkie przyszłe dni ekipy albo wybrane daty.",
+        "passenger_effective_on_required": "Podaj datę rozpoczęcia zmiany stałego składu.",
+        "passenger_effective_on_not_allowed": "Dla wybranych dat nie używa się osobnej daty rozpoczęcia.",
+        "passenger_work_dates_required": "Wybierz co najmniej jeden opublikowany dzień ekipy.",
+        "passenger_work_dates_not_allowed": "Dla stałego składu nie podaje się osobnych dat zmian.",
+        "driver_replacement_idempotency_key_required": "Do stałej zmiany kierowcy wymagany jest nagłówek Idempotency-Key.",
+        "driver_replacement_idempotency_key_invalid": "Idempotency-Key zmiany kierowcy musi być identyfikatorem UUID.",
+        "driver_replacement_idempotency_key_reused": "Ten Idempotency-Key został już użyty z innymi danymi zmiany kierowcy.",
+        "driver_absence_idempotency_key_required": "Do zmiany nieobecności kierowcy wymagany jest nagłówek Idempotency-Key.",
+        "driver_absence_idempotency_key_invalid": "Idempotency-Key nieobecności kierowcy musi być identyfikatorem UUID.",
+        "driver_absence_idempotency_key_reused": "Ten Idempotency-Key został już użyty z innymi datami nieobecności kierowcy.",
+        "driver_substitution_idempotency_key_required": "Do czasowego zastępstwa kierowcy wymagany jest nagłówek Idempotency-Key.",
+        "driver_substitution_idempotency_key_invalid": "Idempotency-Key zastępstwa kierowcy musi być identyfikatorem UUID.",
+        "driver_substitution_idempotency_key_reused": "Ten Idempotency-Key został już użyty z innymi danymi kierowcy zastępczego.",
+        "driver_absence_missing": "W jednej z wybranych dat główny kierowca nie jest oznaczony jako nieobecny.",
+        "driver_substitution_missing": "W wybranych datach nie ma aktywnego kierowcy zastępczego.",
+        "substitution_date_in_past": "Nie można wyznaczyć kierowcy zastępczego na miniony dzień.",
+        "substitution_requires_driver_absence": "Zastępstwo można wyznaczyć tylko w opublikowane dni bez głównego kierowcy.",
+        "substitute_driver_unavailable": "Wybrany kierowca zastępczy jest zajęty lub niedostępny w jednej z dat.",
+        "replacement_driver_not_in_crew": "Nowego kierowcę można wybrać tylko spośród pasażerów tej ekipy.",
+        "replacement_driver_shift_conflict": "Nowy kierowca ma nakładającą się zmianę w jednym z przyszłych dni ekipy.",
+        "crew_shift_missing": "W jednej z wybranych dat nie ma opublikowanej zmiany ekipy.",
+        "worker_drives_other_crew": "W jednej z wybranych dat pracownik jest kierowcą innej ekipy.",
+        "worker_day_off": "W jednej z wybranych dat pracownik ma dzień wolny.",
+        "worker_absent_from_crew": "W jednej z wybranych dat pracownik jest oznaczony jako nieobecny w ekipie.",
+        "worker_is_crew_driver": "Kierowcy tej ekipy nie można jednocześnie dodać jako pasażera.",
+        "work_dates_required": "Wybierz co najmniej jeden dzień kalendarzowy.",
+        "shift_time_required": "Podaj godzinę rozpoczęcia i zakończenia zmiany.",
+        "break_minutes_invalid": "Sprawdź długość przerwy.",
+        "crew_resource_missing": "W jednym z wybranych dni ekipa nie ma kierowcy i samochodu.",
+        "crew_capacity_exceeded": "W jednym z wybranych dni przekroczono liczbę miejsc w samochodzie.",
+        "driver_shift_conflict": "Kierowca ma nakładającą się zmianę w innej ekipie.",
+        "driver_licence_not_confirmed": "Wybrany pracownik nie ma potwierdzonego prawa jazdy.",
+        "vehicle_not_available": "Wybrany samochód jest niedostępny.",
+        "driver_project_vehicle_locked": "Kierowca pracuje już w innym projekcie i musi zachować przypisany samochód.",
+        "driver_or_vehicle_already_assigned": "Kierowca lub samochód jest już przypisany do innej aktywnej ekipy.",
+        "legacy_driver_or_vehicle_already_assigned": "Samochód jest już przypisany do innego kierowcy we flocie.",
+        "unsupported_support_field": "Żądanie zawiera nieobsługiwane pole.",
+    },
+    "uk": {
+        "invalid_input": "Перевірте заповнені поля.",
+        "idempotency_key_required": "Для створення проєкту потрібен заголовок Idempotency-Key.",
+        "idempotency_key_invalid": "Idempotency-Key має бути UUID.",
+        "idempotency_key_reused": "Цей Idempotency-Key уже використано з іншими даними проєкту.",
+        "project_name_required": "Укажіть назву проєкту.",
+        "project_name_already_exists": "Проєкт із такою назвою вже існує.",
+        "project_patch_empty": "Укажіть хоча б одну зміну проєкту.",
+        "country_code_must_be_iso_alpha_2": "Код країни має складатися з двох латинських літер.",
+        "period_end_must_not_be_before_start": "Дата завершення не може бути раніше дати початку.",
+        "project_capacity_below_permanent_roster": "Кількість місць не може бути меншою за постійний склад проєкту.",
+        "crew_idempotency_key_required": "Для створення екіпажу потрібен заголовок Idempotency-Key.",
+        "crew_idempotency_key_invalid": "Idempotency-Key екіпажу має бути UUID.",
+        "crew_idempotency_key_reused": "Цей Idempotency-Key уже використано з іншими даними екіпажу.",
+        "crew_name_required": "Укажіть назву екіпажу.",
+        "crew_patch_empty": "Укажіть хоча б одну зміну екіпажу.",
+        "crew_not_available": "Екіпаж недоступний для змін.",
+        "shift_idempotency_key_required": "Для зміни змін потрібен заголовок Idempotency-Key.",
+        "shift_idempotency_key_invalid": "Idempotency-Key змін має бути UUID.",
+        "shift_idempotency_key_reused": "Цей Idempotency-Key уже використано з іншими даними змін.",
+        "passenger_idempotency_key_required": "Для зміни складу пасажирів потрібен заголовок Idempotency-Key.",
+        "passenger_idempotency_key_invalid": "Idempotency-Key зміни пасажирів має бути UUID.",
+        "passenger_idempotency_key_reused": "Цей Idempotency-Key уже використано з іншими даними пасажира.",
+        "passenger_scope_invalid": "Виберіть усі майбутні дні екіпажу або вибрані дати.",
+        "passenger_effective_on_required": "Укажіть дату початку зміни постійного складу.",
+        "passenger_effective_on_not_allowed": "Для вибраних дат окрема дата початку не використовується.",
+        "passenger_work_dates_required": "Виберіть хоча б один опублікований день екіпажу.",
+        "passenger_work_dates_not_allowed": "Для постійного складу окремі дати змін не передаються.",
+        "driver_replacement_idempotency_key_required": "Для постійної заміни водія потрібен заголовок Idempotency-Key.",
+        "driver_replacement_idempotency_key_invalid": "Idempotency-Key заміни водія має бути UUID.",
+        "driver_replacement_idempotency_key_reused": "Цей Idempotency-Key уже використано з іншими даними заміни водія.",
+        "driver_absence_idempotency_key_required": "Для зміни відсутності водія потрібен заголовок Idempotency-Key.",
+        "driver_absence_idempotency_key_invalid": "Idempotency-Key відсутності водія має бути UUID.",
+        "driver_absence_idempotency_key_reused": "Цей Idempotency-Key уже використано з іншими датами відсутності водія.",
+        "driver_substitution_idempotency_key_required": "Для тимчасової підміни водія потрібен заголовок Idempotency-Key.",
+        "driver_substitution_idempotency_key_invalid": "Idempotency-Key підміни водія має бути UUID.",
+        "driver_substitution_idempotency_key_reused": "Цей Idempotency-Key уже використано з іншими даними підмінного водія.",
+        "driver_absence_missing": "На одну з вибраних дат основного водія не позначено відсутнім.",
+        "driver_substitution_missing": "На вибрані дати немає активного підмінного водія.",
+        "substitution_date_in_past": "Підмінного водія не можна призначити на минулий день.",
+        "substitution_requires_driver_absence": "Підміну можна призначити лише на опубліковані дні без основного водія.",
+        "substitute_driver_unavailable": "Вибраний підмінний водій зайнятий або недоступний на одну з дат.",
+        "replacement_driver_not_in_crew": "Нового водія можна вибрати лише з пасажирів цього екіпажу.",
+        "replacement_driver_shift_conflict": "Новий водій має зміну, що перетинається, на одну з майбутніх дат екіпажу.",
+        "crew_shift_missing": "На одну з вибраних дат немає опублікованої зміни екіпажу.",
+        "worker_drives_other_crew": "На одну з вибраних дат працівник є водієм іншого екіпажу.",
+        "worker_day_off": "На одну з вибраних дат у працівника вихідний.",
+        "worker_absent_from_crew": "На одну з вибраних дат працівника позначено відсутнім в екіпажі.",
+        "worker_is_crew_driver": "Водія цього екіпажу не можна одночасно додати пасажиром.",
+        "work_dates_required": "Виберіть хоча б один календарний день.",
+        "shift_time_required": "Укажіть час початку та завершення зміни.",
+        "break_minutes_invalid": "Перевірте тривалість перерви.",
+        "crew_resource_missing": "На один із вибраних днів екіпаж не має водія та автомобіля.",
+        "crew_capacity_exceeded": "На один із вибраних днів перевищено кількість місць в автомобілі.",
+        "driver_shift_conflict": "Водій має зміну, що перетинається, в іншому екіпажі.",
+        "driver_licence_not_confirmed": "Вибраний працівник не має підтвердженого водійського посвідчення.",
+        "vehicle_not_available": "Вибраний автомобіль недоступний.",
+        "driver_project_vehicle_locked": "Водій уже працює в іншому проєкті й має зберегти закріплений автомобіль.",
+        "driver_or_vehicle_already_assigned": "Водія або автомобіль уже закріплено за іншим активним екіпажем.",
+        "legacy_driver_or_vehicle_already_assigned": "Автомобіль уже закріплено за іншим водієм в автопарку.",
+        "unsupported_support_field": "Запит містить непідтримуване поле.",
+    },
+}
+
+
+def _project_first_language(request):
+    language = (request.headers.get("Accept-Language") or "ru").split(",", 1)[0]
+    language = language.split("-", 1)[0].strip().lower()
+    return language if language in _PROJECT_FIRST_ERROR_MESSAGES else "ru"
+
+
+def _project_first_error_message(request, code):
+    language = _project_first_language(request)
+    return _PROJECT_FIRST_ERROR_MESSAGES[language].get(
+        code,
+        _PROJECT_FIRST_ERROR_MESSAGES[language]["invalid_input"],
+    )
+
+
+def _project_first_error_codes(detail):
+    if isinstance(detail, dict):
+        return {str(key): _project_first_error_codes(value) for key, value in detail.items()}
+    if isinstance(detail, (list, tuple)):
+        return [code for value in detail for code in _project_first_error_codes(value)]
+    raw = str(detail)
+    return [raw if raw and all(char.islower() or char.isdigit() or char == "_" for char in raw) else getattr(detail, "code", "invalid_input")]
+
+
+def _project_first_first_code(detail):
+    if isinstance(detail, dict):
+        if "code" in detail and not isinstance(detail["code"], (dict, list, tuple)):
+            return str(detail["code"])
+        for value in detail.values():
+            code = _project_first_first_code(value)
+            if code:
+                return code
+        return ""
+    if isinstance(detail, (list, tuple)):
+        for value in detail:
+            code = _project_first_first_code(value)
+            if code:
+                return code
+        return ""
+    raw = str(detail)
+    return raw if raw and all(char.islower() or char.isdigit() or char == "_" for char in raw) else "invalid_input"
+
+
+def _project_first_write_error(request, *, code, field_errors=None, details=None):
+    payload = {
+        "code": code,
+        "message": _project_first_error_message(request, code),
+        "field_errors": field_errors or {},
+    }
+    if details:
+        payload.update(details)
+    return Response(payload, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _project_first_serializer_error(request, detail):
+    field_errors = _project_first_error_codes(detail)
+    code = _project_first_first_code(detail) or "invalid_input"
+    return _project_first_write_error(
+        request,
+        code=code,
+        field_errors=field_errors,
+    )
+
+
+def _project_first_service_error(request, detail):
+    if isinstance(detail, dict) and "code" in detail:
+        code = str(detail["code"])
+        field_errors = _project_first_error_codes(detail.get("field_errors", {}))
+        extra = {}
+        for key, value in detail.items():
+            if key in {"code", "message", "field_errors"}:
+                continue
+            if key == "minimum":
+                extra[key] = int(str(value))
+            else:
+                extra[key] = str(value)
+        return _project_first_write_error(
+            request,
+            code=code,
+            field_errors=field_errors,
+            details=extra,
+        )
+    return _project_first_serializer_error(request, detail)
+
+
+def _project_update_payload(project):
+    return {
+        "name": project.internal_name,
+        "country_code": project.worksite.country_code,
+        "city": project.worksite.city,
+        "postal_code": project.worksite.postal_code,
+        "street": project.worksite.street,
+        "building": project.worksite.building,
+        "worker_capacity": project.worker_capacity,
+        "starts_on": project.starts_on,
+        "ends_on": project.ends_on,
+        "contact_name": project.contact_name,
+        "contact_phone": project.contact_phone,
+        "contact_email": project.contact_email,
+        "instructions": project.instructions,
+    }
+
+
 class SupportBootstrapAPIView(SupportFeatureAPIView):
     """Safe entry point for a future Support-capable mobile client.
 
@@ -591,6 +1030,8 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
             user=request.user,
             organization_public_id=organization_public_id,
         )
+
+
         allowed_connections = worker_connection_queryset_for(
             user=request.user,
             organization=organization,
@@ -641,6 +1082,11 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
             organization=organization,
             permission_code=SCHEDULE_MANAGE,
         )
+        may_manage_housing = has_permission(
+            user=request.user,
+            organization=organization,
+            permission_code=HOUSING_MANAGE,
+        )
         return Response(
             {
                 "organization": _organization_payload(organization, membership),
@@ -659,6 +1105,7 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
                     "time_edit": may_edit_time,
                     "transport_manage": may_manage_transport,
                     "schedule_manage": may_manage_schedule,
+                    "housing_manage": may_manage_housing,
                 },
                 "counts": {
                     "workers": allowed_connections.count() if may_view_workers else 0,
@@ -707,6 +1154,941 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
                 },
             }
         )
+
+
+class OrganizationProjectFirstProjectListAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstOrganizationAccessMixin,
+):
+    """List canonical projects without exposing legacy operation records."""
+
+    def get(self, request, organization_public_id):
+        organization, membership = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        return Response(
+            {
+                "organization": _organization_payload(organization, membership),
+                "projects": project_first_project_list(organization=organization),
+                "creation_options": project_first_creation_options(
+                    organization=organization
+                ),
+            }
+        )
+
+    def post(self, request, organization_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        raw_request_id = (request.headers.get("Idempotency-Key") or "").strip()
+        if not raw_request_id:
+            return _project_first_write_error(
+                request,
+                code="idempotency_key_required",
+                field_errors={"Idempotency-Key": ["idempotency_key_required"]},
+            )
+        try:
+            request_id = uuid.UUID(raw_request_id)
+        except (TypeError, ValueError, AttributeError):
+            return _project_first_write_error(
+                request,
+                code="idempotency_key_invalid",
+                field_errors={"Idempotency-Key": ["idempotency_key_invalid"]},
+            )
+        serializer = ProjectCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        try:
+            project = create_project(
+                actor=request.user,
+                organization=organization,
+                request_id=request_id,
+                **serializer.validated_data,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return Response(
+            {"project": project_first_project_payload(project)},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class OrganizationProjectFirstProjectDetailAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstOrganizationAccessMixin,
+):
+    """Patch or archive one canonical project without touching its shifts on edit."""
+
+    def _project(self, *, organization, project_public_id):
+        return get_object_or_404(
+            WorkProject.objects.select_related("worksite"),
+            organization=organization,
+            public_id=project_public_id,
+        )
+
+    def patch(self, request, organization_public_id, project_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        project = self._project(
+            organization=organization,
+            project_public_id=project_public_id,
+        )
+        if not project.is_active:
+            raise NotFound("project_first_project_not_found")
+        patch_serializer = ProjectUpdateSerializer(data=request.data)
+        if not patch_serializer.is_valid():
+            return _project_first_serializer_error(request, patch_serializer.errors)
+        merged = _project_update_payload(project)
+        merged.update(patch_serializer.validated_data)
+        serializer = ProjectCreateSerializer(data=merged)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        try:
+            project = update_project(
+                actor=request.user,
+                project=project,
+                **serializer.validated_data,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return Response({"project": project_first_project_payload(project)})
+
+    def delete(self, request, organization_public_id, project_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        serializer = EmptyStrictInputSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        project = self._project(
+            organization=organization,
+            project_public_id=project_public_id,
+        )
+        try:
+            project = archive_project(actor=request.user, project=project)
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return Response(
+            {
+                "project": {
+                    "id": str(project.public_id),
+                    "is_active": project.is_active,
+                },
+                "deleted": True,
+            }
+        )
+
+
+class OrganizationProjectFirstCrewListAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstOrganizationAccessMixin,
+):
+    """Create a canonical crew with its initial driver and vehicle."""
+
+    def post(self, request, organization_public_id, project_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        project = get_object_or_404(
+            WorkProject.objects.select_related("worksite"),
+            organization=organization,
+            public_id=project_public_id,
+            is_active=True,
+        )
+        raw_request_id = (request.headers.get("Idempotency-Key") or "").strip()
+        if not raw_request_id:
+            return _project_first_write_error(
+                request,
+                code="crew_idempotency_key_required",
+                field_errors={
+                    "Idempotency-Key": ["crew_idempotency_key_required"]
+                },
+            )
+        try:
+            request_id = uuid.UUID(raw_request_id)
+        except (TypeError, ValueError, AttributeError):
+            return _project_first_write_error(
+                request,
+                code="crew_idempotency_key_invalid",
+                field_errors={
+                    "Idempotency-Key": ["crew_idempotency_key_invalid"]
+                },
+            )
+        serializer = ProjectCrewCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        data = serializer.validated_data
+        driver = get_object_or_404(
+            SupportConnection,
+            organization=organization,
+            public_id=data["driver_connection_id"],
+            is_archived=False,
+        )
+        vehicle = get_object_or_404(
+            Vehicle,
+            organization=organization,
+            public_id=data["vehicle_id"],
+            is_active=True,
+        )
+        try:
+            crew = create_project_crew(
+                actor=request.user,
+                organization=organization,
+                project=project,
+                driver_connection=driver,
+                vehicle=vehicle,
+                internal_name=data["internal_name"],
+                starts_on=data["starts_on"],
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return Response(
+            {"crew": project_first_crew_payload(crew)},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class OrganizationProjectFirstCrewDetailAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstOrganizationAccessMixin,
+):
+    """Rename or archive one canonical project crew."""
+
+    def _crew(self, *, organization, crew_public_id):
+        return get_object_or_404(
+            ProjectCrew.objects.select_related("project", "organization"),
+            organization=organization,
+            public_id=crew_public_id,
+        )
+
+    def patch(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self._crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        if crew.state != ProjectCrew.STATE_ACTIVE or not crew.project.is_active:
+            raise NotFound("project_first_crew_not_found")
+        serializer = ProjectCrewUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        try:
+            crew = update_project_crew(
+                actor=request.user,
+                crew=crew,
+                **serializer.validated_data,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return Response({"crew": project_first_crew_payload(crew)})
+
+    def delete(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        serializer = EmptyStrictInputSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        crew = self._crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        try:
+            crew = archive_project_crew(actor=request.user, crew=crew)
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return Response(
+            {
+                "crew": project_first_crew_payload(crew),
+                "deleted": True,
+            }
+        )
+
+
+class ProjectFirstCrewShiftWriteMixin(ProjectFirstOrganizationAccessMixin):
+    """Shared tenant lookup and retry protection for crew-day writes."""
+
+    def get_active_crew(self, *, organization, crew_public_id):
+        return get_object_or_404(
+            ProjectCrew.objects.select_related("project", "organization"),
+            organization=organization,
+            public_id=crew_public_id,
+            state=ProjectCrew.STATE_ACTIVE,
+            project__is_active=True,
+        )
+
+    def get_request_id(self, request):
+        raw_request_id = (request.headers.get("Idempotency-Key") or "").strip()
+        if not raw_request_id:
+            return None, _project_first_write_error(
+                request,
+                code="shift_idempotency_key_required",
+                field_errors={
+                    "Idempotency-Key": ["shift_idempotency_key_required"]
+                },
+            )
+        try:
+            return uuid.UUID(raw_request_id), None
+        except (TypeError, ValueError, AttributeError):
+            return None, _project_first_write_error(
+                request,
+                code="shift_idempotency_key_invalid",
+                field_errors={
+                    "Idempotency-Key": ["shift_idempotency_key_invalid"]
+                },
+            )
+
+    def write_response(self, *, crew, work_dates):
+        return Response(
+            {
+                "crew": project_first_crew_payload(crew),
+                "affected_dates": [item.isoformat() for item in work_dates],
+                "days": project_first_crew_days_payload(
+                    crew=crew,
+                    work_dates=work_dates,
+                ),
+            }
+        )
+
+
+class OrganizationProjectFirstCrewShiftReplaceAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstCrewShiftWriteMixin,
+):
+    """Create or replace published crew shifts for selected calendar days."""
+
+    def post(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        request_id, error_response = self.get_request_id(request)
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewShiftReplaceSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        data = serializer.validated_data
+        try:
+            publish_project_crew_shifts(
+                actor=request.user,
+                crew=crew,
+                work_dates=data["work_dates"],
+                starts_at_time=data["starts_at_time"],
+                ends_at_time=data["ends_at_time"],
+                break_minutes=data["break_minutes"],
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.write_response(crew=crew, work_dates=data["work_dates"])
+
+
+class OrganizationProjectFirstCrewShiftReleaseAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstCrewShiftWriteMixin,
+):
+    """Cancel selected crew days while retaining their audit history."""
+
+    def post(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        request_id, error_response = self.get_request_id(request)
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewShiftReleaseSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        work_dates = serializer.validated_data["work_dates"]
+        try:
+            release_project_crew_shifts(
+                actor=request.user,
+                crew=crew,
+                work_dates=work_dates,
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.write_response(crew=crew, work_dates=work_dates)
+
+
+class ProjectFirstCrewPassengerWriteMixin(ProjectFirstCrewShiftWriteMixin):
+    """Shared contract for project-first passenger roster mutations."""
+
+    PUBLIC_SCOPE_MAP = {
+        ProjectCrewPassengerWriteSerializer.SCOPE_ALL_FUTURE: PASSENGER_SCOPE_FUTURE,
+        ProjectCrewPassengerWriteSerializer.SCOPE_SELECTED_DATES: PASSENGER_SCOPE_SELECTED,
+    }
+
+    def get_request_id(self, request):
+        raw_request_id = (request.headers.get("Idempotency-Key") or "").strip()
+        if not raw_request_id:
+            return None, _project_first_write_error(
+                request,
+                code="passenger_idempotency_key_required",
+                field_errors={
+                    "Idempotency-Key": ["passenger_idempotency_key_required"]
+                },
+            )
+        try:
+            return uuid.UUID(raw_request_id), None
+        except (TypeError, ValueError, AttributeError):
+            return None, _project_first_write_error(
+                request,
+                code="passenger_idempotency_key_invalid",
+                field_errors={
+                    "Idempotency-Key": ["passenger_idempotency_key_invalid"]
+                },
+            )
+
+    def get_connection(self, *, organization, connection_id):
+        return get_object_or_404(
+            SupportConnection.objects.select_related("candidate"),
+            organization=organization,
+            public_id=connection_id,
+            is_archived=False,
+        )
+
+    def affected_dates(self, *, crew, data):
+        if data["scope"] == ProjectCrewPassengerWriteSerializer.SCOPE_SELECTED_DATES:
+            return data["work_dates"]
+        return list(
+            ProjectCrewShift.objects.filter(
+                crew=crew,
+                state=ProjectCrewShift.STATE_PUBLISHED,
+                work_date__gte=data["effective_on"],
+            )
+            .order_by("work_date")
+            .values_list("work_date", flat=True)
+        )
+
+    def passenger_response(self, *, crew, connection, data, work_dates):
+        candidate = connection.candidate
+        return Response(
+            {
+                "crew": project_first_crew_payload(crew),
+                "passenger": {
+                    "id": str(connection.public_id),
+                    "display_name": (
+                        candidate.get_full_name().strip()
+                        or candidate.username
+                        or candidate.email
+                    ),
+                    "stage": connection.stage,
+                },
+                "scope": data["scope"],
+                "effective_on": (
+                    data.get("effective_on").isoformat()
+                    if data.get("effective_on")
+                    else None
+                ),
+                "affected_dates": [item.isoformat() for item in work_dates],
+                "days": project_first_crew_days_payload(
+                    crew=crew,
+                    work_dates=work_dates,
+                ),
+            }
+        )
+
+
+class OrganizationProjectFirstCrewPassengerApplyAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstCrewPassengerWriteMixin,
+):
+    """Add one worker to selected crew days or the permanent future roster."""
+
+    def post(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        request_id, error_response = self.get_request_id(request)
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewPassengerWriteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        data = serializer.validated_data
+        connection = self.get_connection(
+            organization=organization,
+            connection_id=data["connection_id"],
+        )
+        try:
+            _, shifts = assign_project_crew_passenger(
+                actor=request.user,
+                crew=crew,
+                connection=connection,
+                scope=self.PUBLIC_SCOPE_MAP[data["scope"]],
+                selected_dates=data.get("work_dates"),
+                effective_on=data.get("effective_on"),
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        work_dates = [shift.work_date for shift in shifts]
+        return self.passenger_response(
+            crew=crew,
+            connection=connection,
+            data=data,
+            work_dates=work_dates,
+        )
+
+
+class OrganizationProjectFirstCrewPassengerRemoveAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstCrewPassengerWriteMixin,
+):
+    """Remove one worker from selected crew days or the future roster."""
+
+    def post(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        request_id, error_response = self.get_request_id(request)
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewPassengerWriteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        data = serializer.validated_data
+        connection = self.get_connection(
+            organization=organization,
+            connection_id=data["connection_id"],
+        )
+        work_dates = self.affected_dates(crew=crew, data=data)
+        try:
+            remove_project_crew_passenger(
+                actor=request.user,
+                crew=crew,
+                connection=connection,
+                scope=self.PUBLIC_SCOPE_MAP[data["scope"]],
+                selected_dates=data.get("work_dates"),
+                effective_on=data.get("effective_on"),
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.passenger_response(
+            crew=crew,
+            connection=connection,
+            data=data,
+            work_dates=work_dates,
+        )
+
+
+class OrganizationProjectFirstCrewDriverReplaceAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstCrewShiftWriteMixin,
+):
+    """Permanently transfer a crew's vehicle and future driver role."""
+
+    def get_request_id(self, request):
+        raw_request_id = (request.headers.get("Idempotency-Key") or "").strip()
+        if not raw_request_id:
+            return None, _project_first_write_error(
+                request,
+                code="driver_replacement_idempotency_key_required",
+                field_errors={
+                    "Idempotency-Key": [
+                        "driver_replacement_idempotency_key_required"
+                    ]
+                },
+            )
+        try:
+            return uuid.UUID(raw_request_id), None
+        except (TypeError, ValueError, AttributeError):
+            return None, _project_first_write_error(
+                request,
+                code="driver_replacement_idempotency_key_invalid",
+                field_errors={
+                    "Idempotency-Key": [
+                        "driver_replacement_idempotency_key_invalid"
+                    ]
+                },
+            )
+
+    def post(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        request_id, error_response = self.get_request_id(request)
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewDriverReplaceSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        data = serializer.validated_data
+        new_driver = get_object_or_404(
+            SupportConnection.objects.select_related("candidate"),
+            organization=organization,
+            public_id=data["new_driver_connection_id"],
+            is_archived=False,
+        )
+        try:
+            replacement = replace_project_crew_driver(
+                actor=request.user,
+                crew=crew,
+                new_driver_connection=new_driver,
+                effective_on=data["effective_on"],
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        actual_effective_on = replacement.starts_on
+        affected_dates = list(
+            ProjectCrewShift.objects.filter(
+                crew=crew,
+                state=ProjectCrewShift.STATE_PUBLISHED,
+                work_date__gte=actual_effective_on,
+            )
+            .order_by("work_date")
+            .values_list("work_date", flat=True)
+        )
+        crew_payload = project_first_crew_payload(crew)
+        return Response(
+            {
+                "crew": crew_payload,
+                "replacement": {
+                    "id": str(replacement.public_id),
+                    "effective_on": actual_effective_on.isoformat(),
+                    "driver_id": str(new_driver.public_id),
+                    "vehicle_id": str(replacement.vehicle.public_id),
+                },
+                "affected_dates": [item.isoformat() for item in affected_dates],
+                "days": project_first_crew_days_payload(
+                    crew=crew,
+                    work_dates=affected_dates,
+                ),
+            }
+        )
+
+
+class ProjectFirstDriverExceptionWriteMixin(ProjectFirstCrewShiftWriteMixin):
+    """Shared strict contract for absence and temporary-substitution writes."""
+
+    idempotency_prefix = "driver_absence"
+
+    def get_request_id(self, request):
+        raw_request_id = (request.headers.get("Idempotency-Key") or "").strip()
+        if not raw_request_id:
+            code = f"{self.idempotency_prefix}_idempotency_key_required"
+            return None, _project_first_write_error(
+                request,
+                code=code,
+                field_errors={"Idempotency-Key": [code]},
+            )
+        try:
+            return uuid.UUID(raw_request_id), None
+        except (TypeError, ValueError, AttributeError):
+            code = f"{self.idempotency_prefix}_idempotency_key_invalid"
+            return None, _project_first_write_error(
+                request,
+                code=code,
+                field_errors={"Idempotency-Key": [code]},
+            )
+
+    def exception_response(self, *, crew, work_dates, extra=None):
+        payload = {
+            "crew": project_first_crew_payload(crew),
+            "affected_dates": [item.isoformat() for item in work_dates],
+            "days": project_first_crew_days_payload(
+                crew=crew,
+                work_dates=work_dates,
+            ),
+        }
+        payload.update(
+            project_first_driver_exceptions_payload(
+                crew=crew,
+                work_dates=work_dates,
+            )
+        )
+        if extra:
+            payload.update(extra)
+        return Response(payload)
+
+
+class OrganizationProjectFirstCrewDriverAbsenceAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstDriverExceptionWriteMixin,
+):
+    """Mark or cancel primary-driver absence on selected crew days."""
+
+    idempotency_prefix = "driver_absence"
+
+    def _context(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        request_id, error_response = self.get_request_id(request)
+        return crew, request_id, error_response
+
+    def post(self, request, organization_public_id, crew_public_id):
+        crew, request_id, error_response = self._context(
+            request,
+            organization_public_id,
+            crew_public_id,
+        )
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewDriverAbsenceSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        work_dates = serializer.validated_data["work_dates"]
+        try:
+            mark_project_crew_driver_absence(
+                actor=request.user,
+                crew=crew,
+                work_dates=work_dates,
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.exception_response(crew=crew, work_dates=work_dates)
+
+    def delete(self, request, organization_public_id, crew_public_id):
+        crew, request_id, error_response = self._context(
+            request,
+            organization_public_id,
+            crew_public_id,
+        )
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewDriverAbsenceSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        work_dates = serializer.validated_data["work_dates"]
+        try:
+            cancel_project_crew_driver_absence(
+                actor=request.user,
+                crew=crew,
+                work_dates=work_dates,
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.exception_response(crew=crew, work_dates=work_dates)
+
+
+class OrganizationProjectFirstCrewDriverSubstituteAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstDriverExceptionWriteMixin,
+):
+    """Assign, replace or cancel a temporary substitute driver by date."""
+
+    idempotency_prefix = "driver_substitution"
+
+    def _context(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        request_id, error_response = self.get_request_id(request)
+        return organization, crew, request_id, error_response
+
+    def get(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        raw_dates = request.query_params.getlist("work_date")
+        if not raw_dates:
+            raw_dates = request.query_params.getlist("work_dates")
+        serializer = ProjectCrewDriverAbsenceSerializer(
+            data={"work_dates": raw_dates},
+        )
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        work_dates = serializer.validated_data["work_dates"]
+        try:
+            candidates = project_crew_substitute_driver_candidates(
+                crew=crew,
+                work_dates=work_dates,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return Response(
+            {
+                "crew_id": str(crew.public_id),
+                "work_dates": [item.isoformat() for item in work_dates],
+                "results": [
+                    {
+                        "connection_id": str(item.public_id),
+                        "display_name": (
+                            item.candidate.get_full_name().strip()
+                            or item.candidate.username
+                            or item.candidate.email
+                        ),
+                        "stage": item.stage,
+                        "is_current_crew_passenger": bool(
+                            item.is_current_crew_passenger
+                        ),
+                    }
+                    for item in candidates
+                ],
+            }
+        )
+
+    def post(self, request, organization_public_id, crew_public_id):
+        organization, crew, request_id, error_response = self._context(
+            request,
+            organization_public_id,
+            crew_public_id,
+        )
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewDriverSubstituteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        data = serializer.validated_data
+        substitute = get_object_or_404(
+            SupportConnection.objects.select_related("candidate"),
+            organization=organization,
+            public_id=data["substitute_driver_connection_id"],
+            is_archived=False,
+        )
+        try:
+            substitutions = assign_project_crew_substitute_driver(
+                actor=request.user,
+                crew=crew,
+                substitute_driver_connection=substitute,
+                work_dates=data["work_dates"],
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        audit = AuditEvent.objects.filter(
+            organization=organization,
+            actor=request.user,
+            action="project_crew.substitute_driver_assigned",
+            request_id=request_id,
+        ).first()
+        affected_dates = [
+            date.fromisoformat(item)
+            for item in (
+                audit.details.get("affected_dates", [])
+                if audit is not None
+                else [item.work_date.isoformat() for item in substitutions]
+            )
+        ]
+        return self.exception_response(
+            crew=crew,
+            work_dates=affected_dates,
+            extra={
+                "substitute_driver": {
+                    "id": str(substitute.public_id),
+                    "display_name": (
+                        substitute.candidate.get_full_name().strip()
+                        or substitute.candidate.username
+                        or substitute.candidate.email
+                    ),
+                }
+            },
+        )
+
+    def delete(self, request, organization_public_id, crew_public_id):
+        _, crew, request_id, error_response = self._context(
+            request,
+            organization_public_id,
+            crew_public_id,
+        )
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewDriverAbsenceSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        work_dates = serializer.validated_data["work_dates"]
+        try:
+            cancel_project_crew_substitute_driver(
+                actor=request.user,
+                crew=crew,
+                work_dates=work_dates,
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.exception_response(crew=crew, work_dates=work_dates)
+
+
+class OrganizationProjectFirstWorkspaceAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstOrganizationAccessMixin,
+):
+    """Return the exact project/crew/day snapshot for one calendar month."""
+
+    def get(self, request, organization_public_id, project_public_id):
+        organization, membership = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        raw_month = (request.query_params.get("month") or "").strip()
+        try:
+            selected_month = (
+                date.fromisoformat(f"{raw_month}-01")
+                if raw_month
+                else timezone.localdate().replace(day=1)
+            )
+        except ValueError as error:
+            raise ValidationError({"month": "invalid_month"}) from error
+        project = get_object_or_404(
+            WorkProject.objects.select_related("worksite"),
+            organization=organization,
+            public_id=project_public_id,
+            is_active=True,
+        )
+        payload = project_first_project_workspace(
+            project=project,
+            selected_month=selected_month,
+        )
+        payload["organization"] = _organization_payload(organization, membership)
+        return Response(payload)
 
 
 def _transport_connection_choice_payload(connection):
@@ -997,7 +2379,76 @@ class OrganizationWorkerConnectionListAPIView(
                 | Q(candidate__username__icontains=term)
                 | Q(vacancy__internal_title__icontains=term)
             )
-        connections = queryset.order_by("-updated_at", "-id")[:250]
+        connections = list(queryset.order_by("-updated_at", "-id")[:250])
+        connection_ids = [connection.id for connection in connections]
+        project_crews_by_connection = {connection_id: [] for connection_id in connection_ids}
+        seen_project_crews = {connection_id: set() for connection_id in connection_ids}
+
+        def add_project_crew(connection_id, crew, role, assignment_type):
+            if crew.id in seen_project_crews[connection_id]:
+                return
+            seen_project_crews[connection_id].add(crew.id)
+            project = crew.project
+            project_crews_by_connection[connection_id].append(
+                {
+                    "project_id": str(project.public_id),
+                    "project_name": project.worker_visible_name or project.internal_name,
+                    "crew_id": str(crew.public_id),
+                    "crew_name": crew.internal_name,
+                    "role": role,
+                    "assignment_type": assignment_type,
+                }
+            )
+
+        for assignment in (
+            ProjectCrewResourceAssignment.objects.filter(
+                driver_connection_id__in=connection_ids,
+                ends_on__isnull=True,
+                crew__state=ProjectCrew.STATE_ACTIVE,
+                crew__project__is_active=True,
+            )
+            .select_related("crew__project")
+            .order_by("driver_connection_id", "-starts_on", "-id")
+        ):
+            add_project_crew(
+                assignment.driver_connection_id,
+                assignment.crew,
+                ProjectCrewShiftMember.ROLE_DRIVER,
+                "permanent",
+            )
+        for assignment in (
+            ProjectCrewPassenger.objects.filter(
+                connection_id__in=connection_ids,
+                ends_on__isnull=True,
+                crew__state=ProjectCrew.STATE_ACTIVE,
+                crew__project__is_active=True,
+            )
+            .select_related("crew__project")
+            .order_by("connection_id", "-starts_on", "-id")
+        ):
+            add_project_crew(
+                assignment.connection_id,
+                assignment.crew,
+                ProjectCrewShiftMember.ROLE_PASSENGER,
+                "permanent",
+            )
+        for member in (
+            ProjectCrewShiftMember.objects.filter(
+                connection_id__in=connection_ids,
+                shift__state=ProjectCrewShift.STATE_PUBLISHED,
+                shift__work_date__gte=timezone.localdate(),
+                shift__crew__state=ProjectCrew.STATE_ACTIVE,
+                shift__crew__project__is_active=True,
+            )
+            .select_related("shift__crew__project")
+            .order_by("connection_id", "shift__work_date", "id")
+        ):
+            add_project_crew(
+                member.connection_id,
+                member.shift.crew,
+                member.role,
+                "scheduled",
+            )
         return Response(
             {
                 "results": [
@@ -1012,11 +2463,173 @@ class OrganizationWorkerConnectionListAPIView(
                         },
                         "stage": connection.stage,
                         "visible_stage": connection.visible_stage,
+                        "has_driving_license": connection.has_driving_license,
+                        "project_crews": project_crews_by_connection[connection.id],
+                        "created_at": connection.created_at,
                         "updated_at": connection.updated_at,
                     }
                     for connection in connections
                 ]
             }
+        )
+
+
+class OrganizationChatDirectoryAPIView(
+    SupportFeatureAPIView,
+    OrganizationAccessMixin,
+):
+    """People visible in the two mobile staff chat directories."""
+
+    def get(self, request, organization_public_id):
+        organization, _ = self.get_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        memberships = list(
+            OrganizationMembership.objects.filter(
+                organization=organization,
+                state=OrganizationMembership.STATE_ACTIVE,
+            )
+            .select_related("user")
+            .order_by("-created_at", "-id")
+        )
+        conversations = list(
+            SupportConversation.objects.filter(
+                organization=organization,
+                state=SupportConversation.STATE_ACTIVE,
+                members__user=request.user,
+                members__left_at__isnull=True,
+            )
+            .select_related("connection")
+            .prefetch_related("members__user")
+            .distinct()
+        )
+        conversation_by_connection = {
+            item.connection_id: item
+            for item in conversations
+            if item.connection_id is not None
+        }
+        staff_conversation_by_user = {}
+        for conversation in conversations:
+            if conversation.connection_id is not None:
+                continue
+            for member in conversation.members.all():
+                if member.left_at is None and member.user_id != request.user.id:
+                    staff_conversation_by_user.setdefault(member.user_id, conversation)
+
+        results = []
+        if has_permission(
+            user=request.user,
+            organization=organization,
+            permission_code=WORKER_VIEW,
+        ) and has_permission(
+            user=request.user,
+            organization=organization,
+            permission_code=CHAT_MANAGE,
+        ):
+            worker_queryset = worker_connection_queryset_for(
+                user=request.user,
+                organization=organization,
+                queryset=SupportConnection.objects.filter(is_archived=False),
+            ).select_related("candidate", "vacancy")
+            seen_worker_user_ids = set()
+            for connection in worker_queryset.order_by("-created_at", "-id")[:250]:
+                if connection.candidate_id in seen_worker_user_ids:
+                    continue
+                seen_worker_user_ids.add(connection.candidate_id)
+                conversation = conversation_by_connection.get(connection.id)
+                results.append(
+                    {
+                        "target_type": "worker",
+                        "target_id": str(connection.public_id),
+                        "display_name": _user_display_name(connection.candidate),
+                        "subtitle": connection.vacancy.internal_title,
+                        "created_at": connection.created_at,
+                        "conversation": (
+                            _conversation_payload(conversation, viewer=request.user)
+                            if conversation is not None
+                            else None
+                        ),
+                    }
+                )
+        for membership in memberships:
+            if membership.user_id == request.user.id:
+                continue
+            conversation = staff_conversation_by_user.get(membership.user_id)
+            results.append(
+                {
+                    "target_type": "staff",
+                    "target_id": str(membership.public_id),
+                    "display_name": _user_display_name(membership.user),
+                    "subtitle": membership.display_role,
+                    "created_at": membership.created_at,
+                    "conversation": (
+                        _conversation_payload(conversation, viewer=request.user)
+                        if conversation is not None
+                        else None
+                    ),
+                }
+            )
+        return Response({"results": results})
+
+
+class OrganizationChatDirectoryOpenAPIView(
+    SupportFeatureAPIView,
+    OrganizationAccessMixin,
+):
+    """Open a scoped worker chat or a private company-staff chat."""
+
+    def post(self, request, organization_public_id):
+        organization, _ = self.get_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        target_type = str(request.data.get("target_type") or "").strip()
+        target_id = str(request.data.get("target_id") or "").strip()
+        if target_type not in {"worker", "staff"} or not target_id:
+            raise ValidationError({"target": "invalid_chat_directory_target"})
+
+        if target_type == "worker":
+            require_permission(
+                user=request.user,
+                organization=organization,
+                permission_code=CHAT_MANAGE,
+            )
+            connection = get_object_or_404(
+                SupportConnection.objects.select_related("organization", "candidate"),
+                organization=organization,
+                public_id=target_id,
+                is_archived=False,
+            )
+            require_worker_connection_access(
+                user=request.user,
+                organization=organization,
+                connection=connection,
+            )
+            conversation, created = open_manager_conversation_for_staff(
+                actor=request.user,
+                connection=connection,
+            )
+        else:
+            target_membership = get_object_or_404(
+                OrganizationMembership.objects.select_related("organization", "user"),
+                organization=organization,
+                public_id=target_id,
+                state=OrganizationMembership.STATE_ACTIVE,
+            )
+            conversation, created = open_staff_conversation(
+                actor=request.user,
+                target_membership=target_membership,
+            )
+        conversation = SupportConversation.objects.prefetch_related("members__user").get(
+            pk=conversation.pk
+        )
+        return Response(
+            {
+                "created": created,
+                "conversation": _conversation_payload(conversation, viewer=request.user),
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
 
@@ -1883,8 +3496,71 @@ class SupportApplicationQueueAPIView(SupportFeatureAPIView, OrganizationAccessMi
             .select_related("vacancy", "candidate")
             .order_by("-submitted_at", "-id")
         )
+        may_request_documents = has_permission(
+            user=request.user,
+            organization=organization,
+            permission_code=DOCUMENT_REQUEST,
+        )
+        processing_connections = list(
+            SupportConnection.objects.filter(
+                organization=organization,
+                is_archived=False,
+                stage=SupportConnection.STAGE_DOCUMENTS,
+            )
+            .select_related("candidate", "vacancy", "application")
+            .prefetch_related("stage_events", "document_request_packages__account_reference")
+            .order_by("-updated_at", "-id")
+        )
+        processing_results = []
+        for connection in processing_connections:
+            processing_started_at = next(
+                (
+                    event.created_at
+                    for event in reversed(list(connection.stage_events.all()))
+                    if event.next_stage == SupportConnection.STAGE_DOCUMENTS
+                ),
+                connection.updated_at,
+            )
+            processing_results.append(
+                {
+                    "connection_id": str(connection.public_id),
+                    "stage": connection.stage,
+                    "processing_started_at": processing_started_at,
+                    "updated_at": connection.updated_at,
+                    "candidate": {
+                        "id": str(connection.candidate_id),
+                        "display_name": _user_display_name(connection.candidate),
+                    },
+                    "vacancy": {
+                        "id": str(connection.vacancy.public_id),
+                        "internal_title": connection.vacancy.internal_title,
+                    },
+                    "application": _application_payload(
+                        connection.application,
+                        include_staff_fields=True,
+                    ),
+                    "document_packages": (
+                        [
+                            _document_request_package_payload(
+                                package,
+                                include_staff_fields=False,
+                            )
+                            for package in connection.document_request_packages.all()
+                        ]
+                        if may_request_documents
+                        else []
+                    ),
+                }
+            )
         return Response(
-            {"results": [_application_payload(item, include_staff_fields=True) for item in applications]}
+            {
+                "results": [
+                    _application_payload(item, include_staff_fields=True)
+                    for item in applications
+                ],
+                "processing_results": processing_results,
+                "permissions": {"document_request": may_request_documents},
+            }
         )
 
 
@@ -2246,6 +3922,62 @@ def _housing_site_payload(site):
         "building": site.building,
         "is_active": site.is_active,
     }
+
+
+def _housing_assignment_detail_payload(assignment, *, may_view_worker=True):
+    return {
+        "id": str(assignment.public_id),
+        "state": assignment.state,
+        "check_in_at": assignment.check_in_at,
+        "check_out_at": assignment.check_out_at,
+        "worker": (
+            {
+                "connection_id": str(assignment.connection.public_id),
+                "display_name": _user_display_name(assignment.connection.candidate),
+            }
+            if may_view_worker
+            else None
+        ),
+        "worker_restricted": not may_view_worker,
+    }
+
+
+def _housing_site_workspace_payload(
+    site,
+    *,
+    rooms,
+    places_by_room,
+    assignments_by_place,
+    visible_connection_ids,
+):
+    payload = _housing_site_payload(site)
+    payload["rooms"] = [
+        {
+            "id": str(room.public_id),
+            "label": room.label,
+            "capacity": room.capacity,
+            "is_active": room.is_active,
+            "places": [
+                {
+                    "id": str(place.public_id),
+                    "label": place.label,
+                    "is_active": place.is_active,
+                    "assignments": [
+                        _housing_assignment_detail_payload(
+                            assignment,
+                            may_view_worker=(
+                                assignment.connection_id in visible_connection_ids
+                            ),
+                        )
+                        for assignment in assignments_by_place.get(place.id, [])
+                    ],
+                }
+                for place in places_by_room.get(room.id, [])
+            ],
+        }
+        for room in rooms
+    ]
+    return payload
 
 
 def _worksite_payload(worksite):
@@ -4252,8 +5984,62 @@ class HousingSiteListCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixi
             organization_public_id=organization_public_id,
             permission_code=HOUSING_MANAGE,
         )
-        sites = HousingSite.objects.filter(organization=organization).order_by("internal_name", "id")
-        return Response({"results": [_housing_site_payload(item) for item in sites]})
+        sites = list(
+            HousingSite.objects.filter(organization=organization).order_by(
+                "internal_name", "id"
+            )
+        )
+        rooms = list(
+            HousingRoom.objects.filter(site__organization=organization)
+            .order_by("label", "id")
+        )
+        places = list(
+            HousingPlace.objects.filter(room__site__organization=organization)
+            .order_by("label", "id")
+        )
+        now = timezone.now()
+        assignments = list(
+            HousingAssignment.objects.filter(
+                organization=organization,
+                state__in=(
+                    HousingAssignment.STATE_DRAFT,
+                    HousingAssignment.STATE_PUBLISHED,
+                ),
+            )
+            .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
+            .select_related("connection__candidate")
+            .order_by("check_in_at", "id")
+        )
+        visible_connection_ids = set(
+            worker_connection_queryset_for(
+                user=request.user,
+                organization=organization,
+                queryset=SupportConnection.objects.filter(is_archived=False),
+            ).values_list("id", flat=True)
+        )
+        rooms_by_site = {}
+        for room in rooms:
+            rooms_by_site.setdefault(room.site_id, []).append(room)
+        places_by_room = {}
+        for place in places:
+            places_by_room.setdefault(place.room_id, []).append(place)
+        assignments_by_place = {}
+        for assignment in assignments:
+            assignments_by_place.setdefault(assignment.place_id, []).append(assignment)
+        return Response(
+            {
+                "results": [
+                    _housing_site_workspace_payload(
+                        site,
+                        rooms=rooms_by_site.get(site.id, []),
+                        places_by_room=places_by_room,
+                        assignments_by_place=assignments_by_place,
+                        visible_connection_ids=visible_connection_ids,
+                    )
+                    for site in sites
+                ]
+            }
+        )
 
     def post(self, request, organization_public_id):
         organization = _operation_organization(
@@ -4355,8 +6141,77 @@ class WorkProjectCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
 class VehicleListCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
     def get(self, request, organization_public_id):
         organization = _operation_organization(self, request=request, organization_public_id=organization_public_id, permission_code=TRANSPORT_MANAGE)
-        vehicles = Vehicle.objects.filter(organization=organization).order_by("internal_name", "id")
-        return Response({"results": [{"id": str(item.public_id), "internal_name": item.internal_name, "registration_identifier": item.registration_identifier, "seat_capacity": item.seat_capacity, "is_active": item.is_active} for item in vehicles]})
+        today = timezone.localdate()
+        vehicles = list(
+            Vehicle.objects.filter(organization=organization).order_by(
+                "internal_name", "id"
+            )
+        )
+
+        # Project crews are the canonical source for the new employer workflow.
+        # Keep the published legacy assignment as a fallback for vehicles that
+        # have not yet been moved into a project crew.
+        current_driver_by_vehicle = {}
+        project_resources = (
+            ProjectCrewResourceAssignment.objects.filter(
+                crew__organization=organization,
+                crew__state=ProjectCrew.STATE_ACTIVE,
+                starts_on__lte=today,
+            )
+            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+            .select_related("driver_connection__candidate", "crew__project")
+            .order_by("vehicle_id", "-starts_on", "-id")
+        )
+        for resource in project_resources:
+            current_driver_by_vehicle.setdefault(
+                resource.vehicle_id,
+                {
+                    "id": str(resource.driver_connection.public_id),
+                    "display_name": _user_display_name(
+                        resource.driver_connection.candidate
+                    ),
+                    "project": resource.crew.project.worker_visible_name
+                    or resource.crew.project.internal_name,
+                },
+            )
+
+        legacy_resources = (
+            DriverVehicleAssignment.objects.filter(
+                organization=organization,
+                state=DriverVehicleAssignment.STATE_PUBLISHED,
+                starts_on__lte=today,
+            )
+            .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+            .select_related("driver_connection__candidate")
+            .order_by("vehicle_id", "-starts_on", "-id")
+        )
+        for resource in legacy_resources:
+            current_driver_by_vehicle.setdefault(
+                resource.vehicle_id,
+                {
+                    "id": str(resource.driver_connection.public_id),
+                    "display_name": _user_display_name(
+                        resource.driver_connection.candidate
+                    ),
+                    "project": None,
+                },
+            )
+
+        return Response(
+            {
+                "results": [
+                    {
+                        "id": str(item.public_id),
+                        "internal_name": item.internal_name,
+                        "registration_identifier": item.registration_identifier,
+                        "seat_capacity": item.seat_capacity,
+                        "is_active": item.is_active,
+                        "current_driver": current_driver_by_vehicle.get(item.id),
+                    }
+                    for item in vehicles
+                ]
+            }
+        )
 
     def post(self, request, organization_public_id):
         organization = _operation_organization(self, request=request, organization_public_id=organization_public_id, permission_code=TRANSPORT_MANAGE)
@@ -4382,6 +6237,52 @@ class HousingAssignmentCreateAPIView(SupportFeatureAPIView, OrganizationAccessMi
         return Response({"housing_assignment": _operation_assignment_payload(assignment)}, status=status.HTTP_201_CREATED)
 
 
+class HousingAssignmentAssignAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
+    """Create and publish a housing assignment as one atomic mobile action."""
+
+    def post(self, request, organization_public_id):
+        organization, _ = self.get_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        serializer = HousingAssignmentCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        connection = get_object_or_404(
+            SupportConnection,
+            organization=organization,
+            public_id=data.pop("connection_id"),
+        )
+        place = get_object_or_404(
+            HousingPlace.objects.select_related("room__site"),
+            room__site__organization=organization,
+            public_id=data.pop("place_id"),
+        )
+        with transaction.atomic():
+            assignment = create_housing_assignment(
+                actor=request.user,
+                organization=organization,
+                connection=connection,
+                place=place,
+                **data,
+            )
+            assignment = publish_housing_assignment(
+                actor=request.user,
+                assignment=assignment,
+            )
+        assignment = HousingAssignment.objects.select_related(
+            "connection__candidate"
+        ).get(pk=assignment.pk)
+        return Response(
+            {
+                "housing_assignment": _housing_assignment_detail_payload(
+                    assignment
+                )
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class HousingAssignmentPublishAPIView(SupportFeatureAPIView):
     def post(self, request, assignment_public_id):
         assignment = _operational_object_or_not_found(
@@ -4402,6 +6303,28 @@ class HousingAssignmentCancelAPIView(SupportFeatureAPIView):
         )
         assignment = cancel_housing_assignment(actor=request.user, assignment=assignment)
         return Response({"housing_assignment": _operation_assignment_payload(assignment)})
+
+
+class HousingAssignmentCheckOutAPIView(SupportFeatureAPIView):
+    def post(self, request, assignment_public_id):
+        serializer = HousingAssignmentCheckOutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        assignment = _operational_object_or_not_found(
+            model=HousingAssignment,
+            user=request.user,
+            public_id=assignment_public_id,
+        )
+        assignment = schedule_housing_check_out(
+            actor=request.user,
+            assignment=assignment,
+            check_out_at=serializer.validated_data["check_out_at"],
+        )
+        assignment = HousingAssignment.objects.select_related(
+            "connection__candidate"
+        ).get(pk=assignment.pk)
+        return Response(
+            {"housing_assignment": _housing_assignment_detail_payload(assignment)}
+        )
 
 
 class WorkerProjectAssignmentCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):

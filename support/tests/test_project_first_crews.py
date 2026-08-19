@@ -127,7 +127,7 @@ class ProjectFirstCrewModelTests(TestCase):
             created_by=self.owner,
         )
 
-    def test_resource_assignment_is_effective_dated_and_exclusive(self):
+    def test_resource_assignment_is_effective_dated_per_crew(self):
         current = ProjectCrewResourceAssignment.objects.create(
             crew=self.crew,
             driver_connection=self.driver,
@@ -143,10 +143,22 @@ class ProjectFirstCrewModelTests(TestCase):
             internal_name="Crew B",
             created_by=self.owner,
         )
+        # A driver may be planned in more than one crew; actual date
+        # collisions are shown and resolved at the calendar-day layer.
+        other_assignment = ProjectCrewResourceAssignment.objects.create(
+            crew=other_crew,
+            driver_connection=self.driver,
+            vehicle=self.second_vehicle,
+            starts_on=date(2026, 8, 11),
+            created_by=self.owner,
+        )
+        other_assignment.full_clean()
+
+        # A single crew still has only one open driver/vehicle assignment.
         with self.assertRaises(IntegrityError), transaction.atomic():
             ProjectCrewResourceAssignment.objects.create(
-                crew=other_crew,
-                driver_connection=self.driver,
+                crew=self.crew,
+                driver_connection=self.second_driver,
                 vehicle=self.second_vehicle,
                 starts_on=date(2026, 8, 11),
                 created_by=self.owner,

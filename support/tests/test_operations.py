@@ -172,6 +172,51 @@ class SupportOperationsTests(TestCase):
         self.assertEqual(room_model.places.filter(is_active=True).count(), 3)
         self.assertFalse(HousingAssignment.objects.filter(place__room=room_model).exists())
 
+    def test_mobile_housing_workspace_assigns_and_schedules_check_out(self):
+        site, _, place = self._create_housing_place(capacity=1)
+        check_in_at = (timezone.now() + timedelta(days=1)).replace(microsecond=0)
+
+        assigned = self.owner_client.post(
+            f"{self.base_url}/housing-assignments/assign/",
+            {
+                "connection_id": str(self.connection.public_id),
+                "place_id": place["id"],
+                "check_in_at": check_in_at.isoformat(),
+            },
+            format="json",
+        )
+
+        self.assertEqual(assigned.status_code, 201, assigned.data)
+        assignment_data = assigned.data["housing_assignment"]
+        self.assertEqual(assignment_data["state"], HousingAssignment.STATE_PUBLISHED)
+        self.assertEqual(
+            assignment_data["worker"]["connection_id"],
+            str(self.connection.public_id),
+        )
+
+        workspace = self.owner_client.get(f"{self.base_url}/housing-sites/")
+        self.assertEqual(workspace.status_code, 200, workspace.data)
+        site_data = next(
+            item for item in workspace.data["results"] if item["id"] == site["id"]
+        )
+        place_data = site_data["rooms"][0]["places"][0]
+        self.assertEqual(len(place_data["assignments"]), 1)
+        self.assertEqual(
+            place_data["assignments"][0]["worker"]["display_name"],
+            self.candidate.username,
+        )
+
+        check_out_at = check_in_at + timedelta(days=30)
+        checked_out = self.owner_client.post(
+            f"/api/v2/support/housing-assignments/{assignment_data['id']}/check-out/",
+            {"check_out_at": check_out_at.isoformat()},
+            format="json",
+        )
+
+        self.assertEqual(checked_out.status_code, 200, checked_out.data)
+        assignment = HousingAssignment.objects.get(public_id=assignment_data["id"])
+        self.assertEqual(assignment.check_out_at, check_out_at)
+
     def test_housing_is_drafted_before_publish_and_room_capacity_is_enforced(self):
         _, room, place = self._create_housing_place(capacity=1)
         second_place = self.owner_client.post(
@@ -229,7 +274,7 @@ class SupportOperationsTests(TestCase):
             2,
         )
 
-    def test_work_assignment_conflict_is_rejected_only_when_publishing_same_project(self):
+    def test_work_assignment_conflict_is_rejected_across_projects(self):
         worksite = self.owner_client.post(
             f"{self.base_url}/worksites/",
             {
@@ -302,8 +347,12 @@ class SupportOperationsTests(TestCase):
             f"/api/v2/support/work-assignments/"
             f"{other_assignment.data['work_assignment']['id']}/publish/"
         )
-        self.assertEqual(other_published.status_code, 200, other_published.data)
-        self.assertEqual(WorkerProjectAssignment.objects.filter(state="published").count(), 2)
+        self.assertEqual(other_published.status_code, 400, other_published.data)
+        self.assertEqual(
+            other_published.data["assignment"],
+            "work_assignment_conflicts_with_published_assignment",
+        )
+        self.assertEqual(WorkerProjectAssignment.objects.filter(state="published").count(), 1)
 
     def test_route_publishes_driver_and_only_notifies_assigned_people(self):
         _, _, place = self._create_housing_place()

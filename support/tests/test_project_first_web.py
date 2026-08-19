@@ -33,6 +33,9 @@ from support.project_first_web import COPY, PROJECT_CREW_ERROR_COPY
 )
 class ProjectFirstWorkspaceTests(TestCase):
     def setUp(self):
+        # Driver substitutions are future-only business operations.  A
+        # relative fixture keeps the browser-flow tests valid year-round.
+        self.future_work_date = timezone.localdate() + timedelta(days=10)
         self.operator = User.objects.create_user(
             username="project-first-web-operator",
             email="project-first-web-operator@example.com",
@@ -382,7 +385,7 @@ class ProjectFirstWorkspaceTests(TestCase):
         )
 
         response = self.client.get(
-            f"{reverse('support:workspace')}?organization={self.organization.public_id}"
+            f"{reverse('support:workers')}?organization={self.organization.public_id}"
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1168,7 +1171,8 @@ class ProjectFirstWorkspaceTests(TestCase):
 
     def test_active_substitute_is_shown_as_driver_not_absent_passenger(self):
         crew = self._create_crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
+        return_month = work_date.strftime("%Y-%m")
         self.client.post(
             self._detail_url(),
             {
@@ -1199,7 +1203,7 @@ class ProjectFirstWorkspaceTests(TestCase):
                 "action": "scheduled_shifts_clear",
                 "work_dates": [work_date.isoformat()],
                 "return_tab": "work_transport",
-                "return_month": "2026-08",
+                "return_month": return_month,
             },
         )
         self.client.post(
@@ -1210,20 +1214,23 @@ class ProjectFirstWorkspaceTests(TestCase):
                 "crew_id": str(crew.public_id),
                 "driver_id": str(self.second_driver.public_id),
                 "work_dates": [work_date.isoformat()],
-                "return_month": "2026-08",
+                "return_month": return_month,
             },
         )
 
-        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        page = self.client.get(f"{self._detail_url()}&month={return_month}")
         rendered = next(
             item
             for item in page.context["crews"][0].display_passengers
             if item["connection"].pk == self.second_driver.pk
         )
         self.assertEqual(rendered["driver_dates"], [work_date])
-        self.assertEqual(rendered["driver_dates_label"], "14.08")
+        self.assertEqual(rendered["driver_dates_label"], work_date.strftime("%d.%m"))
         self.assertEqual(rendered["excluded_dates"], [])
-        self.assertContains(page, 'data-pf-select-substitution="2026-08-14"')
+        self.assertContains(
+            page,
+            f'data-pf-select-substitution="{work_date.isoformat()}"',
+        )
 
     def test_driver_absence_marks_project_calendar_as_missing_driver(self):
         crew = self._create_crew()
@@ -1264,7 +1271,8 @@ class ProjectFirstWorkspaceTests(TestCase):
 
     def test_owner_assigns_substitute_driver_for_selected_absence_date(self):
         crew = self._create_crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
+        return_month = work_date.strftime("%Y-%m")
         self.client.post(
             self._detail_url(),
             {
@@ -1295,7 +1303,7 @@ class ProjectFirstWorkspaceTests(TestCase):
                 "action": "scheduled_shifts_clear",
                 "work_dates": [work_date.isoformat()],
                 "return_tab": "work_transport",
-                "return_month": "2026-08",
+                "return_month": return_month,
             },
         )
         # A red calendar day is authoritative even if an older workflow did
@@ -1306,7 +1314,7 @@ class ProjectFirstWorkspaceTests(TestCase):
             work_date=work_date,
         ).delete()
 
-        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        page = self.client.get(f"{self._detail_url()}&month={return_month}")
         self.assertContains(page, "data-pf-substitute-form", html=False)
         self.assertContains(page, 'data-pf-driver-absence="1"', html=False)
         self.assertContains(page, str(self.second_driver.public_id))
@@ -1319,7 +1327,7 @@ class ProjectFirstWorkspaceTests(TestCase):
                 "crew_id": str(crew.public_id),
                 "driver_id": str(self.second_driver.public_id),
                 "work_dates": [work_date.isoformat()],
-                "return_month": "2026-08",
+                "return_month": return_month,
             },
         )
 
@@ -1341,17 +1349,18 @@ class ProjectFirstWorkspaceTests(TestCase):
                 role=ProjectCrewShiftMember.ROLE_DRIVER,
             ).exists()
         )
-        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        page = self.client.get(f"{self._detail_url()}&month={return_month}")
         self.assertContains(page, page.context["pf"]["substitute_driver"])
         self.assertContains(page, self.second_driver.candidate.get_full_name())
         self.assertNotContains(
             page,
-            f'{page.context["pf"]["substitute_on"]} 14.08',
+            f'{page.context["pf"]["substitute_on"]} {work_date.strftime("%d.%m")}',
         )
 
     def test_complete_substitute_driver_web_flow_keeps_calendar_and_history_consistent(self):
         crew = self._create_crew()
-        work_date = date(2026, 8, 14)
+        work_date = self.future_work_date
+        return_month = work_date.strftime("%Y-%m")
         self.client.post(
             self._detail_url(),
             {
@@ -1382,7 +1391,7 @@ class ProjectFirstWorkspaceTests(TestCase):
                 "action": "scheduled_shifts_clear",
                 "work_dates": [work_date.isoformat()],
                 "return_tab": "work_transport",
-                "return_month": "2026-08",
+                "return_month": return_month,
             },
         )
 
@@ -1394,7 +1403,7 @@ class ProjectFirstWorkspaceTests(TestCase):
                 "crew_id": str(crew.public_id),
                 "driver_id": str(self.second_driver.public_id),
                 "work_dates": [work_date.isoformat()],
-                "return_month": "2026-08",
+                "return_month": return_month,
             },
         )
         self.assertEqual(response.status_code, 302)
@@ -1413,7 +1422,7 @@ class ProjectFirstWorkspaceTests(TestCase):
                 "action": "scheduled_shifts_day_off",
                 "work_dates": [work_date.isoformat()],
                 "return_tab": "work_transport",
-                "return_month": "2026-08",
+                "return_month": return_month,
             },
         )
         self.assertEqual(response.status_code, 302)
@@ -1435,7 +1444,7 @@ class ProjectFirstWorkspaceTests(TestCase):
             ).exists()
         )
 
-        page = self.client.get(f"{self._detail_url()}&month=2026-08")
+        page = self.client.get(f"{self._detail_url()}&month={return_month}")
         rendered_crew = page.context["crews"][0]
         calendar_day = next(
             item

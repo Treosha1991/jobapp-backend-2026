@@ -14,7 +14,9 @@ from .api_views import (
     DocumentRequestPackageNotRequiredAPIView,
     DriverVehicleAssignmentCreateAPIView,
     HousingAssignmentCancelAPIView,
+    HousingAssignmentCheckOutAPIView,
     HousingAssignmentCreateAPIView,
+    HousingAssignmentAssignAPIView,
     HousingAssignmentPublishAPIView,
     HousingPlaceCreateAPIView,
     HousingRoomCreateAPIView,
@@ -48,6 +50,20 @@ from .api_views import (
     OrganizationCalendarMarkTemplateCreateAPIView,
     OrganizationContentTemplateListCreateAPIView,
     OrganizationContentWorkspaceAPIView,
+    OrganizationChatDirectoryAPIView,
+    OrganizationChatDirectoryOpenAPIView,
+    OrganizationProjectFirstCrewDetailAPIView,
+    OrganizationProjectFirstCrewDriverAbsenceAPIView,
+    OrganizationProjectFirstCrewDriverReplaceAPIView,
+    OrganizationProjectFirstCrewDriverSubstituteAPIView,
+    OrganizationProjectFirstCrewListAPIView,
+    OrganizationProjectFirstCrewPassengerApplyAPIView,
+    OrganizationProjectFirstCrewPassengerRemoveAPIView,
+    OrganizationProjectFirstCrewShiftReleaseAPIView,
+    OrganizationProjectFirstCrewShiftReplaceAPIView,
+    OrganizationProjectFirstProjectListAPIView,
+    OrganizationProjectFirstProjectDetailAPIView,
+    OrganizationProjectFirstWorkspaceAPIView,
     OrganizationWorkerConnectionListAPIView,
     OrganizationWorkerConnectionSummaryAPIView,
     OrganizationTransportWorkspaceAPIView,
@@ -135,9 +151,90 @@ urlpatterns = [
         name="support-staff-schedule-workspace",
     ),
     path(
+        "organizations/<uuid:organization_public_id>/project-first/projects/",
+        OrganizationProjectFirstProjectListAPIView.as_view(),
+        name="support-project-first-project-list",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/projects/"
+        "<uuid:project_public_id>/",
+        OrganizationProjectFirstProjectDetailAPIView.as_view(),
+        name="support-project-first-project-detail",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/projects/"
+        "<uuid:project_public_id>/crews/",
+        OrganizationProjectFirstCrewListAPIView.as_view(),
+        name="support-project-first-crew-list",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/",
+        OrganizationProjectFirstCrewDetailAPIView.as_view(),
+        name="support-project-first-crew-detail",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/shifts/replace/",
+        OrganizationProjectFirstCrewShiftReplaceAPIView.as_view(),
+        name="support-project-first-crew-shift-replace",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/shifts/release/",
+        OrganizationProjectFirstCrewShiftReleaseAPIView.as_view(),
+        name="support-project-first-crew-shift-release",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/driver/replace/",
+        OrganizationProjectFirstCrewDriverReplaceAPIView.as_view(),
+        name="support-project-first-crew-driver-replace",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/driver/absence/",
+        OrganizationProjectFirstCrewDriverAbsenceAPIView.as_view(),
+        name="support-project-first-crew-driver-absence",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/driver/substitute/",
+        OrganizationProjectFirstCrewDriverSubstituteAPIView.as_view(),
+        name="support-project-first-crew-driver-substitute",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/passengers/apply/",
+        OrganizationProjectFirstCrewPassengerApplyAPIView.as_view(),
+        name="support-project-first-crew-passenger-apply",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/passengers/remove/",
+        OrganizationProjectFirstCrewPassengerRemoveAPIView.as_view(),
+        name="support-project-first-crew-passenger-remove",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/projects/"
+        "<uuid:project_public_id>/workspace/",
+        OrganizationProjectFirstWorkspaceAPIView.as_view(),
+        name="support-project-first-project-workspace",
+    ),
+    path(
         "organizations/<uuid:organization_public_id>/connections/",
         OrganizationWorkerConnectionListAPIView.as_view(),
         name="support-staff-worker-connection-list",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/chat-directory/",
+        OrganizationChatDirectoryAPIView.as_view(),
+        name="support-staff-chat-directory",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/chat-directory/open/",
+        OrganizationChatDirectoryOpenAPIView.as_view(),
+        name="support-staff-chat-directory-open",
     ),
     path(
         "organizations/<uuid:organization_public_id>/connections/<uuid:connection_public_id>/summary/",
@@ -276,6 +373,11 @@ urlpatterns = [
         name="support-housing-assignment-create",
     ),
     path(
+        "organizations/<uuid:organization_public_id>/operations/housing-assignments/assign/",
+        HousingAssignmentAssignAPIView.as_view(),
+        name="support-housing-assignment-assign",
+    ),
+    path(
         "organizations/<uuid:organization_public_id>/operations/work-assignments/",
         WorkerProjectAssignmentCreateAPIView.as_view(),
         name="support-work-assignment-create",
@@ -299,6 +401,11 @@ urlpatterns = [
         "housing-assignments/<uuid:assignment_public_id>/cancel/",
         HousingAssignmentCancelAPIView.as_view(),
         name="support-housing-assignment-cancel",
+    ),
+    path(
+        "housing-assignments/<uuid:assignment_public_id>/check-out/",
+        HousingAssignmentCheckOutAPIView.as_view(),
+        name="support-housing-assignment-check-out",
     ),
     path(
         "work-assignments/<uuid:assignment_public_id>/publish/",

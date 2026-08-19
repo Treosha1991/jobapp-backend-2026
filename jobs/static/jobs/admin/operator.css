@@ -2427,3 +2427,587 @@ body.login .submit-row {
     min-width: 56rem !important;
   }
 }
+
+/* CODEX_OPERATOR_RESPONSIVE_LAYOUT_START */
+/*
+ * Final desktop/tablet layout guard.
+ * The admin's responsive JavaScript may run after first paint, so these
+ * declarations deliberately outrank late inline sizing while leaving the
+ * compact phone card layout untouched.
+ */
+@media (min-width: 768px) {
+  html,
+  body.change-list,
+  body.change-list #container,
+  body.change-list #main,
+  body.change-list .main,
+  body.change-list #content,
+  body.change-list .content,
+  body.change-list #content-main,
+  body.change-list #changelist {
+    box-sizing: border-box !important;
+    max-width: none !important;
+  }
+
+  body.change-list #main,
+  body.change-list .main {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  body.change-list #content,
+  body.change-list .content {
+    width: calc(100vw - 24px) !important;
+    min-width: 0 !important;
+    margin-inline: auto !important;
+    padding-inline: clamp(8px, 1.2vw, 22px) !important;
+  }
+
+  body.change-list #content-main,
+  body.change-list #changelist {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  body.change-list #changelist {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) clamp(220px, 18vw, 280px) !important;
+    gap: clamp(12px, 1.3vw, 22px) !important;
+    align-items: start !important;
+  }
+
+  body.change-list .changelist-form-container,
+  body.change-list #changelist-form {
+    grid-column: 1 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+  }
+
+  body.change-list #changelist-filter {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    position: static !important;
+    inset: auto !important;
+    float: none !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  body.change-list .results {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body.change-list #result_list {
+    width: 100% !important;
+    min-width: 980px !important;
+    max-width: none !important;
+    table-layout: auto !important;
+  }
+
+  body.change-list #result_list th,
+  body.change-list #result_list td {
+    min-width: 72px;
+    max-width: 260px;
+    white-space: normal !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    hyphens: none !important;
+    vertical-align: top;
+  }
+
+  body.change-list #result_list th:first-child,
+  body.change-list #result_list td:first-child {
+    min-width: 34px;
+    width: 34px;
+  }
+
+  body.change-list #toolbar,
+  body.change-list .actions,
+  body.change-list .paginator {
+    width: 100% !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+  }
+}
+
+@media (min-width: 1180px) {
+  body.change-list #content,
+  body.change-list .content {
+    width: calc(100vw - 36px) !important;
+  }
+
+  body.change-list #result_list {
+    min-width: 1120px !important;
+  }
+}
+
+@media (min-width: 1700px) {
+  body.change-list #changelist {
+    grid-template-columns: minmax(0, 1fr) 300px !important;
+  }
+}
+/* CODEX_OPERATOR_RESPONSIVE_LAYOUT_END */
+/* CODEX_OPERATOR_RESPONSIVE_LAYOUT_START */
+/* Keep the mobile card layout intact; use the full canvas on tablets/desktops. */
+@media (min-width: 768px) {
+  html,
+  body,
+  #container,
+  #main,
+  .main,
+  #content-start,
+  #content,
+  #content.colM,
+  #content.colMS,
+  #content-main {
+    box-sizing: border-box !important;
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-inline-size: none !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  .main > .content,
+  .main.shifted > #nav-sidebar + .content {
+    flex: 1 1 auto !important;
+    max-width: none !important;
+  }
+
+  body.change-list #content {
+    padding-inline: clamp(12px, 2vw, 32px) !important;
+  }
+
+  body.change-list #content-main,
+  body.change-list #changelist {
+    float: none !important;
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-inline-size: none !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  body.change-list #changelist {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) clamp(240px, 20vw, 320px) !important;
+    column-gap: 24px !important;
+    align-items: start !important;
+  }
+
+  body.change-list #changelist-form,
+  body.change-list #changelist .changelist-form-container {
+    flex: 1 1 auto !important;
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  body.change-list #changelist .results {
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-width: none !important;
+    overflow-x: auto !important;
+  }
+
+  body.change-list #result_list {
+    inline-size: max-content !important;
+    width: max-content !important;
+    min-inline-size: 100% !important;
+    min-width: 100% !important;
+    table-layout: auto !important;
+  }
+
+  body.change-list #result_list th,
+  body.change-list #result_list td {
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    hyphens: none !important;
+  }
+
+  body.change-list #result_list td {
+    min-width: 88px;
+  }
+
+  body.change-list #changelist-filter {
+    position: static !important;
+    flex: none !important;
+    inline-size: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  body.change-list #changelist {
+    display: block !important;
+  }
+
+  body.change-list #changelist-filter {
+    inline-size: 100% !important;
+    width: 100% !important;
+    margin-top: 16px !important;
+  }
+
+  body.change-list #result_list {
+    min-inline-size: 980px !important;
+    min-width: 980px !important;
+  }
+}
+/* CODEX_OPERATOR_RESPONSIVE_LAYOUT_END */
+
+/* operator-desktop-width-fix-v4 */
+@media (min-width: 768px) {
+  body.operator-desktop-changelist,
+  body.operator-desktop-changelist #container,
+  body.operator-desktop-changelist #main,
+  body.operator-desktop-changelist .main,
+  body.operator-desktop-changelist #content-start,
+  body.operator-desktop-changelist #content,
+  body.operator-desktop-changelist #content.colM,
+  body.operator-desktop-changelist #content.colMS,
+  body.operator-desktop-changelist #content-main {
+    box-sizing: border-box !important;
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-inline-size: none !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  body.operator-desktop-changelist .main > .content,
+  body.operator-desktop-changelist .main.shifted > #nav-sidebar + .content {
+    flex: 1 1 auto !important;
+    max-width: none !important;
+  }
+
+  body.operator-desktop-changelist.change-list #content {
+    padding-inline: clamp(12px, 2vw, 32px) !important;
+  }
+
+  body.operator-desktop-changelist.change-list #content-main,
+  body.operator-desktop-changelist.change-list #changelist {
+    float: none !important;
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-inline-size: none !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  body.operator-desktop-changelist.change-list #changelist {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) clamp(240px, 20vw, 320px) !important;
+    column-gap: 24px !important;
+    align-items: start !important;
+  }
+
+  body.operator-desktop-changelist.change-list #changelist .changelist-form-container,
+  body.operator-desktop-changelist.change-list #changelist-form {
+    float: none !important;
+    flex: 1 1 auto !important;
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-inline-size: none !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  body.operator-desktop-changelist.change-list #changelist-filter {
+    float: none !important;
+    position: static !important;
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-width: 320px !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+  }
+
+  body.operator-desktop-changelist.change-list #changelist .results {
+    float: none !important;
+    inline-size: 100% !important;
+    width: 100% !important;
+    max-inline-size: none !important;
+    max-width: none !important;
+    overflow-x: auto !important;
+  }
+
+  body.operator-desktop-changelist.change-list #result_list {
+    inline-size: max-content !important;
+    width: max-content !important;
+    min-inline-size: 100% !important;
+    min-width: 100% !important;
+    table-layout: auto !important;
+  }
+
+  body.operator-desktop-changelist.change-list #result_list th,
+  body.operator-desktop-changelist.change-list #result_list td {
+    min-width: max-content;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    hyphens: none !important;
+  }
+}
+/* OPERATOR_DESKTOP_WIDTH_FIX_V6
+   Django can recalculate changelist widths after the initial render. Keep the
+   desktop/tablet workspace fluid while leaving the mobile card layout intact. */
+@media (min-width: 768px) {
+  body.change-list #container,
+  body.change-list #main,
+  body.change-list .main,
+  body.change-list #content-start,
+  body.change-list .content {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  body.change-list #content {
+    box-sizing: border-box !important;
+    width: calc(100vw - 32px) !important;
+    max-width: none !important;
+    margin: 0 16px !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  body.change-list #content-main {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  body.change-list #changelist {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) clamp(240px, 18vw, 320px) !important;
+    align-items: start !important;
+    gap: 18px !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  body.change-list .changelist-form-container,
+  body.change-list #changelist-form {
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  body.change-list .results {
+    width: 100% !important;
+    max-width: none !important;
+    overflow-x: auto !important;
+  }
+
+  body.change-list #result_list {
+    width: 100% !important;
+    min-width: 1100px !important;
+    max-width: none !important;
+    table-layout: auto !important;
+  }
+
+  body.change-list #result_list th,
+  body.change-list #result_list td {
+    white-space: normal !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  body.change-list #changelist-filter {
+    position: sticky !important;
+    top: 88px !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+}
+
+/* OPERATOR_DESKTOP_WIDTH_FIX_V10 */
+@media (min-width: 768px) {
+  body.change-list #main,
+  body.change-list #content {
+    width: calc(100vw - 32px) !important;
+    max-width: none !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+
+  body.change-list #content-main {
+    float: none !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  body.change-list #changelist {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  body.change-list #changelist.filtered {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) clamp(240px, 20vw, 280px) !important;
+    gap: 20px !important;
+    align-items: start !important;
+  }
+
+  body.change-list #changelist .changelist-form-container {
+    grid-column: 1 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+
+  body.change-list #changelist-filter {
+    position: sticky !important;
+    top: 92px !important;
+    grid-column: 2 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+  }
+
+  body.change-list #changelist-form,
+  body.change-list #changelist .results,
+  body.change-list #changelist.filtered .results,
+  body.change-list #changelist.filtered .paginator,
+  body.change-list #changelist.filtered #toolbar,
+  body.change-list #changelist.filtered div.xfull {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  body.change-list #changelist .results {
+    overflow-x: auto !important;
+  }
+
+  body.change-list #changelist .results table {
+    width: 100% !important;
+    min-width: 1000px;
+    table-layout: auto !important;
+  }
+}
+
+
+
+/* OPERATOR_DESKTOP_LAYOUT_FIX_V17_START */
+@media (min-width: 768px) {
+  html,
+  body,
+  body.change-list,
+  body.change-list #container,
+  body.change-list #main,
+  body.change-list main,
+  body.change-list #content,
+  body.change-list #content-main {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  body.change-list #content {
+    margin: 0 !important;
+    padding-inline: clamp(12px, 1.5vw, 28px) !important;
+  }
+
+  body.change-list #content-main {
+    float: none !important;
+  }
+
+  body.change-list #changelist {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px) !important;
+    gap: 18px !important;
+    align-items: start !important;
+  }
+
+  body.change-list #changelist-form {
+    grid-column: 1 !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  body.change-list #changelist-filter {
+    grid-column: 2 !important;
+    width: 100% !important;
+    max-width: 300px !important;
+    position: relative !important;
+    inset: auto !important;
+  }
+
+  body.change-list .results {
+    width: 100% !important;
+    max-width: none !important;
+    overflow-x: auto !important;
+  }
+
+  body.change-list #result_list {
+    display: table !important;
+    width: 100% !important;
+    min-width: 1050px !important;
+    max-width: none !important;
+    table-layout: auto !important;
+  }
+
+  body.change-list #result_list thead {
+    display: table-header-group !important;
+  }
+
+  body.change-list #result_list tbody {
+    display: table-row-group !important;
+  }
+
+  body.change-list #result_list tr {
+    display: table-row !important;
+  }
+
+  body.change-list #result_list th,
+  body.change-list #result_list td {
+    display: table-cell !important;
+    width: auto !important;
+    max-width: none !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  body.change-list #result_list td::before,
+  body.change-list #result_list th::before {
+    content: none !important;
+    display: none !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1100px) {
+  body.change-list #changelist {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  body.change-list #changelist-filter {
+    grid-column: 1 !important;
+    max-width: none !important;
+  }
+
+  body.change-list #result_list {
+    min-width: 900px !important;
+  }
+}
+/* OPERATOR_DESKTOP_LAYOUT_FIX_V17_END */

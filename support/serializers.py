@@ -1,6 +1,7 @@
 import re
 import uuid
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from .permission_codes import ALL_PERMISSION_CODES
@@ -735,6 +736,193 @@ class ProjectCreateSerializer(StrictInputSerializer):
         return attrs
 
 
+class ProjectUpdateSerializer(StrictInputSerializer):
+    """Validate a partial project patch before merging it with stored data."""
+
+    name = serializers.CharField(max_length=160, required=False)
+    country_code = serializers.CharField(max_length=2, required=False)
+    city = serializers.CharField(max_length=120, required=False)
+    postal_code = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    street = serializers.CharField(max_length=160, required=False)
+    building = serializers.CharField(max_length=40, required=False)
+    worker_capacity = serializers.IntegerField(min_value=1, max_value=5000, required=False)
+    starts_on = serializers.DateField(required=False)
+    ends_on = serializers.DateField(required=False, allow_null=True)
+    contact_name = serializers.CharField(max_length=160, required=False, allow_blank=True)
+    contact_phone = serializers.CharField(max_length=48, required=False, allow_blank=True)
+    contact_email = serializers.EmailField(required=False, allow_blank=True)
+    instructions = serializers.CharField(max_length=5000, required=False, allow_blank=True)
+
+    def validate_country_code(self, value):
+        normalized = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", normalized):
+            raise serializers.ValidationError("country_code_must_be_iso_alpha_2")
+        return normalized
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if not attrs:
+            raise serializers.ValidationError("project_patch_empty")
+        return attrs
+
+
+class ProjectCrewCreateSerializer(StrictInputSerializer):
+    internal_name = serializers.CharField(max_length=160)
+    driver_connection_id = serializers.UUIDField()
+    vehicle_id = serializers.UUIDField()
+    starts_on = serializers.DateField(required=False, default=timezone.localdate)
+
+    def validate_internal_name(self, value):
+        normalized = value.strip()
+        if not normalized:
+            raise serializers.ValidationError("crew_name_required")
+        return normalized
+
+
+class ProjectCrewUpdateSerializer(StrictInputSerializer):
+    internal_name = serializers.CharField(max_length=160, required=False)
+
+    def validate_internal_name(self, value):
+        normalized = value.strip()
+        if not normalized:
+            raise serializers.ValidationError("crew_name_required")
+        return normalized
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if not attrs:
+            raise serializers.ValidationError("crew_patch_empty")
+        return attrs
+
+
+class ProjectCrewShiftReplaceSerializer(StrictInputSerializer):
+    work_dates = serializers.ListField(
+        child=serializers.DateField(),
+        min_length=1,
+        max_length=62,
+        error_messages={
+            "required": "work_dates_required",
+            "empty": "work_dates_required",
+            "min_length": "work_dates_required",
+        },
+    )
+    starts_at_time = serializers.TimeField()
+    ends_at_time = serializers.TimeField()
+    break_minutes = serializers.IntegerField(min_value=0, max_value=720, default=0)
+
+    def validate_work_dates(self, value):
+        return sorted(set(value))
+
+
+class ProjectCrewShiftReleaseSerializer(StrictInputSerializer):
+    work_dates = serializers.ListField(
+        child=serializers.DateField(),
+        min_length=1,
+        max_length=62,
+        error_messages={
+            "required": "work_dates_required",
+            "empty": "work_dates_required",
+            "min_length": "work_dates_required",
+        },
+    )
+
+    def validate_work_dates(self, value):
+        return sorted(set(value))
+
+
+class ProjectCrewPassengerWriteSerializer(StrictInputSerializer):
+    """Validate the public passenger-roster command contract.
+
+    Public names intentionally describe the employer's action.  The service
+    layer keeps its shorter internal constants (``future`` / ``selected``).
+    """
+
+    SCOPE_ALL_FUTURE = "all_future"
+    SCOPE_SELECTED_DATES = "selected_dates"
+
+    connection_id = serializers.UUIDField()
+    scope = serializers.ChoiceField(
+        choices=(SCOPE_ALL_FUTURE, SCOPE_SELECTED_DATES),
+        error_messages={"invalid_choice": "passenger_scope_invalid"},
+    )
+    effective_on = serializers.DateField(required=False)
+    work_dates = serializers.ListField(
+        child=serializers.DateField(),
+        min_length=1,
+        max_length=62,
+        required=False,
+        error_messages={
+            "empty": "passenger_work_dates_required",
+            "min_length": "passenger_work_dates_required",
+        },
+    )
+
+    def validate_work_dates(self, value):
+        return sorted(set(value))
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        scope = attrs.get("scope")
+        has_effective_on = "effective_on" in attrs
+        has_work_dates = "work_dates" in attrs
+        if scope == self.SCOPE_ALL_FUTURE:
+            if not has_effective_on:
+                raise serializers.ValidationError(
+                    {"effective_on": "passenger_effective_on_required"}
+                )
+            if has_work_dates:
+                raise serializers.ValidationError(
+                    {"work_dates": "passenger_work_dates_not_allowed"}
+                )
+        elif scope == self.SCOPE_SELECTED_DATES:
+            if not has_work_dates:
+                raise serializers.ValidationError(
+                    {"work_dates": "passenger_work_dates_required"}
+                )
+            if has_effective_on:
+                raise serializers.ValidationError(
+                    {"effective_on": "passenger_effective_on_not_allowed"}
+                )
+        return attrs
+
+
+class ProjectCrewDriverReplaceSerializer(StrictInputSerializer):
+    """Validate one permanent driver/resource replacement command.
+
+    The vehicle is intentionally not accepted from the client.  A permanent
+    replacement transfers the crew's effective vehicle to the selected
+    passenger, which prevents a stale mobile screen from silently moving a
+    different fleet vehicle.
+    """
+
+    new_driver_connection_id = serializers.UUIDField()
+    effective_on = serializers.DateField(required=False, default=timezone.localdate)
+
+
+class ProjectCrewDriverAbsenceSerializer(StrictInputSerializer):
+    """Validate selected dates for marking or cancelling driver absence."""
+
+    work_dates = serializers.ListField(
+        child=serializers.DateField(),
+        min_length=1,
+        max_length=62,
+        error_messages={
+            "required": "work_dates_required",
+            "empty": "work_dates_required",
+            "min_length": "work_dates_required",
+        },
+    )
+
+    def validate_work_dates(self, value):
+        return sorted(set(value))
+
+
+class ProjectCrewDriverSubstituteSerializer(ProjectCrewDriverAbsenceSerializer):
+    """Validate a temporary substitute-driver command."""
+
+    substitute_driver_connection_id = serializers.UUIDField()
+
+
 class ProjectScheduleTemplateCreateSerializer(StrictInputSerializer):
     name = serializers.CharField(max_length=30)
     starts_at_time = serializers.TimeField()
@@ -764,6 +952,10 @@ class HousingAssignmentCreateSerializer(StrictInputSerializer):
         if attrs["check_out_at"] is not None and attrs["check_out_at"] <= attrs["check_in_at"]:
             raise serializers.ValidationError({"check_out_at": "period_end_must_be_after_start"})
         return attrs
+
+
+class HousingAssignmentCheckOutSerializer(StrictInputSerializer):
+    check_out_at = serializers.DateTimeField()
 
 
 class WorkerProjectAssignmentCreateSerializer(StrictInputSerializer):

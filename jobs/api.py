@@ -1177,6 +1177,97 @@ class InternalVacancyDeleteAPIView(APIView):
         return Response({"deleted": deleted, "skipped": skipped}, status=status.HTTP_200_OK)
 
 
+class InternalVacancyPinAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        configured_token = (settings.INTERNAL_IMPORT_TOKEN or "").strip()
+        request_token = _internal_import_token_from_request(request)
+        if not configured_token:
+            return Response(
+                {"error": "internal_import_not_configured"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        if not request_token or not compare_digest(request_token, configured_token):
+            return Response(
+                {"error": "invalid_internal_import_token"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            vacancy_id = int(request.data.get("vacancy_id"))
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "invalid_vacancy_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if vacancy_id <= 0:
+            return Response(
+                {"error": "invalid_vacancy_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            days = int(request.data.get("days", 7))
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "invalid_days"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if days < 1 or days > 30:
+            return Response(
+                {"error": "invalid_days", "allowed_range": "1..30"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service_user = User.objects.filter(username=SERVICE_BOARD_USERNAME).first()
+        is_delegated_publication = EmployerBoardPublishingEvent.objects.filter(
+            vacancy_id=vacancy_id,
+            action="published",
+        ).exists()
+        if not service_user and not is_delegated_publication:
+            return Response(
+                {"error": "vacancy_not_found_or_not_allowed"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        owner_filter = (
+            Q(id=vacancy_id, created_by=service_user) if service_user else Q(pk__in=[])
+        )
+        if is_delegated_publication:
+            owner_filter |= Q(id=vacancy_id)
+        vacancy = (
+            Vacancy.objects.filter(
+                owner_filter,
+                id=vacancy_id,
+                is_deleted_by_moderator=False,
+            )
+            .first()
+        )
+        if not vacancy:
+            return Response(
+                {"error": "vacancy_not_found_or_not_allowed"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        now = timezone.now()
+        vacancy.pinned_from = now
+        vacancy.pinned_until = now + timedelta(days=days)
+        vacancy.save(update_fields=["pinned_from", "pinned_until"])
+
+        return Response(
+            {
+                "status": "pinned",
+                "vacancy_id": vacancy.id,
+                "days": days,
+                "pinned_from": vacancy.pinned_from.isoformat(),
+                "pinned_until": vacancy.pinned_until.isoformat(),
+                "is_pinned": vacancy.is_pinned_now(now=now),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 def _is_moderator(request):
     return request.user.is_authenticated and request.user.is_staff
 

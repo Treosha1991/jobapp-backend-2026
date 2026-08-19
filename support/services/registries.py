@@ -1,14 +1,22 @@
 """Transactional creation for employer-owned operational registries."""
 
+import hashlib
+import json
+
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from support.models import (
+    AuditEvent,
     HousingAssignment,
     HousingPlace,
     HousingRoom,
     HousingSite,
+    ProjectCrew,
+    ProjectCrewPassenger,
+    ProjectCrewResourceAssignment,
+    SupportOrganization,
     Vehicle,
     ProjectScheduleTemplate,
     WorkProject,
@@ -190,11 +198,42 @@ def create_project(*, actor, organization, name, **data):
     normalized_name = (name or "").strip()
     if not normalized_name:
         raise ValidationError({"name": "project_name_required"})
+    request_id = data.pop("request_id", None)
+    fingerprint_source = {"name": normalized_name, **data}
+    request_fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_source, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
     address_fields = {
         field: data.pop(field)
         for field in ("country_code", "city", "postal_code", "street", "building")
     }
     with transaction.atomic():
+        # Serialize project creation per organization. This makes an
+        # Idempotency-Key safe even when two network retries arrive together.
+        organization = SupportOrganization.objects.select_for_update().get(pk=organization.pk)
+        if request_id is not None:
+            previous = (
+                AuditEvent.objects.filter(
+                    organization=organization,
+                    actor=actor,
+                    action="work.project_created",
+                    request_id=request_id,
+                )
+                .order_by("id")
+                .first()
+            )
+            if previous is not None:
+                if previous.details.get("request_fingerprint") != request_fingerprint:
+                    raise ValidationError(
+                        {
+                            "code": "idempotency_key_reused",
+                            "message": "The idempotency key was already used with different project data.",
+                        }
+                    )
+                return WorkProject.objects.select_related("worksite").get(
+                    organization=organization,
+                    public_id=previous.target_public_id,
+                )
         try:
             worksite = Worksite.objects.create(
                 organization=organization,
@@ -218,7 +257,11 @@ def create_project(*, actor, organization, name, **data):
             actor=actor,
             action="work.project_created",
             target=project,
-            details={"worksite": str(worksite.public_id)},
+            details={
+                "worksite": str(worksite.public_id),
+                "request_fingerprint": request_fingerprint,
+            },
+            request_id=request_id,
         )
     return project
 
@@ -238,6 +281,32 @@ def update_project(*, actor, project, name, **data):
     with transaction.atomic():
         project = WorkProject.objects.select_for_update().select_related("worksite").get(pk=project.pk)
         worksite = Worksite.objects.select_for_update().get(pk=project.worksite_id)
+        permanent_worker_ids = set(
+            ProjectCrewResourceAssignment.objects.filter(
+                crew__project=project,
+                crew__state=ProjectCrew.STATE_ACTIVE,
+                ends_on__isnull=True,
+            ).values_list("driver_connection_id", flat=True)
+        )
+        permanent_worker_ids.update(
+            ProjectCrewPassenger.objects.filter(
+                crew__project=project,
+                crew__state=ProjectCrew.STATE_ACTIVE,
+                ends_on__isnull=True,
+            ).values_list("connection_id", flat=True)
+        )
+        minimum_capacity = len(permanent_worker_ids)
+        if data["worker_capacity"] < minimum_capacity:
+            raise ValidationError(
+                {
+                    "code": "project_capacity_below_permanent_roster",
+                    "message": "Project capacity cannot be lower than its permanent crew roster.",
+                    "field_errors": {
+                        "worker_capacity": ["project_capacity_below_permanent_roster"]
+                    },
+                    "minimum": minimum_capacity,
+                }
+            )
         try:
             WorkProject.objects.filter(pk=project.pk).update(
                 internal_name=normalized_name,
