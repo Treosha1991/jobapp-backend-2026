@@ -52,10 +52,14 @@
   .application-tag { padding:5px 8px; border:1px solid rgba(24,223,103,.27); border-radius:999px; color:#c8f8dc; background:rgba(24,223,103,.08); font-size:11px; font-weight:800; }
   .questionnaire-details { margin-top:11px; padding:10px; border:1px solid rgba(183,224,255,.14); border-radius:13px; }
   .questionnaire-details summary { cursor:pointer; font-weight:900; }
-  .questionnaire-sections { display:grid; gap:9px; margin-top:10px; }
-  .questionnaire-section { padding:10px; border:1px solid rgba(183,224,255,.13); border-radius:12px; background:rgba(3,18,30,.18); }
-  .questionnaire-section h3 { margin:0 0 8px; color:#dff4ff; font-size:13px; }
-  .questionnaire-details-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+  .questionnaire-sections { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:10px; }
+  .questionnaire-section { min-width:0; padding:10px 12px; border:1px solid rgba(183,224,255,.13); border-radius:12px; background:rgba(3,18,30,.18); }
+  .questionnaire-section h3 { margin:0 0 4px; color:#dff4ff; font-size:13px; }
+  .questionnaire-details-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:14px; }
+  .questionnaire-details-grid .application-fact { display:grid; grid-template-columns:minmax(105px,.8fr) minmax(0,1.2fr); gap:8px; align-items:start; min-width:0; padding:6px 0; border:0; border-bottom:1px solid rgba(183,224,255,.1); border-radius:0; background:transparent; }
+  .questionnaire-details-grid .application-fact.is-wide { grid-column:1/-1; }
+  .questionnaire-details-grid .application-fact span { align-self:start; font-size:10px; line-height:1.35; letter-spacing:0; text-transform:none; }
+  .questionnaire-details-grid .application-fact strong { margin:0; overflow:visible; overflow-wrap:anywhere; font-size:12px; line-height:1.4; text-overflow:clip; }
   .application-pipeline { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:13px; padding-top:13px; border-top:1px solid rgba(183,224,255,.15); }
   .application-form { margin-top:13px; padding-top:13px; border-top:1px solid rgba(183,224,255,.15); }
   .application-form textarea { min-height:68px; }
@@ -63,9 +67,9 @@
   .application-history summary { cursor:pointer; color:var(--muted); font-weight:800; }
   .application-history ul { margin:9px 0 0; padding-left:20px; color:var(--muted); }
   .application-empty { padding:32px 18px; border:1px dashed var(--line); border-radius:16px; text-align:center; color:var(--muted); }
-  @media (max-width:1000px) { .questionnaire-filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .questionnaire-details-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width:1000px) { .questionnaire-filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .questionnaire-sections { grid-template-columns:1fr; } }
   @media (max-width:900px) { .application-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-  @media (max-width:620px) { .application-head { grid-template-columns:1fr; } .application-grid,.questionnaire-filter-grid,.questionnaire-details-grid,.processing-document-form-grid { grid-template-columns:1fr; } }
+  @media (max-width:620px) { .application-head { grid-template-columns:1fr; } .application-grid,.questionnaire-filter-grid,.questionnaire-details-grid,.processing-document-form-grid { grid-template-columns:1fr; } .questionnaire-details-grid .application-fact { grid-template-columns:minmax(95px,.75fr) minmax(0,1.25fr); } }
 </style>
 {% endblock %}
 
@@ -102,7 +106,7 @@
             <details class="questionnaire-details"{% if connection.is_focused %} open{% endif %}>
               <summary>{{ employer_t.support_processing_open_application }}</summary>
               {% if connection.application_record.questionnaire_tags %}<div class="application-tags">{% for tag in connection.application_record.questionnaire_tags %}<span class="application-tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
-              <div class="questionnaire-sections">{% for section in connection.application_record.questionnaire_sections %}<section class="questionnaire-section"><h3>{{ section.label }}</h3><div class="questionnaire-details-grid">{% for fact in section.facts %}<div class="application-fact"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div></section>{% endfor %}</div>
+              <div class="questionnaire-sections">{% for section in connection.application_record.questionnaire_sections %}<section class="questionnaire-section"><h3>{{ section.label }}</h3><div class="questionnaire-details-grid">{% for fact in section.facts %}<div class="application-fact{% if fact.wide %} is-wide{% endif %}"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div></section>{% endfor %}</div>
             </details>
 
             <div class="processing-documents">
@@ -242,15 +246,15 @@
 
           <div class="application-grid">
             <div class="application-fact"><span>{{ employer_t.support_applications_language }}</span><strong>{{ item.language_label }}</strong></div>
-            <div class="application-fact"><span>{{ employer_t.support_applications_citizenship }}</span><strong>{{ item.citizenship_country_code|default:'—' }}</strong></div>
-            <div class="application-fact"><span>{{ employer_t.support_applications_location }}</span><strong>{{ item.current_country_code|default:'—' }}</strong></div>
+            <div class="application-fact"><span>{{ employer_t.support_applications_citizenship }}</span><strong>{{ item.citizenship_label }}</strong></div>
+            <div class="application-fact"><span>{{ employer_t.support_applications_location }}</span><strong>{{ item.current_country_label }}</strong></div>
             <div class="application-fact"><span>{{ employer_t.support_applications_subscription }}</span><strong>{% if item.support_access.state == 'active' %}{{ employer_t.support_applications_subscription_active }}{% else %}{{ employer_t.support_applications_subscription_inactive }}{% endif %}</strong></div>
           </div>
           {% if item.questionnaire_tags %}<div class="application-tags">{% for tag in item.questionnaire_tags %}<span class="application-tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
           {% if item.questionnaire_sections %}
             <details class="questionnaire-details"{% if item.is_focused %} open{% endif %}>
               <summary>{{ employer_t.support_questionnaire_answers }} · {% if item.questionnaire_complete %}{{ employer_t.support_questionnaire_complete }}{% else %}{{ employer_t.support_questionnaire_incomplete }}{% endif %}</summary>
-              <div class="questionnaire-sections">{% for section in item.questionnaire_sections %}<section class="questionnaire-section"><h3>{{ section.label }}</h3><div class="questionnaire-details-grid">{% for fact in section.facts %}<div class="application-fact"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div></section>{% endfor %}</div>
+              <div class="questionnaire-sections">{% for section in item.questionnaire_sections %}<section class="questionnaire-section"><h3>{{ section.label }}</h3><div class="questionnaire-details-grid">{% for fact in section.facts %}<div class="application-fact{% if fact.wide %} is-wide{% endif %}"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>{% endfor %}</div></section>{% endfor %}</div>
             </details>
           {% endif %}
           {% if item.availability_note %}<div class="application-note"><strong>{{ employer_t.support_applications_candidate_note }}:</strong><br>{{ item.availability_note|linebreaksbr }}</div>{% endif %}

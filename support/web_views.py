@@ -29,7 +29,9 @@ from .questionnaire import (
     EXPERIENCE_SECTORS,
     LANGUAGE_LEVELS,
     LEGAL_STATUSES,
+    country_label as questionnaire_country_label,
     label as questionnaire_label,
+    language_label as questionnaire_language_label,
     questionnaire_is_complete,
     questionnaire_tags,
 )
@@ -417,7 +419,15 @@ def candidate_applications_workspace(request):
 
     for item in application_items:
         item.status_label = tr(request, f"support_application_{item.status}")
-        item.language_label = item.preferred_language.upper()
+        item.language_label = questionnaire_language_label(item.preferred_language, page_language)
+        item.citizenship_label = questionnaire_country_label(
+            item.citizenship_country_code,
+            page_language,
+        )
+        item.current_country_label = questionnaire_country_label(
+            item.current_country_code,
+            page_language,
+        )
         answers = item.questionnaire_answers or {}
         item.questionnaire_complete = questionnaire_is_complete(answers)
         item.questionnaire_tags = questionnaire_tags(item, language=page_language)
@@ -540,22 +550,59 @@ def _candidate_questionnaire_sections(answers, *, language):
         return []
 
     def joined(key):
-        return ", ".join(questionnaire_label(value, language) for value in answers.get(key, [])) or "—"
+        return ", ".join(questionnaire_label(value, language) for value in answers.get(key, []))
+
+    def joined_countries(key):
+        return ", ".join(
+            questionnaire_country_label(value, language)
+            for value in answers.get(key, [])
+        )
 
     def formatted_date(key):
         raw = answers.get(key)
         if not raw:
-            return "—"
+            return None
         try:
             return datetime.strptime(raw, "%Y-%m-%d").strftime("%d.%m.%Y")
         except (TypeError, ValueError):
             return str(raw)
 
-    def fact(key, value, *, label=None):
-        return {"key": key, "value": value, "label": label}
+    def fact(key, value, *, label=None, wide=False):
+        if value in (None, "", [], {}):
+            return None
+        return {"key": key, "value": value, "label": label, "wide": wide}
 
     yes_no = lambda value: questionnaire_label("yes" if value else "no", language)
+    boolean_value = lambda key: yes_no(answers[key]) if key in answers else None
     conditions = answers.get("work_conditions") or {}
+    condition_groups = {
+        answer: [
+            questionnaire_label(key, language)
+            for key, value in conditions.items()
+            if value == answer
+        ]
+        for answer in ("yes", "no", "discuss")
+    }
+    driving_facts = [
+        fact("driving_license", boolean_value("has_driving_license")),
+    ]
+    if answers.get("has_driving_license"):
+        driving_facts.extend([
+            fact("driving_categories", joined("driving_license_categories")),
+            fact(
+                "driving_license_valid_in_eu",
+                yes_no(answers.get("driving_license_valid_in_eu"))
+                if answers.get("driving_license_valid_in_eu") is not None
+                else None,
+            ),
+            fact("driving_experience", questionnaire_label(answers.get("driving_experience"), language)),
+            fact("willing_crew_driver", boolean_value("willing_crew_driver")),
+        ])
+    driving_facts.extend([
+        fact("has_own_car", boolean_value("has_own_car")),
+        fact("qualifications", joined("qualifications"), wide=True),
+    ])
+
     sections = [
         ("readiness", [
             fact("legal_status", questionnaire_label(answers.get("legal_status"), language)),
@@ -565,51 +612,44 @@ def _candidate_questionnaire_sections(answers, *, language):
             fact("planned_duration", questionnaire_label(answers.get("planned_duration"), language)),
         ]),
         ("experience", [
-            fact("experience_sectors", joined("experience_sectors")),
+            fact("experience_sectors", joined("experience_sectors"), wide=True),
             fact("experience_duration", questionnaire_label(answers.get("experience_duration"), language)),
-            fact("work_countries", ", ".join(answers.get("work_countries", [])) or "—"),
-            fact("last_position", answers.get("last_position") or "—"),
+            fact("work_countries", joined_countries("work_countries"), wide=True),
+            fact("last_position", answers.get("last_position"), wide=True),
         ]),
         ("languages", [
             fact("english_level", questionnaire_label(answers.get("english_level"), language)),
             fact("polish_level", questionnaire_label(answers.get("polish_level"), language)),
             fact("dutch_level", questionnaire_label(answers.get("dutch_level"), language)),
         ]),
-        ("driving", [
-            fact("driving_license", yes_no(answers.get("has_driving_license"))),
-            fact("driving_categories", joined("driving_license_categories")),
-            fact("driving_license_valid_in_eu", yes_no(answers.get("driving_license_valid_in_eu"))),
-            fact("driving_experience", questionnaire_label(answers.get("driving_experience"), language)),
-            fact("willing_crew_driver", yes_no(answers.get("willing_crew_driver"))),
-            fact("has_own_car", yes_no(answers.get("has_own_car"))),
-            fact("qualifications", joined("qualifications")),
-        ]),
+        ("driving", driving_facts),
         ("conditions", [
-            *[
-                fact(
-                    f"condition_{key}",
-                    questionnaire_label(value, language),
-                    label=questionnaire_label(key, language),
-                )
-                for key, value in conditions.items()
-            ],
-            fact("shift_preferences", joined("shift_preferences")),
+            fact("conditions_yes", ", ".join(condition_groups["yes"]), wide=True),
+            fact("conditions_no", ", ".join(condition_groups["no"]), wide=True),
+            fact("conditions_discuss", ", ".join(condition_groups["discuss"]), wide=True),
+            fact("shift_preferences", joined("shift_preferences"), wide=True),
             fact("overtime_willing", questionnaire_label(answers.get("overtime_willing"), language)),
-            fact("unavailable_dates_note", answers.get("unavailable_dates_note") or "—"),
+            fact("unavailable_dates_note", answers.get("unavailable_dates_note"), wide=True),
         ]),
         ("relocation", [
-            fact("needs_housing", yes_no(answers.get("needs_housing"))),
-            fact("needs_transport", yes_no(answers.get("needs_transport"))),
-            fact("travelling_with_partner", yes_no(answers.get("travelling_with_partner"))),
-            fact("shared_room_preference", questionnaire_label(answers.get("shared_room_preference"), language)),
+            fact("needs_housing", boolean_value("needs_housing")),
+            fact("needs_transport", boolean_value("needs_transport")),
+            fact("travelling_with_partner", boolean_value("travelling_with_partner")),
+            fact(
+                "shared_room_preference",
+                questionnaire_label(answers.get("shared_room_preference"), language)
+                if answers.get("shared_room_preference")
+                else None,
+            ),
             fact("planned_move_in", formatted_date("planned_move_in")),
-            fact("safety_policy_accepted", yes_no(answers.get("safety_policy_accepted"))),
+            fact("safety_policy_accepted", boolean_value("safety_policy_accepted")),
+            fact("additional_note", answers.get("additional_note"), wide=True),
         ]),
     ]
     return [
-        {"key": key, "facts": facts}
+        {"key": key, "facts": [item for item in facts if item is not None]}
         for key, facts in sections
-        if facts
+        if any(item is not None for item in facts)
     ]
 
 

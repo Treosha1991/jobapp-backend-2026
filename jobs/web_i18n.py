@@ -4640,6 +4640,9 @@ TRANSLATIONS["ru"].update({
     "support_questionnaire_unavailable_dates_note": "Недоступные даты",
     "support_questionnaire_shared_room_preference": "Совместная комната",
     "support_questionnaire_planned_move_in": "Планируемое заселение",
+    "support_questionnaire_conditions_yes": "Подходит",
+    "support_questionnaire_conditions_no": "Не подходит",
+    "support_questionnaire_conditions_discuss": "Нужно обсудить",
 })
 TRANSLATIONS["en"].update({
     "support_questionnaire_section_readiness": "Documents and availability",
@@ -4656,6 +4659,9 @@ TRANSLATIONS["en"].update({
     "support_questionnaire_unavailable_dates_note": "Unavailable dates",
     "support_questionnaire_shared_room_preference": "Shared room",
     "support_questionnaire_planned_move_in": "Planned move-in",
+    "support_questionnaire_conditions_yes": "Suitable",
+    "support_questionnaire_conditions_no": "Not suitable",
+    "support_questionnaire_conditions_discuss": "Needs discussion",
 })
 TRANSLATIONS["pl"].update({
     "support_questionnaire_section_readiness": "Dokumenty i dostępność",
@@ -4672,6 +4678,9 @@ TRANSLATIONS["pl"].update({
     "support_questionnaire_unavailable_dates_note": "Niedostępne terminy",
     "support_questionnaire_shared_room_preference": "Wspólny pokój",
     "support_questionnaire_planned_move_in": "Planowana data zamieszkania",
+    "support_questionnaire_conditions_yes": "Odpowiada",
+    "support_questionnaire_conditions_no": "Nie odpowiada",
+    "support_questionnaire_conditions_discuss": "Do omówienia",
 })
 TRANSLATIONS["uk"].update({
     "support_questionnaire_section_readiness": "Документи та готовність",
@@ -4688,6 +4697,9 @@ TRANSLATIONS["uk"].update({
     "support_questionnaire_unavailable_dates_note": "Недоступні дати",
     "support_questionnaire_shared_room_preference": "Спільна кімната",
     "support_questionnaire_planned_move_in": "Заплановане заселення",
+    "support_questionnaire_conditions_yes": "Підходить",
+    "support_questionnaire_conditions_no": "Не підходить",
+    "support_questionnaire_conditions_discuss": "Потрібно обговорити",
 })
 
 # Final timesheet naming overrides must stay below the legacy time-ledger

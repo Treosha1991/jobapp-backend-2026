@@ -124,7 +124,13 @@ _LABELS_PL = {
     "conversation": "Prosta rozmowa", "fluent": "Biegle", "forklift": "Wózek widłowy",
     "reach_truck": "Reach truck", "yes": "Tak", "no": "Nie", "discuss": "Do omówienia",
     "day": "Dzienna", "evening": "Wieczorna", "night": "Nocna", "weekend": "Weekend",
-    "rotating": "Zmianowa",
+    "rotating": "Zmianowa", "aerial_platform": "Podnośnik koszowy", "tractor": "Ciągnik",
+    "excavator": "Koparka", "welding": "Uprawnienia spawalnicze",
+    "electrical": "Uprawnienia elektryczne", "standing": "Praca stojąca",
+    "repetitive": "Praca powtarzalna", "lifting": "Podnoszenie ciężarów",
+    "cold": "Praca w chłodzie", "outdoor": "Praca na zewnątrz",
+    "long_shift": "Długa zmiana", "height": "Praca na wysokości",
+    "under_1y": "Do 1 roku", "over_1y": "Ponad 1 rok",
 }
 
 _LABELS_UK = {
@@ -139,11 +145,58 @@ _LABELS_UK = {
     "agriculture": "Сільське господарство", "greenhouse": "Теплиці", "construction": "Будівництво",
     "cleaning": "Прибирання", "logistics": "Логістика", "driver": "Водій",
     "machine_operator": "Оператор техніки", "no_experience": "Без досвіду", "none": "Немає",
+    "under_6m": "До 6 місяців", "1_3y": "1–3 роки", "over_3y": "Понад 3 роки",
+    "words": "Окремі слова", "instructions": "Розуміє робочі інструкції",
+    "conversation": "Проста розмова", "fluent": "Вільно", "forklift": "Навантажувач",
+    "reach_truck": "Річтрак", "aerial_platform": "Підйомна платформа", "tractor": "Трактор",
+    "excavator": "Екскаватор", "welding": "Зварювальні допуски",
+    "electrical": "Електродопуски", "standing": "Робота стоячи",
+    "repetitive": "Повторювані операції", "lifting": "Піднімання вантажів",
+    "cold": "Робота в холоді", "outdoor": "Робота надворі", "long_shift": "Довга зміна",
+    "height": "Робота на висоті", "under_1y": "До 1 року", "over_1y": "Понад 1 рік",
     "yes": "Так", "no": "Ні", "discuss": "Обговорити", "day": "Денні",
     "evening": "Вечірні", "night": "Нічні", "weekend": "Вихідні", "rotating": "Змінний графік",
 }
 
 _LABELS = {"ru": _LABELS_RU, "en": _LABELS_EN, "pl": _LABELS_PL, "uk": _LABELS_UK}
+
+_COUNTRY_LABELS = {
+    "ru": {
+        "BY": "Беларусь", "UA": "Украина", "PL": "Польша", "NL": "Нидерланды",
+        "DE": "Германия", "FR": "Франция", "ES": "Испания", "IT": "Италия",
+        "RO": "Румыния", "BG": "Болгария", "LT": "Литва", "LV": "Латвия",
+        "EE": "Эстония", "CZ": "Чехия", "SK": "Словакия", "HU": "Венгрия",
+        "MD": "Молдова", "GE": "Грузия", "RU": "Россия",
+    },
+    "en": {
+        "BY": "Belarus", "UA": "Ukraine", "PL": "Poland", "NL": "Netherlands",
+        "DE": "Germany", "FR": "France", "ES": "Spain", "IT": "Italy",
+        "RO": "Romania", "BG": "Bulgaria", "LT": "Lithuania", "LV": "Latvia",
+        "EE": "Estonia", "CZ": "Czechia", "SK": "Slovakia", "HU": "Hungary",
+        "MD": "Moldova", "GE": "Georgia", "RU": "Russia",
+    },
+    "pl": {
+        "BY": "Białoruś", "UA": "Ukraina", "PL": "Polska", "NL": "Niderlandy",
+        "DE": "Niemcy", "FR": "Francja", "ES": "Hiszpania", "IT": "Włochy",
+        "RO": "Rumunia", "BG": "Bułgaria", "LT": "Litwa", "LV": "Łotwa",
+        "EE": "Estonia", "CZ": "Czechy", "SK": "Słowacja", "HU": "Węgry",
+        "MD": "Mołdawia", "GE": "Gruzja", "RU": "Rosja",
+    },
+    "uk": {
+        "BY": "Білорусь", "UA": "Україна", "PL": "Польща", "NL": "Нідерланди",
+        "DE": "Німеччина", "FR": "Франція", "ES": "Іспанія", "IT": "Італія",
+        "RO": "Румунія", "BG": "Болгарія", "LT": "Литва", "LV": "Латвія",
+        "EE": "Естонія", "CZ": "Чехія", "SK": "Словаччина", "HU": "Угорщина",
+        "MD": "Молдова", "GE": "Грузія", "RU": "Росія",
+    },
+}
+
+_LANGUAGE_LABELS = {
+    "ru": {"ru": "Русский", "en": "Английский", "pl": "Польский", "uk": "Украинский"},
+    "en": {"ru": "Russian", "en": "English", "pl": "Polish", "uk": "Ukrainian"},
+    "pl": {"ru": "Rosyjski", "en": "Angielski", "pl": "Polski", "uk": "Ukraiński"},
+    "uk": {"ru": "Російська", "en": "Англійська", "pl": "Польська", "uk": "Українська"},
+}
 
 
 def label(value, language="ru"):
@@ -152,6 +205,20 @@ def label(value, language="ru"):
     # The employer cabinet already translates its surrounding UI. Keeping the
     # stable answer meaning visible is preferable to hiding a new/unknown code.
     return _LABELS.get(language, _LABELS_RU).get(value, value or "—")
+
+
+def country_label(value, language="ru"):
+    """Return a localized country name while preserving an unknown ISO code."""
+
+    code = (value or "").strip().upper()
+    return _COUNTRY_LABELS.get(language, _COUNTRY_LABELS["ru"]).get(code, code or "—")
+
+
+def language_label(value, language="ru"):
+    """Return the localized name of a supported interface language."""
+
+    code = (value or "").strip().lower()
+    return _LANGUAGE_LABELS.get(language, _LANGUAGE_LABELS["ru"]).get(code, code.upper() or "—")
 
 
 def questionnaire_is_complete(answers):
@@ -215,7 +282,11 @@ def questionnaire_tags(application, language="ru"):
     if answers.get("legal_status"):
         tags.append(label(answers["legal_status"], language))
     if answers.get("available_from"):
-        tags.append(f"{texts[0]}: {answers['available_from']}")
+        try:
+            available_from = date.fromisoformat(str(answers["available_from"])).strftime("%d.%m.%Y")
+        except ValueError:
+            available_from = str(answers["available_from"])
+        tags.append(f"{texts[0]}: {available_from}")
     if answers.get("planned_duration"):
         tags.append(label(answers["planned_duration"], language))
     if answers.get("english_level") and answers["english_level"] != "none":

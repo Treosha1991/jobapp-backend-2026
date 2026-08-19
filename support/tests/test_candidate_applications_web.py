@@ -619,12 +619,14 @@ class CandidateApplicationsWorkspaceTests(TestCase):
             "planned_duration": "6_12m",
             "experience_sectors": ["warehouse", "logistics"],
             "experience_duration": "1_3y",
+            "work_countries": ["PL", "NL"],
+            "last_position": "Operator",
             "english_level": "instructions",
             "polish_level": "conversation",
             "dutch_level": "none",
             "has_driving_license": True,
             "driving_license_categories": ["B"],
-            "qualifications": ["forklift"],
+            "qualifications": ["forklift", "aerial_platform"],
             "work_conditions": {
                 "standing": "yes", "repetitive": "yes", "lifting": "discuss",
                 "cold": "no", "outdoor": "discuss", "night": "yes",
@@ -634,6 +636,7 @@ class CandidateApplicationsWorkspaceTests(TestCase):
             "needs_housing": True,
             "needs_transport": False,
             "travelling_with_partner": False,
+            "shared_room_preference": "discuss",
             "safety_policy_accepted": True,
         }
         self.application.save(update_fields=["questionnaire_version", "questionnaire_answers"])
@@ -650,7 +653,21 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         self.assertContains(matching, "Права и квалификации")
         self.assertContains(matching, "Условия и смены")
         self.assertContains(matching, "Переезд и быт")
+        self.assertContains(matching, "Беларусь")
+        self.assertContains(matching, "Польша")
+        self.assertContains(matching, "Нидерланды")
+        self.assertContains(matching, "01.09.2026")
+        self.assertContains(matching, "Подходит")
+        self.assertContains(matching, "Не подходит")
+        self.assertContains(matching, "Нужно обсудить")
         self.assertContains(matching, 'name="available_by" value=""')
+
+        polish = self.client.get(f"{self.url}&lang=pl&experience=warehouse")
+        self.assertContains(polish, "Białoruś")
+        self.assertContains(polish, "Polska")
+        self.assertContains(polish, "Niderlandy")
+        self.assertContains(polish, "Podnośnik koszowy")
+        self.assertContains(polish, "Rozumie instrukcje w pracy")
 
         excluded = self.client.get(f"{self.url}&experience=construction")
         self.assertNotContains(excluded, "Pavel Candidate")
