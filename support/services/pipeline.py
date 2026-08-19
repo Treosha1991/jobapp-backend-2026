@@ -455,6 +455,13 @@ def approve_application(*, actor, application):
             candidate=application.candidate,
             assigned_manager=manager_membership,
             stage=stage,
+            # The questionnaire and the worker profile are intentionally
+            # separate records, but the verified working copy should start
+            # with the candidate's explicit answer.  Managers can still
+            # correct this flag later from the worker profile.
+            has_driving_license=bool(
+                (application.questionnaire_answers or {}).get("has_driving_license")
+            ),
         )
         application.status = SupportApplication.STATUS_APPROVED
         application.save(update_fields=["status", "updated_at"])

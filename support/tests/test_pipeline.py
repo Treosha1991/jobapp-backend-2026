@@ -253,6 +253,13 @@ class SupportPipelineTests(TestCase):
         self.assertEqual(queue.status_code, 200, queue.data)
         self.assertEqual(queue.data["results"][0]["questionnaire"]["english_level"], "instructions")
 
+        approved = self.owner_client.post(
+            f"/api/v2/support/applications/{application.public_id}/approve/"
+        )
+        self.assertEqual(approved.status_code, 201, approved.data)
+        connection = SupportConnection.objects.get(application=application)
+        self.assertTrue(connection.has_driving_license)
+
     def test_declined_application_can_be_resubmitted_only_after_one_hour(self):
         vacancy_id = self.create_published_vacancy()
         submitted = self.submit_application(vacancy_id)

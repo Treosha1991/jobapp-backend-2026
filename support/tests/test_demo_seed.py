@@ -9,6 +9,7 @@ from support.management.commands.seed_support_demo import (
     DEMO_CANDIDATE_EMAIL,
     DEMO_DOCUMENT_EMAIL,
     DEMO_EXTRA_WORKERS,
+    DEMO_DRIVER_EMAILS,
     DEMO_OWNER_EMAIL,
     DEMO_SECOND_CANDIDATE_EMAIL,
 )
@@ -41,6 +42,14 @@ class SupportDemoSeedTests(TestCase):
         self.assertEqual(organization.verified_document_email, DEMO_DOCUMENT_EMAIL)
         self.assertEqual(SupportConnection.objects.count(), expected_worker_count)
         self.assertEqual(SupportConversation.objects.count(), expected_worker_count)
+        self.assertEqual(
+            set(
+                SupportConnection.objects.filter(has_driving_license=True).values_list(
+                    "candidate__email", flat=True
+                )
+            ),
+            set(DEMO_DRIVER_EMAILS),
+        )
         self.assertEqual(
             SupportAccessGrant.objects.filter(status=SupportAccessGrant.STATUS_ACTIVE).count(),
             expected_worker_count + 2,

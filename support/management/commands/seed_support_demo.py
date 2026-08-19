@@ -46,6 +46,19 @@ DEMO_EXTRA_WORKERS = (
     ("support-demo-worker-08@jobhub.test", "Денис", "Шевченко", "active"),
 )
 
+# These demo workers were deliberately marked as holding a driving licence in
+# the visual-test scenario.  Keep that fact stable when the idempotent seed is
+# run again; previously every run reset everybody except Denis to ``False``.
+DEMO_DRIVER_EMAILS = frozenset(
+    {
+        "support-demo-worker-01@jobhub.test",  # Алина Бондарь
+        "support-demo-worker-04@jobhub.test",  # Олег Савчук
+        "support-demo-worker-05@jobhub.test",  # Наталья Мельник
+        "support-demo-worker-07@jobhub.test",  # Виктория Ткаченко
+        "support-demo-worker-08@jobhub.test",  # Денис Шевченко
+    }
+)
+
 
 class Command(BaseCommand):
     help = "Seed an isolated JobHub Support demo workspace when explicitly enabled."
@@ -471,6 +484,7 @@ class Command(BaseCommand):
                     "assigned_manager": membership,
                     "stage": stage,
                     "visible_stage": visible_stage,
+                    "has_driving_license": email in DEMO_DRIVER_EMAILS,
                 },
             )
             changed_connection_fields = []
@@ -482,11 +496,13 @@ class Command(BaseCommand):
                 "stage": stage,
                 "visible_stage": visible_stage,
                 "is_archived": False,
-                "has_driving_license": email == "support-demo-worker-08@jobhub.test",
             }.items():
                 if getattr(demo_connection, field) != value:
                     setattr(demo_connection, field, value)
                     changed_connection_fields.append(field)
+            if email in DEMO_DRIVER_EMAILS and not demo_connection.has_driving_license:
+                demo_connection.has_driving_license = True
+                changed_connection_fields.append("has_driving_license")
             if changed_connection_fields:
                 demo_connection.save(update_fields=[*changed_connection_fields, "updated_at"])
             EmploymentExclusivityLock.objects.get_or_create(
