@@ -66,6 +66,8 @@ from .api_views import (
     OrganizationProjectFirstWorkspaceAPIView,
     OrganizationWorkerConnectionListAPIView,
     OrganizationWorkerConnectionSummaryAPIView,
+    OrganizationWorkerConnectionScheduleReleaseAPIView,
+    OrganizationWorkerConnectionDayOffAPIView,
     OrganizationTransportWorkspaceAPIView,
     OrganizationScheduleWorkspaceAPIView,
     OrganizationTimeEntryListAPIView,
@@ -240,6 +242,18 @@ urlpatterns = [
         "organizations/<uuid:organization_public_id>/connections/<uuid:connection_public_id>/summary/",
         OrganizationWorkerConnectionSummaryAPIView.as_view(),
         name="support-staff-worker-connection-summary",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/connections/"
+        "<uuid:connection_public_id>/schedule/release/",
+        OrganizationWorkerConnectionScheduleReleaseAPIView.as_view(),
+        name="support-staff-worker-schedule-release",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/connections/"
+        "<uuid:connection_public_id>/schedule/day-offs/",
+        OrganizationWorkerConnectionDayOffAPIView.as_view(),
+        name="support-staff-worker-schedule-day-offs",
     ),
     path(
         "operator/organizations/<uuid:organization_public_id>/activate/",

@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date, timedelta
 import uuid
 
@@ -33,6 +34,7 @@ from .models import (
     MembershipInvitation,
     OrganizationMembership,
     ProjectCrew,
+    ProjectCrewMemberAbsence,
     ProjectCrewDriverSubstitution,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
@@ -49,6 +51,7 @@ from .models import (
     SupportConversationMember,
     SupportMessage,
     SupportOrganization,
+    SupportWorkerDocumentReference,
     SupportVacancy,
     TaskAssignment,
     TransportRoute,
@@ -59,6 +62,7 @@ from .models import (
     WorkTimeEntry,
     WorkerRequest,
     WorkerTask,
+    WorkerScheduleDayOff,
     WorkProject,
     Worksite,
 )
@@ -254,6 +258,9 @@ from .services.project_crews import (
     mark_project_crew_driver_absence,
     project_crew_substitute_driver_candidates,
     release_project_crew_shifts,
+    release_project_crew_member_days,
+    mark_worker_schedule_days_off,
+    restore_worker_schedule_days_off,
     remove_project_crew_passenger,
     replace_project_crew_driver,
     update_project_crew,
@@ -2666,6 +2673,19 @@ class OrganizationWorkerConnectionSummaryAPIView(
             public_id=connection_public_id,
         )
 
+        raw_month = str(request.query_params.get("month") or "").strip()
+        if raw_month:
+            month_start = parse_date(f"{raw_month}-01")
+            if month_start is None:
+                raise ValidationError({"month": "Use YYYY-MM format."})
+        else:
+            local_today = timezone.localdate()
+            month_start = local_today.replace(day=1)
+        month_end = month_start.replace(
+            day=monthrange(month_start.year, month_start.month)[1]
+        )
+        local_today = timezone.localdate()
+
         may_manage_housing = has_permission(
             user=request.user,
             organization=organization,
@@ -2690,6 +2710,11 @@ class OrganizationWorkerConnectionSummaryAPIView(
             user=request.user,
             organization=organization,
             permission_code=REQUEST_DECIDE,
+        )
+        may_request_documents = has_permission(
+            user=request.user,
+            organization=organization,
+            permission_code=DOCUMENT_REQUEST,
         )
         can_operate = connection.stage in {
             SupportConnection.STAGE_COORDINATOR,
@@ -2825,6 +2850,220 @@ class OrganizationWorkerConnectionSummaryAPIView(
                 .order_by("-submitted_at", "-created_at", "-id")[:20]
             ]
 
+        # Project-first is now the source of truth for the mobile worker
+        # calendar.  Legacy assignments remain in the response only for old
+        # clients during the migration window.
+        calendar_days = {}
+        current_project = None
+        if may_manage_schedule:
+            worker_memberships = list(
+                ProjectCrewShiftMember.objects.filter(
+                    connection=connection,
+                    shift__crew__organization=organization,
+                    shift__state=ProjectCrewShift.STATE_PUBLISHED,
+                    shift__work_date__range=(month_start, month_end),
+                )
+                .select_related(
+                    "shift__crew__project__worksite",
+                    "vehicle",
+                )
+                .order_by("shift__work_date", "shift__starts_at", "id")
+            )
+            shift_ids = {item.shift_id for item in worker_memberships}
+            accessible_worker_ids = set(
+                worker_connection_queryset_for(
+                    user=request.user,
+                    organization=organization,
+                    queryset=SupportConnection.objects.filter(is_archived=False),
+                ).values_list("id", flat=True)
+            )
+            members_by_shift = {}
+            if shift_ids and may_manage_transport:
+                for member in (
+                    ProjectCrewShiftMember.objects.filter(
+                        shift_id__in=shift_ids,
+                        connection_id__in=accessible_worker_ids,
+                    )
+                    .select_related("connection__candidate", "vehicle")
+                    .order_by("role", "connection__candidate__first_name", "id")
+                ):
+                    members_by_shift.setdefault(member.shift_id, []).append(
+                        {
+                            "connection_id": str(member.connection.public_id),
+                            "display_name": _user_display_name(member.connection.candidate),
+                            "role": member.role,
+                            "vehicle": (
+                                {
+                                    "name": member.vehicle.internal_name,
+                                    "registration_identifier": member.vehicle.registration_identifier,
+                                }
+                                if member.vehicle_id
+                                else None
+                            ),
+                        }
+                    )
+            for membership in worker_memberships:
+                shift = membership.shift
+                day = calendar_days.setdefault(
+                    shift.work_date.isoformat(),
+                    {"date": shift.work_date, "shifts": [], "day_off": False, "absences": []},
+                )
+                day["shifts"].append(
+                    {
+                        "id": str(shift.public_id),
+                        "starts_at": shift.starts_at,
+                        "ends_at": shift.ends_at,
+                        "break_minutes": shift.break_minutes,
+                        "role": membership.role,
+                        "project": {
+                            "id": str(shift.crew.project.public_id),
+                            "name": shift.crew.project.internal_name,
+                        },
+                        "crew": {
+                            "id": str(shift.crew.public_id),
+                            "name": shift.crew.internal_name,
+                        },
+                        "vehicle": (
+                            {
+                                "name": membership.vehicle.internal_name,
+                                "registration_identifier": membership.vehicle.registration_identifier,
+                            }
+                            if membership.vehicle_id
+                            else None
+                        ),
+                        "members": members_by_shift.get(shift.id, []),
+                    }
+                )
+                if shift.work_date == local_today and current_project is None:
+                    current_project = {
+                        "id": str(shift.crew.project.public_id),
+                        "name": shift.crew.project.internal_name,
+                        "crew_id": str(shift.crew.public_id),
+                        "crew_name": shift.crew.internal_name,
+                    }
+
+            # The header always describes today, even when the manager is
+            # browsing another calendar month.
+            if current_project is None:
+                today_membership = (
+                    ProjectCrewShiftMember.objects.filter(
+                        connection=connection,
+                        shift__crew__organization=organization,
+                        shift__state=ProjectCrewShift.STATE_PUBLISHED,
+                        shift__work_date=local_today,
+                    )
+                    .select_related("shift__crew__project")
+                    .order_by("shift__starts_at", "id")
+                    .first()
+                )
+                if today_membership is not None:
+                    today_crew = today_membership.shift.crew
+                    current_project = {
+                        "id": str(today_crew.project.public_id),
+                        "name": today_crew.project.internal_name,
+                        "crew_id": str(today_crew.public_id),
+                        "crew_name": today_crew.internal_name,
+                    }
+
+            for day_off in WorkerScheduleDayOff.objects.filter(
+                organization=organization,
+                connection=connection,
+                work_date__range=(month_start, month_end),
+            ):
+                day = calendar_days.setdefault(
+                    day_off.work_date.isoformat(),
+                    {"date": day_off.work_date, "shifts": [], "day_off": False, "absences": []},
+                )
+                day["day_off"] = True
+
+            for absence in (
+                ProjectCrewMemberAbsence.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                    work_date__range=(month_start, month_end),
+                )
+                .select_related("crew__project")
+                .order_by("work_date", "id")
+            ):
+                day = calendar_days.setdefault(
+                    absence.work_date.isoformat(),
+                    {"date": absence.work_date, "shifts": [], "day_off": False, "absences": []},
+                )
+                day["absences"].append(
+                    {
+                        "project": {
+                            "id": str(absence.crew.project.public_id),
+                            "name": absence.crew.project.internal_name,
+                        },
+                        "crew": {
+                            "id": str(absence.crew.public_id),
+                            "name": absence.crew.internal_name,
+                        },
+                    }
+                )
+
+        current_housing = None
+        if may_manage_housing:
+            now = timezone.now()
+            current_housing_assignment = (
+                HousingAssignment.objects.filter(
+                    connection=connection,
+                    state=HousingAssignment.STATE_PUBLISHED,
+                    check_in_at__lte=now,
+                )
+                .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gte=now))
+                .select_related("place__room__site")
+                .order_by("-check_in_at", "-id")
+                .first()
+            )
+            if current_housing_assignment is not None:
+                place = current_housing_assignment.place
+                current_housing = {
+                    "site_name": place.room.site.internal_name,
+                    "room_label": place.room.label,
+                    "place_label": place.label,
+                    "check_out_at": current_housing_assignment.check_out_at,
+                }
+
+        document_packages = []
+        document_reference_code = None
+        if may_request_documents:
+            packages = list(
+                DocumentRequestPackage.objects.filter(
+                    organization=organization,
+                    connection=connection,
+                )
+                .select_related(
+                    "connection__candidate",
+                    "account_reference",
+                    "created_by",
+                    "reviewed_by",
+                )
+                .order_by("-created_at", "-id")[:30]
+            )
+            document_packages = [
+                _document_request_package_payload(item, include_staff_fields=True)
+                for item in packages
+            ]
+            if packages:
+                document_reference_code = packages[0].account_reference.reference_code
+            else:
+                reference = SupportWorkerDocumentReference.objects.filter(
+                    user=connection.candidate
+                ).first()
+                if reference is not None:
+                    document_reference_code = reference.reference_code
+
+        manager_conversation = (
+            SupportConversation.objects.filter(
+                connection=connection,
+                kind=SupportConversation.KIND_MANAGER,
+                state=SupportConversation.STATE_ACTIVE,
+            )
+            .order_by("-updated_at", "-id")
+            .first()
+        )
+
         available_housing_places = []
         if may_manage_housing and can_operate:
             available_housing_places = [
@@ -2883,6 +3122,7 @@ class OrganizationWorkerConnectionSummaryAPIView(
                     "id": str(connection.public_id),
                     "candidate": {
                         "display_name": _user_display_name(connection.candidate),
+                        "has_driving_license": connection.has_driving_license,
                     },
                     "vacancy": {
                         "id": str(connection.vacancy.public_id),
@@ -2897,6 +3137,7 @@ class OrganizationWorkerConnectionSummaryAPIView(
                     "transport": may_manage_transport,
                     "time": may_view_time,
                     "requests": may_decide_requests,
+                    "documents": may_request_documents,
                 },
                 "available_actions": {
                     "create_housing": may_manage_housing and can_operate,
@@ -2916,8 +3157,127 @@ class OrganizationWorkerConnectionSummaryAPIView(
                 "passenger_routes": passenger_routes,
                 "time_entries": time_entries,
                 "requests": worker_requests,
+                "profile_header": {
+                    "current_project": current_project,
+                    "current_housing": current_housing,
+                },
+                "calendar": {
+                    "month": month_start.strftime("%Y-%m"),
+                    "days": list(calendar_days.values()),
+                },
+                "manager_conversation_id": (
+                    str(manager_conversation.public_id)
+                    if manager_conversation is not None
+                    else None
+                ),
+                "document_reference_code": document_reference_code,
+                "document_packages": document_packages,
             }
         )
+
+
+class WorkerConnectionScheduleWriteMixin(OrganizationAccessMixin):
+    """Permission-scoped point changes for one worker calendar."""
+
+    def get_connection(self, *, user, organization, connection_public_id):
+        require_permission(
+            user=user,
+            organization=organization,
+            permission_code=SCHEDULE_MANAGE,
+        )
+        return get_object_or_404(
+            worker_connection_queryset_for(
+                user=user,
+                organization=organization,
+                queryset=SupportConnection.objects.filter(is_archived=False),
+            ),
+            public_id=connection_public_id,
+        )
+
+    def validated_dates(self, request):
+        serializer = ProjectCrewShiftReleaseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return serializer.validated_data["work_dates"]
+
+    def response(self, dates):
+        return Response({"affected_dates": [item.isoformat() for item in dates]})
+
+
+class OrganizationWorkerConnectionScheduleReleaseAPIView(
+    SupportFeatureAPIView,
+    WorkerConnectionScheduleWriteMixin,
+):
+    """Release only the selected worker, retaining the rest of each crew."""
+
+    def post(self, request, organization_public_id, connection_public_id):
+        organization, _ = self.get_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        connection = self.get_connection(
+            user=request.user,
+            organization=organization,
+            connection_public_id=connection_public_id,
+        )
+        dates = self.validated_dates(request)
+        try:
+            affected = release_project_crew_member_days(
+                actor=request.user,
+                connection=connection,
+                work_dates=dates,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.response(affected)
+
+
+class OrganizationWorkerConnectionDayOffAPIView(
+    SupportFeatureAPIView,
+    WorkerConnectionScheduleWriteMixin,
+):
+    """Mark or cancel persistent worker-wide days off."""
+
+    def post(self, request, organization_public_id, connection_public_id):
+        organization, _ = self.get_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        connection = self.get_connection(
+            user=request.user,
+            organization=organization,
+            connection_public_id=connection_public_id,
+        )
+        dates = self.validated_dates(request)
+        try:
+            affected = mark_worker_schedule_days_off(
+                actor=request.user,
+                connection=connection,
+                work_dates=dates,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.response(affected)
+
+    def delete(self, request, organization_public_id, connection_public_id):
+        organization, _ = self.get_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        connection = self.get_connection(
+            user=request.user,
+            organization=organization,
+            connection_public_id=connection_public_id,
+        )
+        dates = self.validated_dates(request)
+        try:
+            affected = restore_worker_schedule_days_off(
+                actor=request.user,
+                connection=connection,
+                work_dates=dates,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return self.response(affected)
 
 
 class SupportOrganizationCreateAPIView(SupportFeatureAPIView, JobHubOperatorRequiredMixin):
