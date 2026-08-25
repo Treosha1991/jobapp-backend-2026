@@ -77,6 +77,18 @@ _NOTIFICATION_COPY = {
         "pl": ("JobHub Support", "Twoja ewidencja czasu pracy została zmieniona."),
         "uk": ("JobHub Support", "Ваш запис робочого часу змінено."),
     },
+    "documents.requested": {
+        "ru": ("JobHub Support", "Фирма запросила информацию. Откройте раздел документов."),
+        "en": ("JobHub Support", "The company requested information. Open the documents section."),
+        "pl": ("JobHub Support", "Firma poprosiła o informacje. Otwórz sekcję dokumentów."),
+        "uk": ("JobHub Support", "Фірма запросила інформацію. Відкрийте розділ документів."),
+    },
+    "documents.needs_correction": {
+        "ru": ("JobHub Support", "Фирма просит уточнить отправленную информацию. Откройте раздел документов."),
+        "en": ("JobHub Support", "The company asked you to clarify the submitted information. Open the documents section."),
+        "pl": ("JobHub Support", "Firma prosi o uzupełnienie przesłanych informacji. Otwórz sekcję dokumentów."),
+        "uk": ("JobHub Support", "Фірма просить уточнити надіслану інформацію. Відкрийте розділ документів."),
+    },
     "worker_request.urgent_submitted": {
         "ru": ("JobHub Support", "Срочный запрос работника требует внимания."),
         "en": ("JobHub Support", "An urgent worker request needs attention."),

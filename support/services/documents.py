@@ -16,6 +16,7 @@ from support.permission_codes import DOCUMENT_REQUEST
 from support.permissions import require_permission, require_worker_connection_access
 
 from .audit import record_audit_event
+from .notifications import enqueue_support_notification
 
 
 DOCUMENT_TYPE_KEYS = frozenset(
@@ -103,7 +104,7 @@ def create_document_request_package(
             additional_instructions=(additional_instructions or "").strip(),
             created_by=actor,
         )
-        _record_event(
+        event = _record_event(
             package=package,
             action=DocumentRequestPackageEvent.ACTION_CREATED,
             actor=actor,
@@ -117,6 +118,17 @@ def create_document_request_package(
                 "connection": str(connection.public_id),
                 "item_types": [item["type"] for item in requested_items],
             },
+        )
+        target_key = f"support:connection:{connection.public_id}:documents"
+        enqueue_support_notification(
+            organization=organization,
+            recipient=connection.candidate,
+            notification_code="documents.requested",
+            target_kind="connection",
+            target_public_id=connection.public_id,
+            target_key=target_key,
+            collapse_key=target_key,
+            dedupe_key=f"document-package:{package.public_id}:{event.public_id}",
         )
     return package
 
@@ -214,7 +226,7 @@ def review_document_request_package(*, actor, package, action, manager_note=""):
                 "updated_at",
             ]
         )
-        _record_event(package=item, action=event_action, actor=actor)
+        event = _record_event(package=item, action=event_action, actor=actor)
         record_audit_event(
             organization=organization,
             actor=actor,
@@ -222,4 +234,16 @@ def review_document_request_package(*, actor, package, action, manager_note=""):
             target=item,
             details={"connection": str(item.connection.public_id)},
         )
+        if action == "needs_correction":
+            target_key = f"support:connection:{item.connection.public_id}:documents"
+            enqueue_support_notification(
+                organization=organization,
+                recipient=item.connection.candidate,
+                notification_code="documents.needs_correction",
+                target_kind="connection",
+                target_public_id=item.connection.public_id,
+                target_key=target_key,
+                collapse_key=target_key,
+                dedupe_key=f"document-package:{item.public_id}:{event.public_id}",
+            )
     return item

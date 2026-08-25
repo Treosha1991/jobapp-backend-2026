@@ -8,6 +8,8 @@ from rest_framework.test import APIClient
 from support.models import (
     DocumentRequestPackage,
     DocumentRequestPackageEvent,
+    InAppNotification,
+    NotificationOutbox,
     OrganizationMembership,
     SupportAccessGrant,
     SupportApplication,
@@ -130,6 +132,25 @@ class DocumentRequestPackageTests(TestCase):
         self.assertEqual(package["status"], "requested")
         self.assertNotIn("file", package)
         self.assertNotIn("document_number", package)
+        requested_notification = NotificationOutbox.objects.get(
+            recipient=self.worker,
+            notification_code="documents.requested",
+        )
+        self.assertEqual(requested_notification.target_kind, "connection")
+        self.assertEqual(
+            requested_notification.target_public_id,
+            self.connection.public_id,
+        )
+        self.assertEqual(
+            requested_notification.target_key,
+            f"support:connection:{self.connection.public_id}:documents",
+        )
+        self.assertTrue(
+            InAppNotification.objects.filter(
+                outbox=requested_notification,
+                recipient=self.worker,
+            ).exists()
+        )
 
         worker_list_url = (
             f"/api/v2/support/connections/{self.connection.public_id}/document-packages/mine/"
@@ -153,6 +174,12 @@ class DocumentRequestPackageTests(TestCase):
         )
         self.assertEqual(correction.status_code, 200, correction.data)
         self.assertEqual(correction.data["document_package"]["status"], "needs_correction")
+        self.assertTrue(
+            NotificationOutbox.objects.filter(
+                recipient=self.worker,
+                notification_code="documents.needs_correction",
+            ).exists()
+        )
 
         resent = self.worker_client.post(
             f"/api/v2/support/document-packages/{package['id']}/mark-sent/",
