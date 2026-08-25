@@ -2942,8 +2942,9 @@ class OrganizationWorkerConnectionSummaryAPIView(
                         "crew_name": shift.crew.internal_name,
                     }
 
-            # The header always describes today, even when the manager is
-            # browsing another calendar month.
+            # Prefer today's project even when another month is open.  A
+            # worker without a shift today is still assigned when a future
+            # shift or an active crew roster exists.
             if current_project is None:
                 today_membership = (
                     ProjectCrewShiftMember.objects.filter(
@@ -2963,6 +2964,66 @@ class OrganizationWorkerConnectionSummaryAPIView(
                         "name": today_crew.project.internal_name,
                         "crew_id": str(today_crew.public_id),
                         "crew_name": today_crew.internal_name,
+                    }
+
+            if current_project is None:
+                upcoming_membership = (
+                    ProjectCrewShiftMember.objects.filter(
+                        connection=connection,
+                        shift__crew__organization=organization,
+                        shift__state=ProjectCrewShift.STATE_PUBLISHED,
+                        shift__work_date__gt=local_today,
+                    )
+                    .select_related("shift__crew__project")
+                    .order_by("shift__work_date", "shift__starts_at", "id")
+                    .first()
+                )
+                if upcoming_membership is not None:
+                    upcoming_crew = upcoming_membership.shift.crew
+                    current_project = {
+                        "id": str(upcoming_crew.project.public_id),
+                        "name": upcoming_crew.project.internal_name,
+                        "crew_id": str(upcoming_crew.public_id),
+                        "crew_name": upcoming_crew.internal_name,
+                    }
+
+            if current_project is None:
+                active_driver_assignment = (
+                    ProjectCrewResourceAssignment.objects.filter(
+                        crew__organization=organization,
+                        crew__state=ProjectCrew.STATE_ACTIVE,
+                        crew__project__is_active=True,
+                        driver_connection=connection,
+                        starts_on__lte=local_today,
+                    )
+                    .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=local_today))
+                    .select_related("crew__project")
+                    .order_by("-starts_on", "-id")
+                    .first()
+                )
+                active_passenger_assignment = None
+                if active_driver_assignment is None:
+                    active_passenger_assignment = (
+                        ProjectCrewPassenger.objects.filter(
+                            crew__organization=organization,
+                            crew__state=ProjectCrew.STATE_ACTIVE,
+                            crew__project__is_active=True,
+                            connection=connection,
+                            starts_on__lte=local_today,
+                        )
+                        .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=local_today))
+                        .select_related("crew__project")
+                        .order_by("-starts_on", "-id")
+                        .first()
+                    )
+                active_assignment = active_driver_assignment or active_passenger_assignment
+                if active_assignment is not None:
+                    active_crew = active_assignment.crew
+                    current_project = {
+                        "id": str(active_crew.project.public_id),
+                        "name": active_crew.project.internal_name,
+                        "crew_id": str(active_crew.public_id),
+                        "crew_name": active_crew.internal_name,
                     }
 
             for day_off in WorkerScheduleDayOff.objects.filter(
@@ -3005,23 +3066,32 @@ class OrganizationWorkerConnectionSummaryAPIView(
         current_housing = None
         if may_manage_housing:
             now = timezone.now()
-            current_housing_assignment = (
+            published_housing_assignments = (
                 HousingAssignment.objects.filter(
                     connection=connection,
                     state=HousingAssignment.STATE_PUBLISHED,
-                    check_in_at__lte=now,
                 )
                 .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gte=now))
                 .select_related("place__room__site")
+            )
+            current_housing_assignment = (
+                published_housing_assignments.filter(check_in_at__lte=now)
                 .order_by("-check_in_at", "-id")
                 .first()
             )
+            if current_housing_assignment is None:
+                current_housing_assignment = (
+                    published_housing_assignments.filter(check_in_at__gt=now)
+                    .order_by("check_in_at", "id")
+                    .first()
+                )
             if current_housing_assignment is not None:
                 place = current_housing_assignment.place
                 current_housing = {
                     "site_name": place.room.site.internal_name,
                     "room_label": place.room.label,
                     "place_label": place.label,
+                    "check_in_at": current_housing_assignment.check_in_at,
                     "check_out_at": current_housing_assignment.check_out_at,
                 }
 

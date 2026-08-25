@@ -376,6 +376,7 @@ def project_first_project_workspace(*, project, selected_month):
 
     month_start = selected_month.replace(day=1)
     month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
+    roster_date = min(max(timezone.localdate(), month_start), month_end)
     crews = list(
         ProjectCrew.objects.filter(project=project, state=ProjectCrew.STATE_ACTIVE)
         .prefetch_related(
@@ -460,6 +461,43 @@ def project_first_project_workspace(*, project, selected_month):
 
     crew_payloads = []
     for crew in crews:
+        resource_assignments = list(crew.resource_assignments.all())
+        current_resource = next(
+            (
+                item
+                for item in resource_assignments
+                if item.starts_on <= roster_date
+                and (item.ends_on is None or item.ends_on >= roster_date)
+            ),
+            None,
+        )
+        if current_resource is not None:
+            resource_assignments = [current_resource] + [
+                item for item in resource_assignments if item.pk != current_resource.pk
+            ]
+        active_passengers = []
+        passenger_connection_ids = set()
+        for item in crew.passenger_assignments.all():
+            if item.starts_on > roster_date:
+                continue
+            if item.ends_on is not None and item.ends_on < roster_date:
+                continue
+            if current_resource is not None and item.connection_id == current_resource.driver_connection_id:
+                continue
+            if item.connection_id in passenger_connection_ids:
+                continue
+            passenger_connection_ids.add(item.connection_id)
+            active_passengers.append(item)
+
+        def resource_payload(item):
+            return {
+                "id": str(item.public_id),
+                "driver": _connection_payload(item.driver_connection),
+                "vehicle": _vehicle_payload(item.vehicle),
+                "starts_on": item.starts_on.isoformat(),
+                "ends_on": item.ends_on.isoformat() if item.ends_on else None,
+            }
+
         shifts_by_date = {}
         for shift in crew.calendar_shifts.all():
             members = []
@@ -498,16 +536,12 @@ def project_first_project_workspace(*, project, selected_month):
                 "id": str(crew.public_id),
                 "internal_name": crew.internal_name,
                 "state": crew.state,
-                "resources": [
-                    {
-                        "id": str(item.public_id),
-                        "driver": _connection_payload(item.driver_connection),
-                        "vehicle": _vehicle_payload(item.vehicle),
-                        "starts_on": item.starts_on.isoformat(),
-                        "ends_on": item.ends_on.isoformat() if item.ends_on else None,
-                    }
-                    for item in crew.resource_assignments.all()
-                ],
+                "resources": [resource_payload(item) for item in resource_assignments],
+                "current_resource": (
+                    resource_payload(current_resource)
+                    if current_resource is not None
+                    else None
+                ),
                 "default_passengers": [
                     {
                         "id": str(item.public_id),
@@ -515,7 +549,7 @@ def project_first_project_workspace(*, project, selected_month):
                         "starts_on": item.starts_on.isoformat(),
                         "ends_on": item.ends_on.isoformat() if item.ends_on else None,
                     }
-                    for item in crew.passenger_assignments.all()
+                    for item in active_passengers
                 ],
                 "calendar": calendar,
                 "absences": [

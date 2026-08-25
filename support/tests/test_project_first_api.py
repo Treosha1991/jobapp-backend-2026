@@ -8,6 +8,10 @@ from rest_framework.test import APIClient
 
 from support.models import (
     AuditEvent,
+    HousingAssignment,
+    HousingPlace,
+    HousingRoom,
+    HousingSite,
     OrganizationMembership,
     PermissionGrant,
     ProjectCrew,
@@ -249,6 +253,68 @@ class ProjectFirstReadAPITests(TestCase):
             "Driver Worker",
         )
         self.assertEqual(vehicle["current_driver"]["project"], "Food project")
+
+    def test_worker_summary_shows_upcoming_project_and_published_housing(self):
+        future_date = timezone.localdate() + timedelta(days=2)
+        future_start = timezone.make_aware(datetime.combine(future_date, time(6, 0)))
+        future_shift = ProjectCrewShift.objects.create(
+            crew=self.crew,
+            work_date=future_date,
+            starts_at=future_start,
+            ends_at=future_start + timedelta(hours=8),
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=future_shift,
+            connection=self.passenger,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            created_by=self.owner,
+        )
+        housing_site = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="Future worker home",
+            country_code="NL",
+            city="Lelystad",
+            street="Housingstraat",
+            building="8",
+            created_by=self.owner,
+        )
+        room = HousingRoom.objects.create(site=housing_site, label="2A", capacity=1)
+        place = HousingPlace.objects.create(room=room, label="1")
+        HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=self.passenger,
+            place=place,
+            check_in_at=timezone.now() + timedelta(days=1),
+            state=HousingAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+        )
+
+        response = self.client.get(
+            f"/api/v2/support/organizations/{self.organization.public_id}/"
+            f"connections/{self.passenger.public_id}/summary/"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        header = response.data["profile_header"]
+        self.assertEqual(header["current_project"]["name"], "Food project")
+        self.assertEqual(header["current_project"]["crew_name"], "Crew North")
+        self.assertEqual(header["current_housing"]["site_name"], "Future worker home")
+        self.assertEqual(header["current_housing"]["room_label"], "2A")
+
+    def test_worker_summary_shows_active_crew_without_a_shift_today(self):
+        ProjectCrewShift.objects.filter(crew=self.crew).delete()
+
+        response = self.client.get(
+            f"/api/v2/support/organizations/{self.organization.public_id}/"
+            f"connections/{self.passenger.public_id}/summary/"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["profile_header"]["current_project"]["name"],
+            "Food project",
+        )
 
     def _crew_input(self, driver, vehicle, **overrides):
         data = {
@@ -1136,6 +1202,22 @@ class ProjectFirstReadAPITests(TestCase):
                 connection=self.driver,
                 role=ProjectCrewShiftMember.ROLE_PASSENGER,
             ).exists()
+        )
+
+        workspace = self.client.get(self.workspace_url)
+        self.assertEqual(workspace.status_code, 200, workspace.data)
+        crew = workspace.data["crews"][0]
+        self.assertEqual(
+            crew["current_resource"]["driver"]["id"],
+            str(self.passenger.public_id),
+        )
+        self.assertEqual(
+            crew["resources"][0]["driver"]["id"],
+            str(self.passenger.public_id),
+        )
+        self.assertEqual(
+            [item["worker"]["id"] for item in crew["default_passengers"]],
+            [str(self.driver.public_id)],
         )
 
     def test_driver_replace_is_idempotent_and_rejects_reused_key(self):
