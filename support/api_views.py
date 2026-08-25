@@ -158,6 +158,7 @@ from .serializers import (
 )
 from .services.audit import record_audit_event
 from .services.conversations import (
+    find_private_manager_conversation,
     mark_conversation_read,
     open_manager_conversation,
     open_manager_conversation_for_staff,
@@ -433,17 +434,30 @@ def _candidate_application_payload(application):
     )
     conversation = None
     if connection is not None:
-        conversation = (
-            SupportConversation.objects.filter(
-                connection=connection,
-                kind=SupportConversation.KIND_MANAGER,
-                state=SupportConversation.STATE_ACTIVE,
-                members__user=application.candidate,
-                members__left_at__isnull=True,
+        manager_membership = connection.assigned_manager
+        if manager_membership is not None:
+            conversation = find_private_manager_conversation(
+                organization=connection.organization,
+                worker=application.candidate,
+                manager=manager_membership.user,
             )
-            .distinct()
-            .first()
-        )
+        else:
+            conversation = (
+                SupportConversation.objects.filter(
+                    organization=connection.organization,
+                    kind=SupportConversation.KIND_MANAGER,
+                    state=SupportConversation.STATE_ACTIVE,
+                    members__user=application.candidate,
+                    members__left_at__isnull=True,
+                )
+                .filter(
+                    Q(private_worker=application.candidate)
+                    | Q(private_worker__isnull=True, connection=connection)
+                )
+                .distinct()
+                .order_by("-updated_at", "-id")
+                .first()
+            )
     payload["manager_conversation_id"] = (
         str(conversation.public_id) if conversation is not None else None
     )
@@ -2507,15 +2521,26 @@ class OrganizationChatDirectoryAPIView(
                 members__user=request.user,
                 members__left_at__isnull=True,
             )
-            .select_related("connection")
+            .select_related("connection", "private_worker")
             .prefetch_related("members__user")
             .distinct()
         )
-        conversation_by_connection = {
-            item.connection_id: item
-            for item in conversations
-            if item.connection_id is not None
-        }
+        conversation_by_worker = {}
+        for conversation in conversations:
+            if conversation.kind != SupportConversation.KIND_MANAGER:
+                continue
+            if (
+                conversation.private_manager_id is not None
+                and conversation.private_manager_id != request.user.id
+            ):
+                continue
+            worker_id = conversation.private_worker_id or (
+                conversation.connection.candidate_id
+                if conversation.connection_id is not None
+                else None
+            )
+            if worker_id is not None:
+                conversation_by_worker.setdefault(worker_id, conversation)
         staff_conversation_by_user = {}
         for conversation in conversations:
             if conversation.connection_id is not None:
@@ -2544,7 +2569,7 @@ class OrganizationChatDirectoryAPIView(
                 if connection.candidate_id in seen_worker_user_ids:
                     continue
                 seen_worker_user_ids.add(connection.candidate_id)
-                conversation = conversation_by_connection.get(connection.id)
+                conversation = conversation_by_worker.get(connection.candidate_id)
                 results.append(
                     {
                         "target_type": "worker",
@@ -3124,14 +3149,10 @@ class OrganizationWorkerConnectionSummaryAPIView(
                 if reference is not None:
                     document_reference_code = reference.reference_code
 
-        manager_conversation = (
-            SupportConversation.objects.filter(
-                connection=connection,
-                kind=SupportConversation.KIND_MANAGER,
-                state=SupportConversation.STATE_ACTIVE,
-            )
-            .order_by("-updated_at", "-id")
-            .first()
+        manager_conversation = find_private_manager_conversation(
+            organization=organization,
+            worker=connection.candidate,
+            manager=request.user,
         )
 
         available_housing_places = []

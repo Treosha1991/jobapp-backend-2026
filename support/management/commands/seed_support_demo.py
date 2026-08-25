@@ -19,14 +19,13 @@ from support.models import (
     SupportAccessGrant,
     SupportApplication,
     SupportConnection,
-    SupportConversation,
-    SupportConversationMember,
     SupportWorkerDocumentReference,
     DocumentRequestPackage,
     SupportOrganization,
     SupportVacancy,
 )
 from support.services.organizations import activate_organization, create_organization
+from support.services.conversations import open_manager_conversation_for_staff
 
 
 DEMO_OWNER_EMAIL = "support-owner@jobhub.test"
@@ -142,27 +141,9 @@ class Command(BaseCommand):
 
     @staticmethod
     def _ensure_worker_chat(*, owner, membership, connection):
-        conversation, _ = SupportConversation.objects.get_or_create(
-            organization=connection.organization,
+        open_manager_conversation_for_staff(
+            actor=owner,
             connection=connection,
-            kind=SupportConversation.KIND_COORDINATOR,
-            defaults={
-                "title": f"Чат: {connection.candidate.get_full_name() or connection.candidate.username}",
-                "created_by": owner,
-            },
-        )
-        SupportConversationMember.objects.get_or_create(
-            conversation=conversation,
-            user=owner,
-            defaults={
-                "organization_membership": membership,
-                "role": SupportConversationMember.ROLE_STAFF,
-            },
-        )
-        SupportConversationMember.objects.get_or_create(
-            conversation=conversation,
-            user=connection.candidate,
-            defaults={"role": SupportConversationMember.ROLE_WORKER},
         )
 
     def handle(self, *args, **options):

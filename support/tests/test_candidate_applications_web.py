@@ -448,7 +448,7 @@ class CandidateApplicationsWorkspaceTests(TestCase):
         target_conversation = (
             SupportConversation.objects.filter(
                 organization=self.organization,
-                kind=SupportConversation.KIND_JOBHUB,
+                kind=SupportConversation.KIND_MANAGER,
                 members__user=self.owner,
             )
             .filter(members__user=other_candidate)

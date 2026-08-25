@@ -179,25 +179,35 @@ def candidate_applications_snapshot(
         .order_by("-updated_at", "-id")
     )
 
-    connection_ids = [
-        item.support_connection.id
+    worker_ids = [
+        item.candidate_id
         for item in applications
         if hasattr(item, "support_connection")
     ]
-    connection_ids.extend(item.id for item in processing_connections)
-    conversations_by_connection = {
-        item.connection_id: item
-        for item in SupportConversation.objects.filter(
+    worker_ids.extend(item.candidate_id for item in processing_connections)
+    conversations_by_worker = {}
+    for conversation in (
+        SupportConversation.objects.filter(
             organization=organization,
-            connection_id__in=connection_ids,
             kind=SupportConversation.KIND_MANAGER,
             state=SupportConversation.STATE_ACTIVE,
             members__user=user,
             members__left_at__isnull=True,
         )
+        .filter(
+            Q(private_worker_id__in=worker_ids, private_manager=user)
+            | Q(
+                private_worker__isnull=True,
+                private_manager__isnull=True,
+                connection__candidate_id__in=worker_ids,
+            )
+        )
+        .select_related("connection")
         .distinct()
         .order_by("-updated_at", "-id")
-    }
+    ):
+        worker_id = conversation.private_worker_id or conversation.connection.candidate_id
+        conversations_by_worker.setdefault(worker_id, conversation)
     from support.services.entitlements import support_access_snapshot_for
 
     for item in applications:
@@ -206,7 +216,7 @@ def candidate_applications_snapshot(
             item.support_connection if hasattr(item, "support_connection") else None
         )
         item.manager_conversation = (
-            conversations_by_connection.get(item.connection_record.id)
+            conversations_by_worker.get(item.candidate_id)
             if item.connection_record is not None
             else None
         )
@@ -230,7 +240,9 @@ def candidate_applications_snapshot(
 
     for connection in processing_connections:
         connection.candidate_display_name = _display_name(connection.candidate)
-        connection.manager_conversation = conversations_by_connection.get(connection.id)
+        connection.manager_conversation = conversations_by_worker.get(
+            connection.candidate_id
+        )
         connection.document_packages = list(connection.document_request_packages.all())
         connection.latest_document_package = (
             connection.document_packages[0] if connection.document_packages else None
@@ -264,17 +276,12 @@ def _display_name(user):
 
 
 def _active_worker_conversation(*, user, organization, connection):
-    return (
-        SupportConversation.objects.filter(
-            organization=organization,
-            connection=connection,
-            state=SupportConversation.STATE_ACTIVE,
-            members__user=user,
-            members__left_at__isnull=True,
-        )
-        .distinct()
-        .order_by("-updated_at", "-id")
-        .first()
+    from support.services.conversations import find_private_manager_conversation
+
+    return find_private_manager_conversation(
+        organization=organization,
+        worker=connection.candidate,
+        manager=user,
     )
 
 

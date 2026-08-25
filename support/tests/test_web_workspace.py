@@ -2667,7 +2667,9 @@ class SupportWorkspaceWebTests(TestCase):
         passenger_conversation = SupportConversation.objects.create(
             organization=self.organization,
             connection=passenger_connection,
-            kind=SupportConversation.KIND_COORDINATOR,
+            kind=SupportConversation.KIND_MANAGER,
+            private_worker=passenger_user,
+            private_manager=self.owner,
             title="Passenger chat",
             created_by=self.owner,
         )

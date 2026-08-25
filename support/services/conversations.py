@@ -21,6 +21,140 @@ from .entitlements import support_access_snapshot_for
 from .notifications import enqueue_support_notification
 
 
+def find_private_manager_conversation(*, organization, worker, manager):
+    """Return only the private conversation belonging to this exact pair."""
+
+    return (
+        SupportConversation.objects.filter(
+            organization=organization,
+            kind=SupportConversation.KIND_MANAGER,
+            state=SupportConversation.STATE_ACTIVE,
+        )
+        .filter(
+            Q(private_worker=worker, private_manager=manager)
+            | Q(
+                private_worker__isnull=True,
+                private_manager__isnull=True,
+                connection__candidate=worker,
+            )
+        )
+        .filter(
+            members__user=manager,
+            members__role=SupportConversationMember.ROLE_STAFF,
+            members__left_at__isnull=True,
+        )
+        .distinct()
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+
+
+def _restore_private_conversation_member(
+    *, conversation, user, role, organization_membership=None
+):
+    member, created = SupportConversationMember.objects.get_or_create(
+        conversation=conversation,
+        user=user,
+        defaults={
+            "organization_membership": organization_membership,
+            "role": role,
+        },
+    )
+    if created:
+        return
+    updates = []
+    if member.role != role:
+        member.role = role
+        updates.append("role")
+    expected_membership_id = (
+        organization_membership.id if organization_membership is not None else None
+    )
+    if member.organization_membership_id != expected_membership_id:
+        member.organization_membership = organization_membership
+        updates.append("organization_membership")
+    if member.left_at is not None:
+        member.left_at = None
+        updates.append("left_at")
+    if updates:
+        member.save(update_fields=updates)
+
+
+def _open_private_manager_conversation(*, connection, manager_membership, created_by):
+    """Restore one private organization/worker/manager conversation."""
+
+    conversation = (
+        SupportConversation.objects.select_for_update()
+        .filter(
+            organization=connection.organization,
+            kind=SupportConversation.KIND_MANAGER,
+            private_worker=connection.candidate,
+            private_manager=manager_membership.user,
+        )
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+    if conversation is None:
+        conversation = (
+            SupportConversation.objects.select_for_update()
+            .filter(
+                organization=connection.organization,
+                kind=SupportConversation.KIND_MANAGER,
+                connection__candidate=connection.candidate,
+                private_worker__isnull=True,
+                private_manager__isnull=True,
+                members__user=manager_membership.user,
+                members__role=SupportConversationMember.ROLE_STAFF,
+            )
+            .order_by("-updated_at", "-id")
+            .first()
+        )
+    created = conversation is None
+    if conversation is None:
+        conversation = SupportConversation.objects.create(
+            organization=connection.organization,
+            connection=connection,
+            kind=SupportConversation.KIND_MANAGER,
+            private_worker=connection.candidate,
+            private_manager=manager_membership.user,
+            created_by=created_by,
+        )
+    else:
+        updates = []
+        if conversation.private_worker_id != connection.candidate_id:
+            conversation.private_worker = connection.candidate
+            updates.append("private_worker")
+        if conversation.private_manager_id != manager_membership.user_id:
+            conversation.private_manager = manager_membership.user
+            updates.append("private_manager")
+        if conversation.state != SupportConversation.STATE_ACTIVE:
+            conversation.state = SupportConversation.STATE_ACTIVE
+            updates.append("state")
+        if conversation.archived_at is not None:
+            conversation.archived_at = None
+            updates.append("archived_at")
+        if updates:
+            conversation.save(update_fields=[*updates, "updated_at"])
+
+    _restore_private_conversation_member(
+        conversation=conversation,
+        user=connection.candidate,
+        role=SupportConversationMember.ROLE_WORKER,
+    )
+    _restore_private_conversation_member(
+        conversation=conversation,
+        user=manager_membership.user,
+        role=SupportConversationMember.ROLE_STAFF,
+        organization_membership=manager_membership,
+    )
+    SupportConversationMember.objects.filter(
+        conversation=conversation,
+        left_at__isnull=True,
+    ).exclude(
+        user_id__in=(connection.candidate_id, manager_membership.user_id)
+    ).update(left_at=timezone.now())
+    return conversation, created
+
+
 def open_manager_conversation(*, candidate, connection):
     """Candidate action that opens the approved manager chat.
 
@@ -52,30 +186,11 @@ def open_manager_conversation(*, candidate, connection):
         ):
             raise ValidationError({"connection": "assigned_manager_chat_not_available"})
 
-        conversation, created = SupportConversation.objects.get_or_create(
+        conversation, created = _open_private_manager_conversation(
             connection=connection,
-            kind=SupportConversation.KIND_MANAGER,
-            defaults={
-                "organization": connection.organization,
-                "created_by": candidate,
-            },
+            manager_membership=manager_membership,
+            created_by=candidate,
         )
-        if created:
-            SupportConversationMember.objects.bulk_create(
-                [
-                    SupportConversationMember(
-                        conversation=conversation,
-                        user=candidate,
-                        role=SupportConversationMember.ROLE_WORKER,
-                    ),
-                    SupportConversationMember(
-                        conversation=conversation,
-                        user=manager_membership.user,
-                        organization_membership=manager_membership,
-                        role=SupportConversationMember.ROLE_STAFF,
-                    ),
-                ]
-            )
         if connection.stage == SupportConnection.STAGE_AWAITING_SUPPORT:
             previous_stage = connection.stage
             connection.stage = SupportConnection.STAGE_MANAGER
@@ -100,13 +215,7 @@ def open_manager_conversation(*, candidate, connection):
 
 
 def open_manager_conversation_for_staff(*, actor, connection):
-    """Create or restore the manager chat from the staff workspace.
-
-    Staging and migrated organizations may already have an archived manager
-    conversation or members whose ``left_at`` value is set.  Opening the chat
-    must therefore repair that state instead of trying to create a parallel
-    conversation protected by the one-manager-chat constraint.
-    """
+    """Create or restore the actor's own private worker conversation."""
 
     with transaction.atomic():
         connection = (
@@ -125,79 +234,11 @@ def open_manager_conversation_for_staff(*, actor, connection):
             permission_code=CHAT_MANAGE,
         ):
             raise PermissionDenied("support_permission_denied")
-        conversation, created = SupportConversation.objects.get_or_create(
+        conversation, created = _open_private_manager_conversation(
             connection=connection,
-            kind=SupportConversation.KIND_MANAGER,
-            defaults={
-                "organization": connection.organization,
-                "created_by": actor,
-            },
+            manager_membership=actor_membership,
+            created_by=actor,
         )
-        conversation_updates = []
-        if conversation.organization_id != connection.organization_id:
-            conversation.organization = connection.organization
-            conversation_updates.append("organization")
-        if conversation.state != SupportConversation.STATE_ACTIVE:
-            conversation.state = SupportConversation.STATE_ACTIVE
-            conversation_updates.append("state")
-        if conversation.archived_at is not None:
-            conversation.archived_at = None
-            conversation_updates.append("archived_at")
-        if conversation_updates:
-            conversation.save(update_fields=[*conversation_updates, "updated_at"])
-
-        def restore_member(*, user, role, organization_membership=None):
-            member, member_created = SupportConversationMember.objects.get_or_create(
-                conversation=conversation,
-                user=user,
-                defaults={
-                    "organization_membership": organization_membership,
-                    "role": role,
-                },
-            )
-            if member_created:
-                return
-            member_updates = []
-            if member.role != role:
-                member.role = role
-                member_updates.append("role")
-            expected_membership_id = (
-                organization_membership.id if organization_membership else None
-            )
-            if member.organization_membership_id != expected_membership_id:
-                member.organization_membership = organization_membership
-                member_updates.append("organization_membership")
-            if member.left_at is not None:
-                member.left_at = None
-                member_updates.append("left_at")
-            if member_updates:
-                member.save(update_fields=member_updates)
-
-        restore_member(
-            user=connection.candidate,
-            role=SupportConversationMember.ROLE_WORKER,
-        )
-        restore_member(
-            user=actor,
-            role=SupportConversationMember.ROLE_STAFF,
-            organization_membership=actor_membership,
-        )
-        manager_membership = connection.assigned_manager
-        if (
-            manager_membership is not None
-            and manager_membership.is_active
-            and manager_membership.user_id != actor.id
-            and has_permission(
-                user=manager_membership.user,
-                organization=connection.organization,
-                permission_code=CHAT_MANAGE,
-            )
-        ):
-            restore_member(
-                user=manager_membership.user,
-                role=SupportConversationMember.ROLE_STAFF,
-                organization_membership=manager_membership,
-            )
         record_audit_event(
             organization=connection.organization,
             actor=actor,
@@ -309,6 +350,16 @@ def open_staff_conversation(*, actor, target_membership):
 
 
 def _active_member_or_denied(*, user, conversation):
+    if (
+        conversation.kind == SupportConversation.KIND_MANAGER
+        and conversation.private_worker_id is not None
+        and conversation.private_manager_id is not None
+        and user.id not in {
+            conversation.private_worker_id,
+            conversation.private_manager_id,
+        }
+    ):
+        raise PermissionDenied("support_conversation_not_available")
     member = SupportConversationMember.objects.filter(
         conversation=conversation,
         user=user,
@@ -481,35 +532,41 @@ def forward_text_message(*, sender, source_message, recipient, client_message_id
 
     with transaction.atomic():
         organization.__class__.objects.select_for_update().get(pk=organization.pk)
-        possible_conversations = list(
-            SupportConversation.objects.filter(
-                organization=organization,
-                state=SupportConversation.STATE_ACTIVE,
-                members__user=sender,
-                members__left_at__isnull=True,
+        if recipient_role == SupportConversationMember.ROLE_WORKER:
+            target_conversation, _ = open_manager_conversation_for_staff(
+                actor=sender,
+                connection=recipient_connection,
             )
-            .filter(
-                members__user=recipient,
-                members__left_at__isnull=True,
+        else:
+            possible_conversations = list(
+                SupportConversation.objects.filter(
+                    organization=organization,
+                    state=SupportConversation.STATE_ACTIVE,
+                    members__user=sender,
+                    members__left_at__isnull=True,
+                )
+                .filter(
+                    members__user=recipient,
+                    members__left_at__isnull=True,
+                )
+                .exclude(kind=SupportConversation.KIND_GROUP)
+                .prefetch_related("members")
+                .distinct()
+                .order_by("-updated_at", "-id")
             )
-            .exclude(kind=SupportConversation.KIND_GROUP)
-            .prefetch_related("members")
-            .distinct()
-            .order_by("-updated_at", "-id")
-        )
-        target_conversation = next(
-            (
-                item
-                for item in possible_conversations
-                if {
-                    member.user_id
-                    for member in item.members.all()
-                    if member.left_at is None
-                }
-                == {sender.id, recipient.id}
-            ),
-            None,
-        )
+            target_conversation = next(
+                (
+                    item
+                    for item in possible_conversations
+                    if {
+                        member.user_id
+                        for member in item.members.all()
+                        if member.left_at is None
+                    }
+                    == {sender.id, recipient.id}
+                ),
+                None,
+            )
         if target_conversation is None:
             target_conversation = SupportConversation.objects.create(
                 organization=organization,

@@ -45,6 +45,20 @@ class SupportConversation(models.Model):
         blank=True,
         related_name="conversations",
     )
+    private_worker = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="private_worker_support_conversations",
+    )
+    private_manager = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="private_manager_support_conversations",
+    )
     kind = models.CharField(max_length=16, choices=KIND_CHOICES)
     title = models.CharField(max_length=160, blank=True, default="")
     state = models.CharField(max_length=16, choices=STATE_CHOICES, default=STATE_ACTIVE)
@@ -63,14 +77,18 @@ class SupportConversation(models.Model):
         ordering = ("-updated_at", "-id")
         constraints = [
             models.UniqueConstraint(
-                fields=("connection", "kind"),
+                fields=("organization", "private_worker", "private_manager"),
                 condition=Q(kind="manager"),
-                name="support_one_manager_conversation_per_connection",
+                name="support_one_private_manager_worker_conversation",
             ),
         ]
         indexes = [
             models.Index(fields=("organization", "state", "updated_at")),
             models.Index(fields=("connection", "kind", "state")),
+            models.Index(
+                fields=("organization", "private_worker", "private_manager"),
+                name="support_conv_private_pair",
+            ),
         ]
 
 

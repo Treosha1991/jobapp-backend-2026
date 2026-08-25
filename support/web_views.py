@@ -3780,24 +3780,37 @@ def timekeeping_workspace(request):
         return _time_operation(request, snapshot=snapshot)
     if request.GET.get("export") == "csv":
         return _timekeeping_csv(request, snapshot)
-    conversation_by_connection = {
-        item.connection_id: item
-        for item in SupportConversation.objects.filter(
+    worker_ids = [entry.connection.candidate_id for entry in snapshot["entries"]]
+    conversation_by_worker = {}
+    for conversation in (
+        SupportConversation.objects.filter(
             organization=snapshot["organization"],
-            connection_id__in=[entry.connection_id for entry in snapshot["entries"]],
             kind=SupportConversation.KIND_MANAGER,
             state=SupportConversation.STATE_ACTIVE,
             members__user=request.user,
             members__left_at__isnull=True,
-        ).distinct()
-    }
+        )
+        .filter(
+            Q(private_worker_id__in=worker_ids, private_manager=request.user)
+            | Q(
+                private_worker__isnull=True,
+                private_manager__isnull=True,
+                connection__candidate_id__in=worker_ids,
+            )
+        )
+        .select_related("connection")
+        .distinct()
+        .order_by("-updated_at", "-id")
+    ):
+        worker_id = conversation.private_worker_id or conversation.connection.candidate_id
+        conversation_by_worker.setdefault(worker_id, conversation)
     for entry in snapshot["entries"]:
         entry.status_label = tr(request, f"support_time_status_{entry.status}")
         entry.worker_url = reverse(
             "support:worker-card",
             kwargs={"connection_public_id": entry.connection.public_id},
         )
-        conversation = conversation_by_connection.get(entry.connection_id)
+        conversation = conversation_by_worker.get(entry.connection.candidate_id)
         entry.conversation_url = (
             reverse(
                 "support:conversation-detail",
