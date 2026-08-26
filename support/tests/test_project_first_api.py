@@ -1656,6 +1656,11 @@ class ProjectFirstReadAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["month"], "2026-08")
+        self.assertEqual(response.data["project"]["summary"]["crew_count"], 1)
+        self.assertEqual(
+            response.data["project"]["summary"]["permanent_worker_count"],
+            2,
+        )
         crew = response.data["crews"][0]
         self.assertEqual(crew["internal_name"], "Crew North")
         day = next(item for item in crew["calendar"] if item["date"] == "2026-08-18")

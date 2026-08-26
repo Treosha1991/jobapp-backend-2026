@@ -212,7 +212,7 @@ def _worksite_payload(worksite):
     }
 
 
-def project_first_project_payload(project, *, include_counts=False):
+def project_first_project_payload(project, *, include_counts=False, crews=None):
     payload = {
         "id": str(project.public_id),
         "is_active": project.is_active,
@@ -230,7 +230,18 @@ def project_first_project_payload(project, *, include_counts=False):
         "worksite": _worksite_payload(project.worksite),
     }
     if include_counts:
-        crews = list(project.project_crews.all())
+        if crews is None:
+            crews = list(
+                project.project_crews.filter(state=ProjectCrew.STATE_ACTIVE)
+                .prefetch_related(
+                    "resource_assignments",
+                    "passenger_assignments",
+                    "calendar_shifts",
+                )
+                .order_by("internal_name", "id")
+            )
+        else:
+            crews = list(crews)
         worker_ids = set()
         shift_count = 0
         for crew in crews:
@@ -275,7 +286,14 @@ def project_first_project_list(*, organization):
         )
         .order_by("internal_name", "id")
     )
-    return [project_first_project_payload(project, include_counts=True) for project in projects]
+    return [
+        project_first_project_payload(
+            project,
+            include_counts=True,
+            crews=project.project_crews.all(),
+        )
+        for project in projects
+    ]
 
 
 def project_first_creation_options(*, organization):
@@ -576,7 +594,11 @@ def project_first_project_workspace(*, project, selected_month):
 
     return {
         "month": month_start.strftime("%Y-%m"),
-        "project": project_first_project_payload(project),
+        "project": project_first_project_payload(
+            project,
+            include_counts=True,
+            crews=crews,
+        ),
         "crews": crew_payloads,
         "worker_days_off": {
             str(connection_public_ids[connection_id]): sorted(work_dates)
