@@ -135,6 +135,12 @@ class SupportConversationMember(models.Model):
 
 
 class SupportMessage(models.Model):
+    KIND_TEXT = "text"
+    KIND_CONTACT = "contact"
+    KIND_CHOICES = [
+        (KIND_TEXT, "Text"),
+        (KIND_CONTACT, "Contact"),
+    ]
     LANGUAGE_RU = "ru"
     LANGUAGE_EN = "en"
     LANGUAGE_PL = "pl"
@@ -171,6 +177,28 @@ class SupportMessage(models.Model):
         null=True,
         blank=True,
         related_name="forwards",
+    )
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=KIND_TEXT)
+    shared_contact_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shared_in_support_messages",
+    )
+    shared_contact_connection = models.ForeignKey(
+        SupportConnection,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shared_in_support_messages",
+    )
+    shared_contact_membership = models.ForeignKey(
+        OrganizationMembership,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shared_in_support_messages",
     )
     body = models.TextField(max_length=1500)
     original_language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES)

@@ -173,6 +173,287 @@ def _ensure_shift_capacity(*, shift, additional_members=0):
         )
 
 
+def _crew_required_vehicle_seats(*, crew, effective_on):
+    """Return the largest exact or planned occupancy from an effective date."""
+
+    required = 1
+    roster_dates = {effective_on}
+    roster_dates.update(
+        ProjectCrewPassenger.objects.filter(
+            crew=crew,
+            starts_on__gte=effective_on,
+        ).values_list("starts_on", flat=True)
+    )
+    for work_date in roster_dates:
+        passenger_count = ProjectCrewPassenger.objects.filter(
+            crew=crew,
+            starts_on__lte=work_date,
+        ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=work_date)).count()
+        required = max(required, passenger_count + 1)
+
+    shifts = ProjectCrewShift.objects.filter(
+        crew=crew,
+        state=ProjectCrewShift.STATE_PUBLISHED,
+        work_date__gte=effective_on,
+    ).prefetch_related("members")
+    for shift in shifts:
+        members = list(shift.members.all())
+        has_driver = any(
+            member.role == ProjectCrewShiftMember.ROLE_DRIVER for member in members
+        )
+        required = max(required, len(members) + (0 if has_driver else 1))
+    return required
+
+
+def project_crew_vehicle_swap_options(*, actor, crew, effective_on=None):
+    """Build authoritative quick-swap choices for one canonical crew."""
+
+    effective_on = effective_on or timezone.localdate()
+    organization = crew.organization
+    _require_permissions(actor=actor, organization=organization)
+    source = _resource_for_date(crew=crew, work_date=effective_on)
+    if source is None:
+        _operation_error(
+            "crew_resource_missing",
+            "The crew has no active driver and vehicle on this date.",
+        )
+    source_required = _crew_required_vehicle_seats(
+        crew=crew,
+        effective_on=effective_on,
+    )
+    active_resources = list(
+        ProjectCrewResourceAssignment.objects.filter(
+            crew__organization=organization,
+            crew__state=ProjectCrew.STATE_ACTIVE,
+            starts_on__lte=effective_on,
+        )
+        .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=effective_on))
+        .select_related(
+            "crew__project",
+            "driver_connection__candidate",
+            "vehicle",
+        )
+        .order_by("vehicle_id", "crew_id", "-starts_on", "-id")
+    )
+    resources_by_vehicle = {}
+    for resource in active_resources:
+        resources_by_vehicle.setdefault(resource.vehicle_id, []).append(resource)
+    if len(resources_by_vehicle.get(source.vehicle_id, [])) != 1:
+        _operation_error(
+            "vehicle_multiple_crews",
+            "The current vehicle is used by multiple crews and cannot be quick-swapped.",
+        )
+    legacy_vehicle_ids = set(
+        DriverVehicleAssignment.objects.filter(
+            organization=organization,
+            state__in=(
+                DriverVehicleAssignment.STATE_DRAFT,
+                DriverVehicleAssignment.STATE_PUBLISHED,
+            ),
+            starts_on__lte=effective_on,
+        )
+        .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=effective_on))
+        .values_list("vehicle_id", flat=True)
+    )
+
+    options = []
+    for vehicle in Vehicle.objects.filter(organization=organization).order_by(
+        "internal_name", "registration_identifier", "id"
+    ):
+        assignments = resources_by_vehicle.get(vehicle.id, [])
+        target = assignments[0] if len(assignments) == 1 else None
+        eligible = vehicle.is_active and vehicle.id != source.vehicle_id
+        reason = ""
+        target_required = 0
+        if vehicle.id == source.vehicle_id:
+            eligible = False
+            reason = "vehicle_already_assigned_to_crew"
+        elif not vehicle.is_active:
+            eligible = False
+            reason = "vehicle_not_available"
+        elif len(assignments) > 1:
+            eligible = False
+            reason = "vehicle_multiple_crews"
+        elif not assignments and vehicle.id in legacy_vehicle_ids:
+            eligible = False
+            reason = "legacy_driver_or_vehicle_already_assigned"
+        elif vehicle.seat_capacity < source_required:
+            eligible = False
+            reason = "vehicle_capacity_too_small"
+        elif target is not None:
+            target_required = _crew_required_vehicle_seats(
+                crew=target.crew,
+                effective_on=effective_on,
+            )
+            if source.vehicle.seat_capacity < target_required:
+                eligible = False
+                reason = "source_vehicle_capacity_too_small"
+        options.append(
+            {
+                "vehicle": vehicle,
+                "resource": target,
+                "eligible": eligible,
+                "reason": reason,
+                "required_seats": source_required,
+                "target_required_seats": target_required,
+            }
+        )
+    return source, options
+
+
+def _replace_resource_vehicle(*, resource, vehicle, effective_on, actor):
+    if resource.starts_on >= effective_on:
+        resource.vehicle = vehicle
+        resource.full_clean()
+        resource.save(update_fields=("vehicle", "updated_at"))
+        return resource
+    resource.ends_on = effective_on - timedelta(days=1)
+    resource.save(update_fields=("ends_on", "updated_at"))
+    replacement = ProjectCrewResourceAssignment(
+        crew=resource.crew,
+        driver_connection=resource.driver_connection,
+        vehicle=vehicle,
+        starts_on=effective_on,
+        created_by=actor,
+    )
+    replacement.full_clean()
+    replacement.save()
+    return replacement
+
+
+@transaction.atomic
+def swap_project_crew_vehicle(
+    *,
+    actor,
+    crew,
+    target_vehicle,
+    effective_on=None,
+    request_id=None,
+):
+    """Replace with a free vehicle or atomically swap two crew vehicles."""
+
+    effective_on = effective_on or timezone.localdate()
+    organization = SupportOrganization.objects.select_for_update().get(
+        pk=crew.organization_id
+    )
+    crew = ProjectCrew.objects.select_for_update().select_related("project").get(
+        pk=crew.pk
+    )
+    _require_permissions(actor=actor, organization=organization)
+    target_vehicle = Vehicle.objects.select_for_update().get(pk=target_vehicle.pk)
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "crew_id": str(crew.public_id),
+                "target_vehicle_id": str(target_vehicle.public_id),
+                "effective_on": effective_on.isoformat(),
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    if request_id is not None:
+        previous = AuditEvent.objects.filter(
+            organization=organization,
+            actor=actor,
+            action="project_crew.vehicle_swapped",
+            request_id=request_id,
+        ).first()
+        if previous is not None:
+            if previous.details.get("request_fingerprint") != fingerprint:
+                _operation_error(
+                    "vehicle_swap_idempotency_key_reused",
+                    "The idempotency key was already used for another vehicle swap.",
+                )
+            return previous.details
+
+    source, options = project_crew_vehicle_swap_options(
+        actor=actor,
+        crew=crew,
+        effective_on=effective_on,
+    )
+    option = next(
+        (item for item in options if item["vehicle"].id == target_vehicle.id),
+        None,
+    )
+    if option is None or not option["eligible"]:
+        reason = option["reason"] if option else "vehicle_not_available"
+        _operation_error(reason, "The selected vehicle cannot be assigned to this crew.")
+    target_resource = option["resource"]
+    source_vehicle = source.vehicle
+    target_crew = target_resource.crew if target_resource is not None else None
+
+    source_replacement = _replace_resource_vehicle(
+        resource=ProjectCrewResourceAssignment.objects.select_for_update().get(pk=source.pk),
+        vehicle=target_vehicle,
+        effective_on=effective_on,
+        actor=actor,
+    )
+    target_replacement = None
+    if target_resource is not None:
+        target_replacement = _replace_resource_vehicle(
+            resource=ProjectCrewResourceAssignment.objects.select_for_update().get(
+                pk=target_resource.pk
+            ),
+            vehicle=source_vehicle,
+            effective_on=effective_on,
+            actor=actor,
+        )
+
+    ProjectCrewShiftMember.objects.filter(
+        shift__crew=crew,
+        shift__state=ProjectCrewShift.STATE_PUBLISHED,
+        shift__work_date__gte=effective_on,
+        role=ProjectCrewShiftMember.ROLE_DRIVER,
+    ).update(vehicle=target_vehicle)
+    ProjectCrewDriverSubstitution.objects.filter(
+        crew=crew,
+        state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+        work_date__gte=effective_on,
+    ).update(vehicle=target_vehicle)
+    if target_crew is not None:
+        ProjectCrewShiftMember.objects.filter(
+            shift__crew=target_crew,
+            shift__state=ProjectCrewShift.STATE_PUBLISHED,
+            shift__work_date__gte=effective_on,
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+        ).update(vehicle=source_vehicle)
+        ProjectCrewDriverSubstitution.objects.filter(
+            crew=target_crew,
+            state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
+            work_date__gte=effective_on,
+        ).update(vehicle=source_vehicle)
+
+    details = {
+        "request_fingerprint": fingerprint,
+        "effective_on": effective_on.isoformat(),
+        "source_crew_id": str(crew.public_id),
+        "source_driver_id": str(source.driver_connection.public_id),
+        "source_vehicle_before_id": str(source_vehicle.public_id),
+        "source_vehicle_after_id": str(target_vehicle.public_id),
+        "source_resource_assignment_id": str(source_replacement.public_id),
+        "target_crew_id": str(target_crew.public_id) if target_crew else "",
+        "target_driver_id": (
+            str(target_resource.driver_connection.public_id)
+            if target_resource is not None
+            else ""
+        ),
+        "target_vehicle_before_id": str(target_vehicle.public_id),
+        "target_vehicle_after_id": str(source_vehicle.public_id) if target_crew else "",
+        "target_resource_assignment_id": (
+            str(target_replacement.public_id) if target_replacement else ""
+        ),
+    }
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="project_crew.vehicle_swapped",
+        target=crew,
+        details=details,
+        request_id=request_id,
+    )
+    return details
+
+
 def _sync_member_worker_calendar(*, member, actor):
     """Mirror one project-first crew-day member into the worker calendar."""
 

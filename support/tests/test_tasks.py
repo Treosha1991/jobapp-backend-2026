@@ -336,6 +336,7 @@ class SupportTaskAndAnnouncementTests(TestCase):
         self.assertTrue(summary.data["permissions"]["pipeline_review"])
         self.assertEqual(summary.data["counts"]["workers"], 2)
         self.assertEqual(summary.data["counts"]["pending_applications"], 0)
+        self.assertEqual(summary.data["counts"]["onboarding_candidates"], 0)
 
         directory = self.owner_client.get(
             f"{self.organization_url}/connections/?q=Oleh"

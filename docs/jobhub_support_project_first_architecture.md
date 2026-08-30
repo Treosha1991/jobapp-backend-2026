@@ -379,3 +379,18 @@ without changing the project-first write commands or permission model. All
 new static labels remain available in RU/EN/PL/UK. This is a presentation-only
 pass: server validation, idempotency and canonical project/crew state remain
 unchanged. Real-device visual and interaction acceptance is still required.
+
+## Stage 18: confirmed fleet swap and internal contact card
+
+The canonical crew resource API exposes one preview-and-confirm operation for
+replacing a crew vehicle with a free vehicle or atomically swapping vehicles
+between two crews. The service locks the organization, resources and vehicles,
+checks both crews' permanent and future published occupancy, updates future
+driver/substitution vehicle snapshots, records one idempotent audit event and
+notifies the affected drivers. Drivers and passengers remain in their crews.
+
+Support messages now allow a structured internal contact card. It contains an
+organization-scoped worker connection or staff membership reference, never a
+phone number, e-mail address or chat history. A permitted staff member chooses
+the contact; opening the card performs a fresh access check and creates or
+restores the exact private staff/worker or worker/worker conversation.

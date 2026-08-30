@@ -1,4 +1,5 @@
 from importlib import import_module
+from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from support.models import (
     ProjectCrew,
     ProjectCrewResourceAssignment,
     SupportApplication,
+    SupportAccessGrant,
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
@@ -440,3 +442,111 @@ class StaffChatDirectoryTests(TestCase):
         self.assertEqual(worker["project_crews"][0]["project_name"], "Packing project")
         self.assertEqual(worker["project_crews"][0]["crew_name"], "Morning crew")
         self.assertEqual(worker["project_crews"][0]["role"], "driver")
+
+    def test_manager_shares_contact_and_worker_opens_private_peer_chat(self):
+        second_worker = User.objects.create_user(
+            username="chat-directory-second-worker",
+            first_name="Second",
+            last_name="Driver",
+            email="chat-directory-second-worker@example.com",
+            password="password",
+        )
+        second_vacancy = SupportVacancy.objects.create(
+            organization=self.organization,
+            internal_title="Second warehouse worker",
+            created_by=self.owner,
+        )
+        second_application = SupportApplication.objects.create(
+            vacancy=second_vacancy,
+            candidate=second_worker,
+            revision=1,
+            preferred_language="ru",
+            consent_version="support-application-v1",
+            consented_at=timezone.now(),
+            status=SupportApplication.STATUS_APPROVED,
+        )
+        second_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=second_vacancy,
+            application=second_application,
+            candidate=second_worker,
+            stage=SupportConnection.STAGE_ACTIVE_WORKER,
+        )
+        for worker in (self.worker, second_worker):
+            SupportAccessGrant.objects.create(
+                user=worker,
+                organization=self.organization,
+                granted_by=self.owner,
+                ends_at=timezone.now() + timedelta(days=7),
+                reason=SupportAccessGrant.REASON_TECHNICAL,
+            )
+
+        opened = self.client.post(
+            f"{self.organization_url}/chat-directory/open/",
+            {"target_type": "worker", "target_id": str(self.connection.public_id)},
+            format="json",
+        )
+        self.assertEqual(opened.status_code, 201, opened.data)
+        conversation_id = opened.data["conversation"]["id"]
+        options = self.client.get(
+            f"/api/v2/support/conversations/{conversation_id}/contact-options/"
+        )
+        self.assertEqual(options.status_code, 200, options.data)
+        self.assertTrue(
+            any(
+                item["target_id"] == str(second_connection.public_id)
+                for item in options.data["results"]
+            )
+        )
+        shared = self.client.post(
+            f"/api/v2/support/conversations/{conversation_id}/messages/share-contact/",
+            {
+                "target_type": "worker",
+                "target_id": str(second_connection.public_id),
+                "original_language": "ru",
+            },
+            format="json",
+        )
+        self.assertEqual(shared.status_code, 201, shared.data)
+        self.assertEqual(shared.data["message"]["kind"], "contact")
+        self.assertEqual(
+            shared.data["message"]["shared_contact"]["display_name"],
+            "Second Driver",
+        )
+
+        outsider = User.objects.create_user(
+            username="chat-directory-contact-outsider",
+            email="chat-directory-contact-outsider@example.com",
+            password="password",
+        )
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(outsider)
+        outsider_options = outsider_client.get(
+            f"/api/v2/support/conversations/{conversation_id}/contact-options/"
+        )
+        outsider_open = outsider_client.post(
+            f"/api/v2/support/conversations/{conversation_id}/messages/"
+            f"{shared.data['message']['id']}/open-contact/"
+        )
+        self.assertEqual(outsider_options.status_code, 404, outsider_options.data)
+        self.assertEqual(outsider_open.status_code, 404, outsider_open.data)
+
+        worker_client = APIClient()
+        worker_client.force_authenticate(self.worker)
+        direct = worker_client.post(
+            f"/api/v2/support/conversations/{conversation_id}/messages/"
+            f"{shared.data['message']['id']}/open-contact/"
+        )
+        self.assertEqual(direct.status_code, 201, direct.data)
+        direct_conversation = SupportConversation.objects.get(
+            public_id=direct.data["conversation"]["id"]
+        )
+        self.assertEqual(direct_conversation.kind, SupportConversation.KIND_DRIVER)
+        self.assertEqual(
+            set(
+                direct_conversation.members.filter(left_at__isnull=True).values_list(
+                    "user_id", flat=True
+                )
+            ),
+            {self.worker.id, second_worker.id},
+        )

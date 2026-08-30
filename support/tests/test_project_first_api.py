@@ -12,6 +12,7 @@ from support.models import (
     HousingPlace,
     HousingRoom,
     HousingSite,
+    NotificationOutbox,
     OrganizationMembership,
     PermissionGrant,
     ProjectCrew,
@@ -176,6 +177,7 @@ class ProjectFirstReadAPITests(TestCase):
         self.driver_replace_url = f"{self.crew_detail_url}driver/replace/"
         self.driver_absence_url = f"{self.crew_detail_url}driver/absence/"
         self.driver_substitute_url = f"{self.crew_detail_url}driver/substitute/"
+        self.vehicle_swap_url = f"{self.crew_detail_url}vehicle/swap/"
 
     def _connection(self, suffix, first_name, *, has_driving_license=False):
         candidate = User.objects.create_user(
@@ -253,6 +255,207 @@ class ProjectFirstReadAPITests(TestCase):
             "Driver Worker",
         )
         self.assertEqual(vehicle["current_driver"]["project"], "Food project")
+        self.assertEqual(vehicle["current_driver"]["crew"], "Crew North")
+        self.assertEqual(
+            vehicle["current_driver"]["crew_id"],
+            str(self.crew.public_id),
+        )
+
+    @patch("support.services.notifications.dispatch_outbox_entry")
+    def test_vehicle_swap_is_atomic_and_notifies_both_drivers(self, _dispatch):
+        today = timezone.localdate()
+        second_driver = self._connection(
+            "swap-driver",
+            "Second Driver",
+            has_driving_license=True,
+        )
+        second_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Panda",
+            registration_identifier="SWAP-02",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        second_crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=self.project,
+            internal_name="Crew South",
+            created_by=self.owner,
+        )
+        ProjectCrewResourceAssignment.objects.create(
+            crew=second_crew,
+            driver_connection=second_driver,
+            vehicle=second_vehicle,
+            starts_on=today,
+            created_by=self.owner,
+        )
+        preview = self.client.get(
+            f"{self.vehicle_swap_url}?effective_on={today.isoformat()}"
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        option = next(
+            item
+            for item in preview.data["results"]
+            if item["vehicle"]["id"] == str(second_vehicle.public_id)
+        )
+        self.assertTrue(option["eligible"])
+        self.assertEqual(option["assignment"]["crew_id"], str(second_crew.public_id))
+
+        request_id = "287d192b-41bb-46e2-ab52-35b663935b56"
+        payload = {
+            "target_vehicle_id": str(second_vehicle.public_id),
+            "effective_on": today.isoformat(),
+        }
+        response = self.client.post(
+            self.vehicle_swap_url,
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=request_id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data["drivers"]), 2)
+        self.assertEqual(
+            ProjectCrewResourceAssignment.objects.get(
+                crew=self.crew,
+                ends_on__isnull=True,
+            ).vehicle,
+            second_vehicle,
+        )
+        self.assertEqual(
+            ProjectCrewResourceAssignment.objects.get(
+                crew=second_crew,
+                ends_on__isnull=True,
+            ).vehicle,
+            self.vehicle,
+        )
+        self.assertEqual(
+            NotificationOutbox.objects.filter(
+                notification_code="transport.vehicle_swapped"
+            ).count(),
+            2,
+        )
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                action="project_crew.vehicle_swapped",
+                request_id=request_id,
+            ).exists()
+        )
+
+        replay = self.client.post(
+            self.vehicle_swap_url,
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=request_id,
+        )
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(
+            NotificationOutbox.objects.filter(
+                notification_code="transport.vehicle_swapped"
+            ).count(),
+            2,
+        )
+
+    def test_vehicle_swap_option_explains_insufficient_capacity(self):
+        ProjectCrewPassenger.objects.create(
+            crew=self.crew,
+            connection=self.substitute,
+            starts_on=timezone.localdate(),
+            created_by=self.owner,
+        )
+        small_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Two seater",
+            registration_identifier="SMALL-02",
+            seat_capacity=2,
+            created_by=self.owner,
+        )
+        response = self.client.get(self.vehicle_swap_url)
+        self.assertEqual(response.status_code, 200, response.data)
+        option = next(
+            item
+            for item in response.data["results"]
+            if item["vehicle"]["id"] == str(small_vehicle.public_id)
+        )
+        self.assertFalse(option["eligible"])
+        self.assertEqual(option["reason"], "vehicle_capacity_too_small")
+
+    @patch("support.services.notifications.dispatch_outbox_entry")
+    def test_vehicle_swap_to_free_vehicle_releases_old_vehicle(self, _dispatch):
+        today = timezone.localdate()
+        free_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Free van",
+            registration_identifier="FREE-09",
+            seat_capacity=9,
+            created_by=self.owner,
+        )
+        response = self.client.post(
+            self.vehicle_swap_url,
+            {
+                "target_vehicle_id": str(free_vehicle.public_id),
+                "effective_on": today.isoformat(),
+            },
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="09599787-40d7-4264-9798-4a5290372ab1",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["target_crew"])
+        self.assertEqual(len(response.data["drivers"]), 1)
+        self.assertFalse(
+            ProjectCrewResourceAssignment.objects.filter(
+                vehicle=self.vehicle,
+                ends_on__isnull=True,
+            ).exists()
+        )
+        self.assertEqual(
+            ProjectCrewResourceAssignment.objects.get(
+                crew=self.crew,
+                ends_on__isnull=True,
+            ).vehicle,
+            free_vehicle,
+        )
+
+    def test_vehicle_swap_rejects_reused_key_with_another_target(self):
+        today = timezone.localdate()
+        first = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="First free van",
+            registration_identifier="FREE-10",
+            seat_capacity=9,
+            created_by=self.owner,
+        )
+        second = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Second free van",
+            registration_identifier="FREE-11",
+            seat_capacity=9,
+            created_by=self.owner,
+        )
+        request_id = "5fe7b556-ec33-46bd-882c-bb698bb35d21"
+        accepted = self.client.post(
+            self.vehicle_swap_url,
+            {
+                "target_vehicle_id": str(first.public_id),
+                "effective_on": today.isoformat(),
+            },
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=request_id,
+        )
+        rejected = self.client.post(
+            self.vehicle_swap_url,
+            {
+                "target_vehicle_id": str(second.public_id),
+                "effective_on": today.isoformat(),
+            },
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=request_id,
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(
+            rejected.data["code"],
+            "vehicle_swap_idempotency_key_reused",
+        )
 
     def test_worker_summary_shows_upcoming_project_and_published_housing(self):
         future_date = timezone.localdate() + timedelta(days=2)

@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from support.models import (
     DriverVehicleAssignment,
     HousingAssignment,
+    HousingPlace,
     HousingRoom,
     HousingSite,
     NotificationOutbox,
@@ -216,6 +217,51 @@ class SupportOperationsTests(TestCase):
         self.assertEqual(checked_out.status_code, 200, checked_out.data)
         assignment = HousingAssignment.objects.get(public_id=assignment_data["id"])
         self.assertEqual(assignment.check_out_at, check_out_at)
+
+    def test_housing_available_workers_follow_selected_check_in_date(self):
+        _, _, place = self._create_housing_place(capacity=1)
+        place_model = HousingPlace.objects.get(public_id=place["id"])
+        existing_check_in = (timezone.now() + timedelta(days=2)).replace(
+            microsecond=0
+        )
+        existing_check_out = existing_check_in + timedelta(days=5)
+        HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=self.connection,
+            place=place_model,
+            check_in_at=existing_check_in,
+            check_out_at=existing_check_out,
+            state=HousingAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        url = f"{self.base_url}/housing-assignments/available-workers/"
+
+        overlapping = self.owner_client.get(
+            url,
+            {"check_in_at": (existing_check_in - timedelta(days=1)).isoformat()},
+        )
+        after_check_out = self.owner_client.get(
+            url,
+            {"check_in_at": existing_check_out.isoformat()},
+        )
+        missing_date = self.owner_client.get(url)
+
+        self.assertEqual(overlapping.status_code, 200, overlapping.data)
+        self.assertEqual(
+            [item["id"] for item in overlapping.data["results"]],
+            [str(self.passenger_connection.public_id)],
+        )
+        self.assertEqual(after_check_out.status_code, 200, after_check_out.data)
+        self.assertEqual(
+            {item["id"] for item in after_check_out.data["results"]},
+            {
+                str(self.connection.public_id),
+                str(self.passenger_connection.public_id),
+            },
+        )
+        self.assertEqual(missing_date.status_code, 400, missing_date.data)
 
     def test_housing_is_drafted_before_publish_and_room_capacity_is_enforced(self):
         _, room, place = self._create_housing_place(capacity=1)

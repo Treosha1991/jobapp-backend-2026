@@ -1,118 +1,159 @@
-# JobHub Support: technical debt register
+# JobHub Support: реестр технического долга
 
-This register contains known engineering compromises that are intentionally
-kept out of the critical path. A debt item is not complete until its exit
-criteria are verified. New project-first work must update this file when it
-adds, reduces or removes debt.
+**Статус:** `ACTIVE`
+**Проверено:** 26.08.2026
+**Область:** backend + mobile, ветка `feature/jobhub-support-staging`
 
-## Priority definitions
+Этот файл содержит известный `technical debt` («технический долг»): осознанные
+инженерные ограничения, которые пока остаются в системе. Он не является списком
+идей и не заменяет [единый источник истины](JOBHUB_SUPPORT_SOURCE_OF_TRUTH.md).
 
-- `P0`: blocks a safe release or can expose/corrupt tenant data.
-- `P1`: must be removed before the affected feature is enabled in production.
-- `P2`: contained limitation that may be scheduled after the pilot.
-- `P3`: maintainability or performance improvement with no current product
-  blocker.
+Пункт можно закрыть только после выполнения его `exit criteria` («критериев
+закрытия») и фиксации проверки. Если новый код увеличивает или уменьшает долг,
+этот реестр обновляется в той же задаче.
 
-## Open items
+## Приоритеты
 
-### TD-001 — Project-first write API is incomplete (`P1`)
+- `P0` — блокирует безопасный выпуск или создаёт риск утечки/повреждения данных;
+- `P1` — должен быть устранён до включения затронутой функции в production;
+- `P2` — допустим в контролируемом пилоте, но требует запланированного исправления;
+- `P3` — улучшение поддержки или производительности без текущего блокера.
 
-- **Area:** Django API / future Flutter staff workspace.
-- **Current containment:** project and crew create/update/archive,
-  selected-date shift replace/release, passenger roster apply/remove and
-  permanent driver/vehicle-pair replacement endpoints now reuse the canonical
-  transactional services. Retryable multi-record writes require an
-  idempotency key; writes have stable localized error codes and
-  permission/rollback tests. Crew PATCH is deliberately rename-only;
-  permanent driver replacement is a dedicated effective-dated operation.
-  Driver absence and substitution mutations still run through the tested
-  Django web forms and canonical services. Flutter must not reproduce these
-  remaining mutations locally.
-- **Exit criteria:** versioned create/update/delete endpoints for projects,
-  crews, selected-date shifts, passengers, driver replacement, absence and
-  substitution; stable error codes; idempotency for retryable multi-record
-  writes; permission and rollback tests for every family.
+## Открытые пункты
 
-### TD-002 — Legacy operation APIs coexist with project-first models (`P1`)
+### TD-001 — Legacy API сосуществует с project-first моделью (`P1`)
 
-- **Area:** Django API and compatibility surface.
-- **Current containment:** legacy routes are explicitly compatibility-only;
-  the employer project workspace and new read API use `ProjectCrew*` as the
-  source of truth.
-- **Exit criteria:** confirm no supported client needs legacy writes, migrate
-  required historical reads, deprecate with telemetry, then remove legacy
-  routes and models in a separate migration plan.
+- **Область:** Django API, модели операций и старые Flutter-экраны.
+- **Состояние:** новые проекты, экипажи, смены, пассажиры и водительские
+  исключения работают через `/api/v2/support/.../project-first/...`. Старые
+  `ShiftTemplate`, `ScheduledShiftBatch`, `TransportRoute`, `RouteStop`
+  и постоянные назначения сохраняются ради совместимости с прежними сборками.
+- **Риск:** новая функция в старой модели создаст две конкурирующие истины
+  графика или состава экипажа.
+- **Сдерживание:** AGENTS-файлы и API contract запрещают новые зависимости от
+  legacy write flow; основной web/mobile manager UI использует project-first.
+- **Критерии закрытия:** подтвердить по telemetry/usage audit («аудиту
+  использования»), что поддерживаемые сборки не вызывают старые write routes;
+  подготовить миграцию исторических чтений, период deprecation («вывода из
+  эксплуатации») и отдельное удаление моделей/маршрутов.
 
-### TD-003 — Crew-scoped staff read access is not available (`P2`)
+### TD-002 — Нет узкой области доступа сотрудника на отдельный проект/экипаж (`P2`)
 
-- **Area:** authorization.
-- **Current containment:** whole-project crew snapshots are limited to the
-  owner or an organization manager with unrestricted worker access plus both
-  `schedule.manage` and `transport.manage`. A scoped manager receives `404`.
-- **Exit criteria:** define crew/project scope grants, filter every nested
-  worker/resource/shift record by that scope, and add positive and negative
-  cross-scope contract tests.
+- **Область:** permissions («права доступа») и worker scope.
+- **Состояние:** полная project-first сводка доступна владельцу либо сотруднику
+  с необходимыми правами и допустимой областью работников. Отдельного гранта
+  только на один проект или экипаж пока нет.
+- **Риск:** невозможно дать координатору минимальный доступ только к одному
+  объекту без более широкой области работников.
+- **Критерии закрытия:** определить project/crew scope grants, применить их ко
+  всем вложенным работникам, сменам и ресурсам, добавить положительные и
+  отрицательные cross-scope tests («тесты пересечения областей»).
 
-### TD-004 — Project list summary is not paginated or aggregate-optimized (`P3`)
+### TD-003 — Списки пилотного кабинета не везде пагинированы (`P3`)
 
-- **Area:** database performance.
-- **Current containment:** the pilot has a small number of projects and the
-  query is prefetch-based, avoiding per-row lazy loading.
-- **Exit criteria:** introduce pagination and database aggregates after
-  measuring representative pilot data; add a query-budget test.
+- **Область:** запросы БД и web/mobile списки проектов, работников и чатов.
+- **Состояние:** пилотные объёмы обслуживаются prefetch/select-related
+  запросами, но часть списков загружается одним набором.
+- **Риск:** рост фирмы увеличит время ответа, объём JSON и память клиента.
+- **Критерии закрытия:** получить репрезентативный объём пилота, ввести
+  pagination («постраничную загрузку») и агрегаты, добавить query-budget и
+  client paging tests.
 
-### TD-005 — Mobile codebase has pre-existing analyzer warnings (`P2`)
+### TD-004 — Flutter analyzer содержит ранее накопленные предупреждения (`P2`)
 
-- **Area:** Flutter maintainability.
-- **Current containment:** changed files and targeted tests must remain clean;
-  the warnings are not treated as regressions caused by Support work.
-- **Exit criteria:** classify warnings, remove obsolete/deprecated usage in
-  bounded batches, and make the full analyzer warning-free in CI.
+- **Область:** поддерживаемость mobile-кода.
+- **Состояние:** изменяемые файлы не должны добавлять новые предупреждения, но
+  полный репозиторий ещё не принят как analyzer-clean baseline («чистая базовая
+  линия анализатора»).
+- **Критерии закрытия:** сохранить отчёт `flutter analyze`, классифицировать
+  предупреждения, устранять их ограниченными пакетами и сделать отсутствие
+  предупреждений обязательным CI-gate.
 
-### TD-006 — Notification shade cleanup lacks real-device proof (`P1`)
+### TD-005 — Очистка push из системной шторки не доказана на реальных устройствах (`P1`)
 
-- **Area:** iOS/Android push notifications.
-- **Current containment:** target-aware read reconciliation exists in the
-  contract and automated logic tests; no production claim is made.
-- **Exit criteria:** verify on a real iPhone and Android device that opening a
-  destination manually or through the push removes only matching delivered
-  notifications, then record OS/app versions and evidence in the acceptance
-  matrix.
+- **Область:** iOS/Android push notifications.
+- **Состояние:** target-aware read reconciliation («сверка прочтения по цели»)
+  реализована на уровне контракта и приложения, но автоматический тест не может
+  подтвердить поведение системной шторки.
+- **Критерии закрытия:** на настоящем iPhone и Android проверить открытие через
+  push и вручную, удаление только связанных уведомлений и сохранение остальных;
+  записать версии ОС, сборки и результат в acceptance matrix.
 
-### TD-007 — Dynamic private-message translation provider is undecided (`P1`)
+### TD-006 — Не утверждён провайдер перевода личных сообщений (`P1`)
 
-- **Area:** privacy and localization.
-- **Current containment:** original text remains available; private content is
-  not sent to an unapproved external provider. Static UI copy follows the
-  RU/EN/PL/UK UTF-8 rule.
-- **Exit criteria:** approve provider and data-processing terms, document
-  retention and regional processing, implement opt-in/error behavior, and
-  test all four languages.
+- **Область:** приватность, локализация и внешняя обработка текста.
+- **Состояние:** оригинал сообщения сохраняется; личный текст не отправляется
+  непроверенному поставщику. Статический интерфейс поддерживает RU/EN/PL/UK.
+- **Критерии закрытия:** утвердить поставщика и data-processing terms («условия
+  обработки данных»), регион и срок хранения; реализовать согласие, отказ и
+  безопасную ошибку; проверить четыре языка.
 
-### TD-008 — Mobile staff project-first UI needs device acceptance (`P2`)
+### TD-007 — Недостаточно автоматических mobile-тестов project-first команд (`P1`)
 
-- **Area:** Flutter product surface.
-- **Current containment:** the Flutter staff workspace reads canonical
-  project/crew/calendar state and uses only implemented versioned write
-  families for project/crew lifecycle, shifts, passengers and driver
-  operations. Project/crew create and edit forms consume server-provided
-  tenant-scoped creation options; the server remains authoritative for every
-  permission, availability and conflict check. The first staff visual pass
-  groups the organization, attention queues and management tools and aligns
-  project cards without changing the public JobHub shell. The second pass
-  gives the project workspace a compact project/crew/resource/calendar/
-  passenger hierarchy and visibly separates shifts without a driver from
-  absences and substitutions. Changed files are analyzer-clean and have
-  targeted model/contract tests. No
-  production-readiness claim is made without real-device visual and
-  interaction evidence.
-- **Exit criteria:** complete real iPhone and Android acceptance for list,
-  create/edit, calendar and crew operations; record evidence and OS/app
-  versions; cover remaining enabled write families; then enable the staff
-  workspace only through the approved release switch.
+- **Область:** Flutter API client и manager screens.
+- **Состояние:** модели и часть представления тестируются, но многоэкранные
+  команды смен, пассажиров, отсутствий, подмены и reconciliation («сверки
+  ответа сервера») ещё не имеют полного набора client tests.
+- **Риск:** backend корректно откатит конфликт, а mobile может показать
+  устаревшее локальное состояние или потерять точную ошибку.
+- **Критерии закрытия:** тесты успешного пути, permission denial, конфликта,
+  rollback, повторного запроса и замены локального состояния каноническим
+  ответом для каждого включённого write family.
 
-## Closed items
+### TD-008 — Автоматический retry должен сохранять исходный Idempotency-Key (`P1`)
 
-Move an item here only with the closing change, tests/evidence and date. Do not
-delete historical debt entries: they explain why compatibility code or a
-migration exists.
+- **Область:** Flutter transport layer («сетевой слой»).
+- **Состояние:** ключ создаётся для каждого вызова команды. Автоматического
+  повтора после неопределённого timeout пока нет.
+- **Риск:** будущий прозрачный retry с новым ключом способен повторить
+  многострочную операцию.
+- **Сдерживание:** приложение не должно автоматически повторять изменяющий
+  запрос после неопределённого результата.
+- **Критерии закрытия:** request context хранит исходный ключ до окончательного
+  ответа; exact retry использует тот же ключ; тесты покрывают timeout, повтор с
+  тем же body и отказ при повторе ключа с другим body.
+
+### TD-009 — Driver exception DELETE использует JSON body (`P2`)
+
+- **Область:** API совместимость с proxy/intermediary.
+- **Состояние:** отмена отсутствия и подмены передаёт `work_dates` в теле DELETE.
+- **Риск:** отдельные посредники могут удалить тело DELETE-запроса.
+- **Критерии закрытия:** либо подтвердить используемую инфраструктуру end-to-end,
+  либо в следующей версии заменить на action endpoint и сохранить переходную
+  совместимость.
+
+### TD-010 — Не все старые web/API операции имеют единый формат точной ошибки (`P1`)
+
+- **Область:** error contract («контракт ошибок»).
+- **Состояние:** project-first API возвращает стабильные `code`, `message`,
+  `field_errors` и конфликты. В отдельных compatibility и web-form сценариях
+  ещё возможен общий текст «Не удалось выполнить действие».
+- **Критерии закрытия:** инвентаризировать все доступные пользователю mutation,
+  убрать необработанные 500, назначить стабильные коды и локализованные
+  сообщения, добавить отрицательные тесты прав/дат/конфликтов.
+
+### TD-011 — Mobile staff workspace требует полного device acceptance (`P1`)
+
+- **Область:** iPhone/Android, адаптивность и четыре языка.
+- **Состояние:** страницы работников, проектов/экипажей, заявок/оформления,
+  автопарка, жилья и чатов реализованы, но автоматические тесты не доказывают
+  отсутствие overflow, смешанных языков и ошибок жестов на устройстве.
+- **Критерии закрытия:** пройти согласованный staff journey на iPhone и Android
+  в RU/EN/PL/UK, проверить маленький экран, длинные имена/адреса, календарь,
+  модальные окна и все разрешённые/запрещённые состояния; приложить evidence.
+
+## Закрытые пункты
+
+### TD-C001 — Project-first write API incomplete (`закрыт 26.08.2026`)
+
+- **Результат:** реализованы versioned endpoints проектов и экипажей,
+  replace/release смен, apply/remove пассажиров, постоянной замены водителя,
+  отсутствия и временной подмены.
+- **Защита:** tenant/permission checks, транзакции, idempotency для составных
+  операций, стабильные ошибки и rollback tests.
+- **Доказательство:** `support.tests.test_project_first_api` и общий Support
+  regression suite; точный сетевой контракт находится в
+  `mobile/docs/jobhub-support-1.0.5/24-mobile-api-contract.md`.
+
+Закрытые пункты не удаляются: они объясняют, почему в системе остаются
+совместимые модели, тесты или миграционный код.

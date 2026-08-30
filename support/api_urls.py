@@ -16,6 +16,7 @@ from .api_views import (
     HousingAssignmentCancelAPIView,
     HousingAssignmentCheckOutAPIView,
     HousingAssignmentCreateAPIView,
+    HousingAvailableWorkersAPIView,
     HousingAssignmentAssignAPIView,
     HousingAssignmentPublishAPIView,
     HousingPlaceCreateAPIView,
@@ -55,6 +56,7 @@ from .api_views import (
     OrganizationProjectFirstCrewDetailAPIView,
     OrganizationProjectFirstCrewDriverAbsenceAPIView,
     OrganizationProjectFirstCrewDriverReplaceAPIView,
+    OrganizationProjectFirstCrewVehicleSwapAPIView,
     OrganizationProjectFirstCrewDriverSubstituteAPIView,
     OrganizationProjectFirstCrewListAPIView,
     OrganizationProjectFirstCrewPassengerApplyAPIView,
@@ -84,10 +86,13 @@ from .api_views import (
     SupportConnectionOpenManagerConversationAPIView,
     SupportConnectionTransitionAPIView,
     SupportConversationMessageCreateAPIView,
+    SupportConversationContactMessageCreateAPIView,
+    SupportConversationContactOptionsAPIView,
     SupportConversationGroupPushPreferenceAPIView,
     SupportConversationMessageListAPIView,
     SupportConversationReadAPIView,
     SupportMessageTranslationAPIView,
+    SupportMessageSharedContactOpenAPIView,
     SupportNotificationReadAPIView,
     SupportOrganizationCreateAPIView,
     SupportOrganizationActivateAPIView,
@@ -192,6 +197,12 @@ urlpatterns = [
         "<uuid:crew_public_id>/driver/replace/",
         OrganizationProjectFirstCrewDriverReplaceAPIView.as_view(),
         name="support-project-first-crew-driver-replace",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/project-first/crews/"
+        "<uuid:crew_public_id>/vehicle/swap/",
+        OrganizationProjectFirstCrewVehicleSwapAPIView.as_view(),
+        name="support-project-first-crew-vehicle-swap",
     ),
     path(
         "organizations/<uuid:organization_public_id>/project-first/crews/"
@@ -385,6 +396,11 @@ urlpatterns = [
         "organizations/<uuid:organization_public_id>/operations/housing-assignments/",
         HousingAssignmentCreateAPIView.as_view(),
         name="support-housing-assignment-create",
+    ),
+    path(
+        "organizations/<uuid:organization_public_id>/operations/housing-assignments/available-workers/",
+        HousingAvailableWorkersAPIView.as_view(),
+        name="support-housing-assignment-available-workers",
     ),
     path(
         "organizations/<uuid:organization_public_id>/operations/housing-assignments/assign/",
@@ -729,6 +745,22 @@ urlpatterns = [
         "conversations/<uuid:conversation_public_id>/messages/send/",
         SupportConversationMessageCreateAPIView.as_view(),
         name="support-conversation-message-send",
+    ),
+    path(
+        "conversations/<uuid:conversation_public_id>/contact-options/",
+        SupportConversationContactOptionsAPIView.as_view(),
+        name="support-conversation-contact-options",
+    ),
+    path(
+        "conversations/<uuid:conversation_public_id>/messages/share-contact/",
+        SupportConversationContactMessageCreateAPIView.as_view(),
+        name="support-conversation-contact-send",
+    ),
+    path(
+        "conversations/<uuid:conversation_public_id>/messages/"
+        "<uuid:message_public_id>/open-contact/",
+        SupportMessageSharedContactOpenAPIView.as_view(),
+        name="support-message-shared-contact-open",
     ),
     path(
         "conversations/<uuid:conversation_public_id>/read/",

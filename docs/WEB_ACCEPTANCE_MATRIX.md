@@ -1,37 +1,72 @@
-# JobHub Support: employer web acceptance matrix
+# JobHub Support: матрица приёмки web и связанного mobile-клиента
 
-**As of:** 2026-08-18
-Statuses: `PASS` is covered by automated regression tests; `MANUAL` still
-requires browser/device confirmation; `BLOCKED` requires a product or external
-dependency.
+**Статус:** `ACTIVE`
 
-| Priority | Scenario | Status | Exit check |
-|---|---|---|---|
-| P0 | Organization isolation and direct-URL protection | PASS | A user cannot read or mutate another organization. |
-| P0 | Project/crew/calendar writes are atomic | PASS | Conflicts roll the whole operation back with an explicit error. |
-| P0 | Driver/vehicle/passenger date conflicts | PASS | Cross-project driver overlap is rejected; selected passenger dates are deterministic. |
-| P0 | Worker calendar mirrors project crew days | PASS | Adding, replacing or releasing a crew day produces the same worker view. |
-| P0 | Candidate remains outside Workers during onboarding | PASS | Onboarding, chat and document requests work without opening the worker operations page. |
-| P0 | Support document upload is unavailable | PASS | Only request, verified e-mail, account code and status are stored. |
-| P0 | Main production isolation | MANUAL | Staging feature flags and database are confirmed separate before every pilot deploy. |
-| P1 | Projects, workers and fleet live search | PASS | Search works without exposing another organization. |
-| P1 | Housing occupancy and overlapping dates | PASS | Places distinguish draft/current occupancy and explain conflicts. |
-| P1 | Weekly time review and CSV | PASS | Minutes and decimal hours agree; edits retain revision history. |
-| P1 | Chat unread/read reconciliation | PASS | Opening the conversation clears the server unread state. |
-| P1 | Browser visual layout in supported widths | MANUAL | Header, modals, tables and calendars have no double scroll or clipped controls. |
-| P1 | Push removal after manual navigation | MANUAL | Real iPhone and Android tests clear the correct delivered notification. |
-| P1 | RU/EN/PL/UK visual and encoding pass | MANUAL | No `???`, replacement glyphs or missing action labels in any supported language. |
-| P1 | Dynamic message translation | BLOCKED | Select and configure an approved translation provider and privacy terms. |
-| P2 | Tasks/announcements employer UI | BLOCKED | Dedicated web workflow and acceptance rules are still required. |
-| P2 | Employer audit viewer | BLOCKED | Decide visible event scope, retention and export rules. |
-| P2 | Commercial subscription lifecycle | BLOCKED | Store billing, server receipt validation, legal copy and support process are required. |
+**Проверено:** 26.08.2026
 
-## Gate before mobile manager development
+**Среда:** staging, ветка `feature/jobhub-support-staging`
 
-1. Full backend `support` regression suite is green.
-2. Project-first mobile API contract is reviewed and versioned.
-3. Mobile manager writes do not call legacy route/template operations.
-4. Error responses use stable codes and field/conflict details instead of a
-   generic failure banner.
-5. At least one complete staging scenario is retained as fixture/seed data:
-   candidate -> onboarding -> worker -> housing -> project crew -> time entry.
+Статусы:
+
+- `AUTO PASS` — сценарий покрыт и подтверждён автоматическими тестами;
+- `MANUAL` — требуется browser/device verification («проверка в браузере или
+  на устройстве»);
+- `PARTIAL` — основа существует, но покрытие или пользовательский путь не
+  завершены;
+- `BLOCKED` — нужна внешняя зависимость или отдельное продуктовое решение.
+
+Проверка 26.08.2026:
+
+- backend `support`: **245/245 tests passed**;
+- mobile: **14/14 tests passed**;
+- production, новый deploy и TestFlight-сборка в рамках проверки не запускались.
+
+## Матрица
+
+| Приоритет | Сценарий | Статус | Доказательство / критерий выхода |
+| --- | --- | --- | --- |
+| P0 | Изоляция организаций и защита прямых URL | AUTO PASS | Серверные permission/scope tests не позволяют читать или менять чужую организацию. |
+| P0 | Атомарность project/crew/calendar writes | AUTO PASS | Конфликт откатывает всю операцию; частично изменённый экипаж не сохраняется. |
+| P0 | Конфликты водителя, автомобиля и пассажира по датам | AUTO PASS | Пересечение водителя отклоняется; область изменения пассажира определяется явно. |
+| P0 | Календарь работника совпадает с опубликованными днями экипажа | AUTO PASS | Добавление, замена и освобождение дня дают одинаковое серверное состояние проекта и работника. |
+| P0 | Отсутствие, подмена и постоянная смена водителя | AUTO PASS | Основной водитель, подменный водитель, автомобиль и пассажиры изменяются только по правилам выбранных дат. |
+| P0 | Кандидат остаётся вне списка работников во время оформления | AUTO PASS | Анкета, уточнение, чат и документы работают до перевода на рабочий этап. |
+| P0 | Документы не загружаются в Support | AUTO PASS | Хранятся запрос, статус, verified e-mail и код; загрузка паспорта/визы/банковского файла отсутствует. |
+| P0 | Разделение staging и production | MANUAL | Перед каждым пилотом проверить Render service, БД, feature flags и `API_BASE_URL` сборки. |
+| P1 | Поиск и сортировки работников, проектов, автопарка и чатов | AUTO PASS | Backend query/scope tests проходят; визуальную сортировку длинных списков дополнительно проверить вручную. |
+| P1 | Жильё и пересечения заселения | AUTO PASS | Свободное, черновое и занятое место различаются; конфликт дат объясняется без молчаливой замены. |
+| P1 | Недельный табель, минуты, decimal hours и CSV | AUTO PASS | Итоги совпадают, корректировки сохраняют revision history («историю версий»). |
+| P1 | Срочный запрос «не выйду сегодня» | AUTO PASS | Запрос получает срочную семантику; push менеджеру требует проверки на устройстве. |
+| P1 | Личный чат пользователя с назначенным сотрудником | AUTO PASS | Диалоги разделены по участникам, открытие обновляет server unread state. |
+| P1 | Read reconciliation и очистка системного push | MANUAL | Открытие раздела вручную и по push должно удалить только соответствующее уведомление на iPhone и Android. |
+| P1 | Candidate → onboarding → worker → housing → crew → time entry | MANUAL | Пройти одним набором staging-данных в web и TestFlight без ручной правки БД. |
+| P1 | Web/mobile parity для проекта, экипажа и календаря | MANUAL | После каждой mobile-команды web и mobile показывают одинаковые дни и участников. |
+| P1 | Адаптивная web-вёрстка | MANUAL | На поддерживаемых ширинах нет двойного scroll, обрезанных кнопок, перекрытий sticky header и недоступных modal actions. |
+| P1 | RU/EN/PL/UK и UTF-8 | MANUAL | Нет `???`, replacement glyph, сырых ключей и смешанных языков в анкетах, документах, календаре и чате. |
+| P1 | Mobile project-first command tests | PARTIAL | Backend команды покрыты; Flutter имеет 14 тестов, но нужны API/screen tests для shift/passenger/driver reconciliation. |
+| P1 | Ошибки API со стабильным `code` | PARTIAL | Project-first использует коды; оставшиеся generic error paths нужно инвентаризировать и заменить. |
+| P1 | Повтор команды после timeout | PARTIAL | Backend idempotency покрыта; автоматический Flutter retry должен повторять исходный ключ, а не создавать новый. |
+| P2 | Задачи и объявления работодателя | PARTIAL | API/mobile foundation существует; завершённого web-workflow и полной приёмки нет. |
+| P2 | Просмотр audit log работодателем | BLOCKED | Нужны границы видимых событий, retention и правила экспорта. |
+| P2 | Динамический перевод личных сообщений | BLOCKED | Нужны утверждённый провайдер, договор и privacy terms. |
+| P2 | Коммерческий lifecycle подписки | BLOCKED | Нужны Store billing, receipt validation, юридические тексты и процесс поддержки платежей. |
+
+## Gate перед следующим TestFlight/pilot
+
+Обязательный release gate («условия допуска к сборке/пилоту»):
+
+1. Backend Support regression suite зелёный.
+2. Mobile tests зелёные и новая правка не увеличивает analyzer backlog.
+3. Сборка использует staging `API_BASE_URL`, а production не затронут.
+4. Пройден один полный путь кандидата и один полный путь менеджера.
+5. На реальном iPhone проверены push → раздел → read → удаление уведомления.
+6. Проверены RU/EN/PL/UK на экранах, изменённых в сборке.
+7. Проверены web/mobile parity и rollback хотя бы для одной конфликтной операции.
+8. Зафиксированы build number, commit, тестовые аккаунты и известные ограничения.
+
+## Что не означает `AUTO PASS`
+
+`AUTO PASS` не подтверждает удобство интерфейса, юридическую готовность,
+доставку push операционной системой, обработку сборки Apple или отсутствие
+ошибок production-конфигурации. Эти пункты закрываются только соответствующей
+ручной или внешней проверкой.

@@ -656,6 +656,13 @@ class SupportMessageCreateSerializer(StrictInputSerializer):
         return normalized
 
 
+class SupportContactMessageCreateSerializer(StrictInputSerializer):
+    target_type = serializers.ChoiceField(choices=("worker", "staff"))
+    target_id = serializers.UUIDField()
+    original_language = serializers.ChoiceField(choices=("ru", "en", "pl", "uk"))
+    client_message_id = serializers.UUIDField(required=False, default=uuid.uuid4)
+
+
 class HousingSiteCreateSerializer(StrictInputSerializer):
     internal_name = serializers.CharField(max_length=160)
     country_code = serializers.CharField(max_length=2)
@@ -899,6 +906,11 @@ class ProjectCrewDriverReplaceSerializer(StrictInputSerializer):
     effective_on = serializers.DateField(required=False, default=timezone.localdate)
 
 
+class ProjectCrewVehicleSwapSerializer(StrictInputSerializer):
+    target_vehicle_id = serializers.UUIDField()
+    effective_on = serializers.DateField(required=False, default=timezone.localdate)
+
+
 class ProjectCrewDriverAbsenceSerializer(StrictInputSerializer):
     """Validate selected dates for marking or cancelling driver absence."""
 
@@ -952,6 +964,10 @@ class HousingAssignmentCreateSerializer(StrictInputSerializer):
         if attrs["check_out_at"] is not None and attrs["check_out_at"] <= attrs["check_in_at"]:
             raise serializers.ValidationError({"check_out_at": "period_end_must_be_after_start"})
         return attrs
+
+
+class HousingAvailableWorkersQuerySerializer(StrictInputSerializer):
+    check_in_at = serializers.DateTimeField()
 
 
 class HousingAssignmentCheckOutSerializer(StrictInputSerializer):

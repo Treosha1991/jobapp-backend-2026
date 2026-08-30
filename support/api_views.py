@@ -115,6 +115,7 @@ from .serializers import (
     DriverVehicleAssignmentCreateSerializer,
     HousingAssignmentCreateSerializer,
     HousingAssignmentCheckOutSerializer,
+    HousingAvailableWorkersQuerySerializer,
     HousingPlaceCreateSerializer,
     HousingRoomCreateSerializer,
     HousingSiteCreateSerializer,
@@ -124,6 +125,7 @@ from .serializers import (
     ProjectCrewCreateSerializer,
     ProjectCrewDriverAbsenceSerializer,
     ProjectCrewDriverReplaceSerializer,
+    ProjectCrewVehicleSwapSerializer,
     ProjectCrewDriverSubstituteSerializer,
     ProjectCrewPassengerWriteSerializer,
     ProjectCrewShiftReleaseSerializer,
@@ -132,6 +134,7 @@ from .serializers import (
     ProjectUpdateSerializer,
     SupportApplicationCreateSerializer,
     SupportMessageCreateSerializer,
+    SupportContactMessageCreateSerializer,
     SupportOrganizationCreateSerializer,
     SupportVacancyCreateSerializer,
     TemporarySupportAccessGrantSerializer,
@@ -163,7 +166,10 @@ from .services.conversations import (
     open_manager_conversation,
     open_manager_conversation_for_staff,
     open_staff_conversation,
+    contact_share_options,
+    open_shared_contact_conversation,
     require_conversation_access,
+    send_contact_message,
     send_text_message,
 )
 from .services.entitlements import support_access_snapshot_for
@@ -258,12 +264,14 @@ from .services.project_crews import (
     publish_project_crew_shifts,
     mark_project_crew_driver_absence,
     project_crew_substitute_driver_candidates,
+    project_crew_vehicle_swap_options,
     release_project_crew_shifts,
     release_project_crew_member_days,
     mark_worker_schedule_days_off,
     restore_worker_schedule_days_off,
     remove_project_crew_passenger,
     replace_project_crew_driver,
+    swap_project_crew_vehicle,
     update_project_crew,
 )
 from .services.pipeline import (
@@ -292,6 +300,25 @@ _CALENDAR_MARK_REQUEST_TYPES = frozenset(
         WorkerRequest.TYPE_UNABLE_TODAY,
     }
 )
+
+
+def _candidate_queue_counts(organization):
+    """Return the two candidate queues shown in staff web and mobile UI."""
+
+    return {
+        "pending_applications": SupportApplication.objects.filter(
+            vacancy__organization=organization,
+            status__in=(
+                SupportApplication.STATUS_SUBMITTED,
+                SupportApplication.STATUS_UNDER_REVIEW,
+            ),
+        ).count(),
+        "onboarding_candidates": SupportConnection.objects.filter(
+            organization=organization,
+            is_archived=False,
+            stage=SupportConnection.STAGE_DOCUMENTS,
+        ).count(),
+    }
 
 
 def _organization_payload(organization, membership=None):
@@ -531,12 +558,44 @@ def _conversation_payload(conversation, *, viewer):
             if conversation.kind == SupportConversation.KIND_GROUP and viewer_member is not None
             else None
         ),
+        "can_share_contacts": bool(
+            viewer_member is not None
+            and viewer_member.role == SupportConversationMember.ROLE_STAFF
+            and has_permission(
+                user=viewer,
+                organization=conversation.organization,
+                permission_code=CHAT_MANAGE,
+            )
+        ),
     }
 
 
 def _message_payload(message, *, viewer):
+    shared_contact = None
+    if message.kind == SupportMessage.KIND_CONTACT and message.shared_contact_user_id:
+        shared_contact = {
+            "target_type": (
+                "worker" if message.shared_contact_connection_id else "staff"
+            ),
+            "target_id": (
+                str(message.shared_contact_connection.public_id)
+                if message.shared_contact_connection_id
+                else str(message.shared_contact_membership.public_id)
+                if message.shared_contact_membership_id
+                else None
+            ),
+            "display_name": _user_display_name(message.shared_contact_user),
+            "subtitle": (
+                message.shared_contact_connection.vacancy.internal_title
+                if message.shared_contact_connection_id
+                else message.shared_contact_membership.display_role
+                if message.shared_contact_membership_id
+                else ""
+            ),
+        }
     return {
         "id": str(message.public_id),
+        "kind": message.kind,
         "body": "" if message.deleted_at else message.body,
         "original_language": message.original_language,
         "is_mine": message.sender_id == viewer.id,
@@ -550,6 +609,7 @@ def _message_payload(message, *, viewer):
             if message.forwarded_from_id and message.forwarded_from.sender
             else ""
         ),
+        "shared_contact": shared_contact,
     }
 
 
@@ -697,6 +757,13 @@ _PROJECT_FIRST_ERROR_MESSAGES = {
         "driver_project_vehicle_locked": "Водитель уже работает в другом проекте и должен сохранить закреплённый автомобиль.",
         "driver_or_vehicle_already_assigned": "Водитель или автомобиль уже закреплён за другим активным экипажем.",
         "legacy_driver_or_vehicle_already_assigned": "Автомобиль уже закреплён за другим водителем в автопарке.",
+        "vehicle_swap_idempotency_key_required": "Для обмена автомобилей нужен заголовок Idempotency-Key.",
+        "vehicle_swap_idempotency_key_invalid": "Idempotency-Key обмена автомобилей должен быть UUID.",
+        "vehicle_swap_idempotency_key_reused": "Этот Idempotency-Key уже использован для другого обмена автомобилей.",
+        "vehicle_already_assigned_to_crew": "Этот автомобиль уже назначен выбранному экипажу.",
+        "vehicle_multiple_crews": "Автомобиль используется в нескольких экипажах и недоступен для быстрого обмена.",
+        "vehicle_capacity_too_small": "В выбранном автомобиле недостаточно мест для этого экипажа.",
+        "source_vehicle_capacity_too_small": "В текущем автомобиле недостаточно мест для второго экипажа.",
         "unsupported_support_field": "Запрос содержит неподдерживаемое поле.",
     },
     "en": {
@@ -759,6 +826,13 @@ _PROJECT_FIRST_ERROR_MESSAGES = {
         "driver_project_vehicle_locked": "The driver already works in another project and must keep the assigned vehicle.",
         "driver_or_vehicle_already_assigned": "The driver or vehicle is already assigned to another active crew.",
         "legacy_driver_or_vehicle_already_assigned": "The vehicle is already assigned to another fleet driver.",
+        "vehicle_swap_idempotency_key_required": "The Idempotency-Key header is required to swap vehicles.",
+        "vehicle_swap_idempotency_key_invalid": "The vehicle-swap Idempotency-Key must be a UUID.",
+        "vehicle_swap_idempotency_key_reused": "This Idempotency-Key was already used for another vehicle swap.",
+        "vehicle_already_assigned_to_crew": "This vehicle is already assigned to the selected crew.",
+        "vehicle_multiple_crews": "This vehicle is used by multiple crews and is unavailable for quick swap.",
+        "vehicle_capacity_too_small": "The selected vehicle has too few seats for this crew.",
+        "source_vehicle_capacity_too_small": "The current vehicle has too few seats for the other crew.",
         "unsupported_support_field": "The request contains an unsupported field.",
     },
     "pl": {
@@ -821,6 +895,13 @@ _PROJECT_FIRST_ERROR_MESSAGES = {
         "driver_project_vehicle_locked": "Kierowca pracuje już w innym projekcie i musi zachować przypisany samochód.",
         "driver_or_vehicle_already_assigned": "Kierowca lub samochód jest już przypisany do innej aktywnej ekipy.",
         "legacy_driver_or_vehicle_already_assigned": "Samochód jest już przypisany do innego kierowcy we flocie.",
+        "vehicle_swap_idempotency_key_required": "Do wymiany pojazdów wymagany jest nagłówek Idempotency-Key.",
+        "vehicle_swap_idempotency_key_invalid": "Idempotency-Key wymiany pojazdów musi być identyfikatorem UUID.",
+        "vehicle_swap_idempotency_key_reused": "Ten Idempotency-Key został już użyty do innej wymiany pojazdów.",
+        "vehicle_already_assigned_to_crew": "Ten pojazd jest już przypisany do wybranej ekipy.",
+        "vehicle_multiple_crews": "Pojazd jest używany przez kilka ekip i nie jest dostępny do szybkiej wymiany.",
+        "vehicle_capacity_too_small": "Wybrany pojazd ma za mało miejsc dla tej ekipy.",
+        "source_vehicle_capacity_too_small": "Obecny pojazd ma za mało miejsc dla drugiej ekipy.",
         "unsupported_support_field": "Żądanie zawiera nieobsługiwane pole.",
     },
     "uk": {
@@ -883,6 +964,13 @@ _PROJECT_FIRST_ERROR_MESSAGES = {
         "driver_project_vehicle_locked": "Водій уже працює в іншому проєкті й має зберегти закріплений автомобіль.",
         "driver_or_vehicle_already_assigned": "Водія або автомобіль уже закріплено за іншим активним екіпажем.",
         "legacy_driver_or_vehicle_already_assigned": "Автомобіль уже закріплено за іншим водієм в автопарку.",
+        "vehicle_swap_idempotency_key_required": "Для обміну автомобілів потрібен заголовок Idempotency-Key.",
+        "vehicle_swap_idempotency_key_invalid": "Idempotency-Key обміну автомобілів має бути UUID.",
+        "vehicle_swap_idempotency_key_reused": "Цей Idempotency-Key уже використано для іншого обміну автомобілів.",
+        "vehicle_already_assigned_to_crew": "Цей автомобіль уже призначений вибраному екіпажу.",
+        "vehicle_multiple_crews": "Автомобіль використовується в кількох екіпажах і недоступний для швидкого обміну.",
+        "vehicle_capacity_too_small": "У вибраному автомобілі недостатньо місць для цього екіпажу.",
+        "source_vehicle_capacity_too_small": "У поточному автомобілі недостатньо місць для другого екіпажу.",
         "unsupported_support_field": "Запит містить непідтримуване поле.",
     },
 }
@@ -1108,6 +1196,14 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
             organization=organization,
             permission_code=HOUSING_MANAGE,
         )
+        candidate_queue_counts = (
+            _candidate_queue_counts(organization)
+            if may_review_pipeline
+            else {
+                "pending_applications": 0,
+                "onboarding_candidates": 0,
+            }
+        )
         return Response(
             {
                 "organization": _organization_payload(organization, membership),
@@ -1130,17 +1226,7 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
                 },
                 "counts": {
                     "workers": allowed_connections.count() if may_view_workers else 0,
-                    "pending_applications": (
-                        SupportApplication.objects.filter(
-                            vacancy__organization=organization,
-                            status__in=(
-                                SupportApplication.STATUS_SUBMITTED,
-                                SupportApplication.STATUS_UNDER_REVIEW,
-                            ),
-                        ).count()
-                        if may_review_pipeline
-                        else 0
-                    ),
+                    **candidate_queue_counts,
                     "open_requests": (
                         WorkerRequest.objects.filter(
                             organization=organization,
@@ -1815,6 +1901,182 @@ class OrganizationProjectFirstCrewDriverReplaceAPIView(
                     crew=crew,
                     work_dates=affected_dates,
                 ),
+            }
+        )
+
+
+class OrganizationProjectFirstCrewVehicleSwapAPIView(
+    SupportFeatureAPIView,
+    ProjectFirstCrewShiftWriteMixin,
+):
+    """Preview and confirm an atomic vehicle replacement or reciprocal swap."""
+
+    def get_request_id(self, request):
+        raw_request_id = (request.headers.get("Idempotency-Key") or "").strip()
+        if not raw_request_id:
+            return None, _project_first_write_error(
+                request,
+                code="vehicle_swap_idempotency_key_required",
+                field_errors={
+                    "Idempotency-Key": ["vehicle_swap_idempotency_key_required"]
+                },
+            )
+        try:
+            return uuid.UUID(raw_request_id), None
+        except (TypeError, ValueError, AttributeError):
+            return None, _project_first_write_error(
+                request,
+                code="vehicle_swap_idempotency_key_invalid",
+                field_errors={
+                    "Idempotency-Key": ["vehicle_swap_idempotency_key_invalid"]
+                },
+            )
+
+    def _option_payload(self, item):
+        resource = item["resource"]
+        return {
+            "vehicle": {
+                "id": str(item["vehicle"].public_id),
+                "internal_name": item["vehicle"].internal_name,
+                "registration_identifier": item["vehicle"].registration_identifier,
+                "seat_capacity": item["vehicle"].seat_capacity,
+            },
+            "eligible": item["eligible"],
+            "reason": item["reason"],
+            "required_seats": item["required_seats"],
+            "target_required_seats": item["target_required_seats"],
+            "assignment": (
+                {
+                    "crew_id": str(resource.crew.public_id),
+                    "crew_name": resource.crew.internal_name,
+                    "project_id": str(resource.crew.project.public_id),
+                    "project_name": resource.crew.project.worker_visible_name
+                    or resource.crew.project.internal_name,
+                    "driver_id": str(resource.driver_connection.public_id),
+                    "driver_name": _user_display_name(
+                        resource.driver_connection.candidate
+                    ),
+                }
+                if resource is not None
+                else None
+            ),
+        }
+
+    def get(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        effective_on = parse_date(str(request.query_params.get("effective_on") or ""))
+        if effective_on is None:
+            effective_on = timezone.localdate()
+        try:
+            source, options = project_crew_vehicle_swap_options(
+                actor=request.user,
+                crew=crew,
+                effective_on=effective_on,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+        return Response(
+            {
+                "crew": project_first_crew_payload(crew),
+                "effective_on": effective_on.isoformat(),
+                "source_vehicle_id": str(source.vehicle.public_id),
+                "required_seats": next(
+                    (item["required_seats"] for item in options), 1
+                ),
+                "results": [self._option_payload(item) for item in options],
+            }
+        )
+
+    def post(self, request, organization_public_id, crew_public_id):
+        organization, _ = self.get_project_first_organization(
+            user=request.user,
+            organization_public_id=organization_public_id,
+        )
+        crew = self.get_active_crew(
+            organization=organization,
+            crew_public_id=crew_public_id,
+        )
+        request_id, error_response = self.get_request_id(request)
+        if error_response is not None:
+            return error_response
+        serializer = ProjectCrewVehicleSwapSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        data = serializer.validated_data
+        target_vehicle = get_object_or_404(
+            Vehicle,
+            organization=organization,
+            public_id=data["target_vehicle_id"],
+        )
+        try:
+            details = swap_project_crew_vehicle(
+                actor=request.user,
+                crew=crew,
+                target_vehicle=target_vehicle,
+                effective_on=data["effective_on"],
+                request_id=request_id,
+            )
+        except ValidationError as error:
+            return _project_first_service_error(request, error.detail)
+
+        source_driver = get_object_or_404(
+            SupportConnection.objects.select_related("candidate"),
+            organization=organization,
+            public_id=details["source_driver_id"],
+        )
+        driver_targets = [(source_driver, crew)]
+        if details.get("target_driver_id"):
+            target_driver = get_object_or_404(
+                SupportConnection.objects.select_related("candidate"),
+                organization=organization,
+                public_id=details["target_driver_id"],
+            )
+            target_crew = ProjectCrew.objects.get(
+                organization=organization,
+                public_id=details["target_crew_id"],
+            )
+            driver_targets.append((target_driver, target_crew))
+        else:
+            target_crew = None
+        for connection, notification_crew in driver_targets:
+            enqueue_support_notification(
+                organization=organization,
+                recipient=connection.candidate,
+                notification_code="transport.vehicle_swapped",
+                target_kind="crew",
+                target_public_id=notification_crew.public_id,
+                target_key=f"support:crew:{notification_crew.public_id}",
+                collapse_key=f"support:crew:{notification_crew.public_id}",
+                dedupe_key=(
+                    f"transport.vehicle_swapped:{request_id}:{connection.public_id}"
+                ),
+                push_requested=True,
+            )
+        return Response(
+            {
+                "swap": details,
+                "crew": project_first_crew_payload(crew),
+                "target_crew": (
+                    project_first_crew_payload(target_crew) if target_crew else None
+                ),
+                "drivers": [
+                    {
+                        "id": str(connection.public_id),
+                        "display_name": _user_display_name(connection.candidate),
+                        "chat_target": {
+                            "target_type": "worker",
+                            "target_id": str(connection.public_id),
+                        },
+                    }
+                    for connection, _ in driver_targets
+                ],
             }
         )
 
@@ -4010,6 +4272,7 @@ class SupportApplicationQueueAPIView(SupportFeatureAPIView, OrganizationAccessMi
                     for item in applications
                 ],
                 "processing_results": processing_results,
+                "counts": _candidate_queue_counts(organization),
                 "permissions": {"document_request": may_request_documents},
             }
         )
@@ -4210,6 +4473,9 @@ class SupportConversationMessageListAPIView(SupportFeatureAPIView):
         messages = conversation.messages.select_related(
             "sender",
             "forwarded_from__sender",
+            "shared_contact_user",
+            "shared_contact_connection__vacancy",
+            "shared_contact_membership",
         ).all()
         return Response(
             {
@@ -4241,6 +4507,101 @@ class SupportConversationMessageCreateAPIView(SupportFeatureAPIView):
         )
         return Response(
             {"created": created, "message": _message_payload(message, viewer=request.user)},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class SupportConversationContactOptionsAPIView(SupportFeatureAPIView):
+    def get(self, request, conversation_public_id):
+        conversation = get_object_or_404(
+            SupportConversation.objects.filter(
+                members__user=request.user,
+                members__left_at__isnull=True,
+            )
+            .select_related("organization")
+            .distinct(),
+            public_id=conversation_public_id,
+            state=SupportConversation.STATE_ACTIVE,
+        )
+        return Response(
+            {
+                "results": contact_share_options(
+                    sender=request.user,
+                    conversation=conversation,
+                )
+            }
+        )
+
+
+class SupportConversationContactMessageCreateAPIView(SupportFeatureAPIView):
+    def post(self, request, conversation_public_id):
+        conversation = get_object_or_404(
+            SupportConversation.objects.filter(
+                members__user=request.user,
+                members__left_at__isnull=True,
+            )
+            .select_related("organization")
+            .distinct(),
+            public_id=conversation_public_id,
+            state=SupportConversation.STATE_ACTIVE,
+        )
+        serializer = SupportContactMessageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message, created = send_contact_message(
+            sender=request.user,
+            conversation=conversation,
+            **serializer.validated_data,
+        )
+        message = SupportMessage.objects.select_related(
+            "sender",
+            "shared_contact_user",
+            "shared_contact_connection__vacancy",
+            "shared_contact_membership",
+        ).get(pk=message.pk)
+        return Response(
+            {"created": created, "message": _message_payload(message, viewer=request.user)},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class SupportMessageSharedContactOpenAPIView(SupportFeatureAPIView):
+    def post(self, request, conversation_public_id, message_public_id):
+        conversation = get_object_or_404(
+            SupportConversation.objects.filter(
+                members__user=request.user,
+                members__left_at__isnull=True,
+            )
+            .select_related("organization")
+            .distinct(),
+            public_id=conversation_public_id,
+            state=SupportConversation.STATE_ACTIVE,
+        )
+        message = get_object_or_404(
+            SupportMessage.objects.select_related(
+                "conversation__organization",
+                "shared_contact_user",
+                "shared_contact_connection__candidate",
+                "shared_contact_membership__user",
+            ),
+            conversation=conversation,
+            public_id=message_public_id,
+            deleted_at__isnull=True,
+        )
+        target_conversation, created = open_shared_contact_conversation(
+            actor=request.user,
+            message=message,
+        )
+        target_conversation = SupportConversation.objects.prefetch_related(
+            "members__user"
+        ).get(pk=target_conversation.pk)
+        return Response(
+            {
+                "created": created,
+                "conversation": _conversation_payload(
+                    target_conversation,
+                    viewer=request.user,
+                ),
+            },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
@@ -6623,6 +6984,9 @@ class VehicleListCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
                     ),
                     "project": resource.crew.project.worker_visible_name
                     or resource.crew.project.internal_name,
+                    "project_id": str(resource.crew.project.public_id),
+                    "crew": resource.crew.internal_name,
+                    "crew_id": str(resource.crew.public_id),
                 },
             )
 
@@ -6645,6 +7009,9 @@ class VehicleListCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
                         resource.driver_connection.candidate
                     ),
                     "project": None,
+                    "project_id": None,
+                    "crew": None,
+                    "crew_id": None,
                 },
             )
 
@@ -6686,6 +7053,73 @@ class HousingAssignmentCreateAPIView(SupportFeatureAPIView, OrganizationAccessMi
         place = get_object_or_404(HousingPlace.objects.select_related("room__site"), room__site__organization=organization, public_id=data.pop("place_id"))
         assignment = create_housing_assignment(actor=request.user, organization=organization, connection=connection, place=place, **data)
         return Response({"housing_assignment": _operation_assignment_payload(assignment)}, status=status.HTTP_201_CREATED)
+
+
+class HousingAvailableWorkersAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
+    """List scoped workers who have no published housing from check-in onward."""
+
+    def get(self, request, organization_public_id):
+        organization = _operation_organization(
+            self,
+            request=request,
+            organization_public_id=organization_public_id,
+            permission_code=HOUSING_MANAGE,
+        )
+        serializer = HousingAvailableWorkersQuerySerializer(
+            data=request.query_params
+        )
+        serializer.is_valid(raise_exception=True)
+        check_in_at = serializer.validated_data["check_in_at"]
+        unavailable_connection_ids = (
+            HousingAssignment.objects.filter(
+                organization=organization,
+                state=HousingAssignment.STATE_PUBLISHED,
+            )
+            .filter(
+                Q(check_out_at__isnull=True) | Q(check_out_at__gt=check_in_at)
+            )
+            .values_list("connection_id", flat=True)
+        )
+        connections = (
+            worker_connection_queryset_for(
+                user=request.user,
+                organization=organization,
+                queryset=SupportConnection.objects.filter(
+                    organization=organization,
+                    is_archived=False,
+                    stage__in=(
+                        SupportConnection.STAGE_COORDINATOR,
+                        SupportConnection.STAGE_ACTIVE_WORKER,
+                    ),
+                ),
+            )
+            .exclude(id__in=unavailable_connection_ids)
+            .select_related("candidate")
+            .order_by(
+                "candidate__first_name",
+                "candidate__last_name",
+                "candidate__username",
+                "id",
+            )
+        )
+        return Response(
+            {
+                "check_in_at": check_in_at,
+                "results": [
+                    {
+                        "id": str(connection.public_id),
+                        "stage": connection.stage,
+                        "candidate": {
+                            "id": str(connection.candidate_id),
+                            "display_name": _user_display_name(
+                                connection.candidate
+                            ),
+                        },
+                    }
+                    for connection in connections
+                ],
+            }
+        )
 
 
 class HousingAssignmentAssignAPIView(SupportFeatureAPIView, OrganizationAccessMixin):

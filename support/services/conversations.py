@@ -14,7 +14,12 @@ from support.models import (
     SupportMessage,
 )
 from support.permission_codes import CHAT_MANAGE
-from support.permissions import active_membership_for, has_permission
+from support.permissions import (
+    active_membership_for,
+    has_permission,
+    require_worker_connection_access,
+    worker_connection_queryset_for,
+)
 
 from .audit import record_audit_event
 from .entitlements import support_access_snapshot_for
@@ -405,6 +410,10 @@ def send_text_message(
     client_message_id,
     reply_to=None,
     forwarded_from=None,
+    kind=SupportMessage.KIND_TEXT,
+    shared_contact_user=None,
+    shared_contact_connection=None,
+    shared_contact_membership=None,
 ):
     with transaction.atomic():
         conversation = SupportConversation.objects.select_for_update().get(pk=conversation.pk)
@@ -433,6 +442,10 @@ def send_text_message(
                 "original_language": original_language,
                 "reply_to": reply_to,
                 "forwarded_from": forwarded_from,
+                "kind": kind,
+                "shared_contact_user": shared_contact_user,
+                "shared_contact_connection": shared_contact_connection,
+                "shared_contact_membership": shared_contact_membership,
             },
         )
         if not created and message.sender_id != sender.id:
@@ -470,6 +483,284 @@ def send_text_message(
                     ),
                 )
     return message, created
+
+
+def contact_share_options(*, sender, conversation):
+    """Return tenant-scoped people a staff sender may share as a contact."""
+
+    member = require_conversation_access(user=sender, conversation=conversation)
+    organization = conversation.organization
+    if (
+        member.role != SupportConversationMember.ROLE_STAFF
+        or not has_permission(
+            user=sender,
+            organization=organization,
+            permission_code=CHAT_MANAGE,
+        )
+    ):
+        raise PermissionDenied("support_contact_sharing_not_available")
+
+    options = []
+    workers = worker_connection_queryset_for(
+        user=sender,
+        organization=organization,
+        queryset=SupportConnection.objects.filter(is_archived=False).exclude(
+            stage=SupportConnection.STAGE_CLOSED
+        ),
+    ).select_related("candidate", "vacancy")
+    seen_users = set()
+    for connection in workers.order_by("candidate__first_name", "candidate__last_name", "id"):
+        if connection.candidate_id == sender.id or connection.candidate_id in seen_users:
+            continue
+        seen_users.add(connection.candidate_id)
+        options.append(
+            {
+                "target_type": "worker",
+                "target_id": str(connection.public_id),
+                "display_name": (
+                    connection.candidate.get_full_name().strip()
+                    or connection.candidate.username
+                    or connection.candidate.email
+                ),
+                "subtitle": connection.vacancy.internal_title,
+            }
+        )
+    memberships = OrganizationMembership.objects.filter(
+        organization=organization,
+        state=OrganizationMembership.STATE_ACTIVE,
+    ).select_related("user")
+    for membership in memberships.order_by("user__first_name", "user__last_name", "id"):
+        if membership.user_id == sender.id:
+            continue
+        options.append(
+            {
+                "target_type": "staff",
+                "target_id": str(membership.public_id),
+                "display_name": (
+                    membership.user.get_full_name().strip()
+                    or membership.user.username
+                    or membership.user.email
+                ),
+                "subtitle": membership.display_role,
+            }
+        )
+    return options
+
+
+def send_contact_message(
+    *,
+    sender,
+    conversation,
+    target_type,
+    target_id,
+    original_language,
+    client_message_id,
+):
+    """Send an internal profile card without exposing phone or e-mail data."""
+
+    options = contact_share_options(sender=sender, conversation=conversation)
+    selected = next(
+        (
+            option
+            for option in options
+            if option["target_type"] == target_type
+            and option["target_id"] == str(target_id)
+        ),
+        None,
+    )
+    if selected is None:
+        raise PermissionDenied("support_contact_share_target_not_available")
+    if target_type == "worker":
+        connection = SupportConnection.objects.select_related("candidate").get(
+            organization=conversation.organization,
+            public_id=target_id,
+            is_archived=False,
+        )
+        membership = None
+        shared_user = connection.candidate
+    else:
+        membership = OrganizationMembership.objects.select_related("user").get(
+            organization=conversation.organization,
+            public_id=target_id,
+            state=OrganizationMembership.STATE_ACTIVE,
+        )
+        connection = None
+        shared_user = membership.user
+    message, created = send_text_message(
+        sender=sender,
+        conversation=conversation,
+        body="",
+        original_language=original_language,
+        client_message_id=client_message_id,
+        kind=SupportMessage.KIND_CONTACT,
+        shared_contact_user=shared_user,
+        shared_contact_connection=connection,
+        shared_contact_membership=membership,
+    )
+    if created:
+        record_audit_event(
+            organization=conversation.organization,
+            actor=sender,
+            action="conversation.contact_shared",
+            target=message,
+            details={
+                "target_type": target_type,
+                "target_id": selected["target_id"],
+            },
+        )
+    return message, created
+
+
+def _open_worker_peer_conversation(*, actor, target_connection):
+    organization = target_connection.organization
+    actor_connection = (
+        SupportConnection.objects.filter(
+            organization=organization,
+            candidate=actor,
+            is_archived=False,
+        )
+        .exclude(stage=SupportConnection.STAGE_CLOSED)
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+    if (
+        actor_connection is None
+        or actor.id == target_connection.candidate_id
+        or support_access_snapshot_for(actor)["state"] != "active"
+        or support_access_snapshot_for(target_connection.candidate)["state"] != "active"
+    ):
+        raise PermissionDenied("support_shared_contact_not_available")
+    candidates = list(
+        SupportConversation.objects.select_for_update()
+        .filter(
+            organization=organization,
+            connection__isnull=True,
+            kind=SupportConversation.KIND_DRIVER,
+            members__user=actor,
+        )
+        .prefetch_related("members")
+        .distinct()
+    )
+    conversation = next(
+        (
+            item
+            for item in candidates
+            if {
+                member.user_id for member in item.members.all() if member.left_at is None
+            }
+            == {actor.id, target_connection.candidate_id}
+        ),
+        None,
+    )
+    created = conversation is None
+    if conversation is None:
+        conversation = SupportConversation.objects.create(
+            organization=organization,
+            kind=SupportConversation.KIND_DRIVER,
+            created_by=actor,
+        )
+        SupportConversationMember.objects.bulk_create(
+            [
+                SupportConversationMember(
+                    conversation=conversation,
+                    user=actor,
+                    role=SupportConversationMember.ROLE_WORKER,
+                ),
+                SupportConversationMember(
+                    conversation=conversation,
+                    user=target_connection.candidate,
+                    role=SupportConversationMember.ROLE_WORKER,
+                ),
+            ]
+        )
+    else:
+        updates = []
+        if conversation.state != SupportConversation.STATE_ACTIVE:
+            conversation.state = SupportConversation.STATE_ACTIVE
+            updates.append("state")
+        if conversation.archived_at is not None:
+            conversation.archived_at = None
+            updates.append("archived_at")
+        if updates:
+            conversation.save(update_fields=[*updates, "updated_at"])
+        for user in (actor, target_connection.candidate):
+            member = conversation.members.get(user=user)
+            if member.left_at is not None:
+                member.left_at = None
+                member.save(update_fields=("left_at",))
+    return conversation, created
+
+
+@transaction.atomic
+def open_shared_contact_conversation(*, actor, message):
+    source_conversation = message.conversation
+    require_conversation_access(user=actor, conversation=source_conversation)
+    if (
+        message.kind != SupportMessage.KIND_CONTACT
+        or message.shared_contact_user_id is None
+        or message.shared_contact_user_id == actor.id
+    ):
+        raise ValidationError({"contact": "support_shared_contact_not_available"})
+    organization = source_conversation.organization
+    actor_membership = active_membership_for(user=actor, organization=organization)
+    if actor_membership is not None:
+        if message.shared_contact_connection_id is not None:
+            require_worker_connection_access(
+                user=actor,
+                organization=organization,
+                connection=message.shared_contact_connection,
+            )
+            conversation, created = open_manager_conversation_for_staff(
+                actor=actor,
+                connection=message.shared_contact_connection,
+            )
+        elif message.shared_contact_membership_id is not None:
+            conversation, created = open_staff_conversation(
+                actor=actor,
+                target_membership=message.shared_contact_membership,
+            )
+        else:
+            raise PermissionDenied("support_shared_contact_not_available")
+    else:
+        actor_connection = (
+            SupportConnection.objects.filter(
+                organization=organization,
+                candidate=actor,
+                is_archived=False,
+            )
+            .exclude(stage=SupportConnection.STAGE_CLOSED)
+            .first()
+        )
+        if actor_connection is None:
+            raise PermissionDenied("support_shared_contact_not_available")
+        if message.shared_contact_connection_id is not None:
+            conversation, created = _open_worker_peer_conversation(
+                actor=actor,
+                target_connection=message.shared_contact_connection,
+            )
+        elif message.shared_contact_membership_id is not None:
+            target_membership = message.shared_contact_membership
+            if not target_membership.is_active or not has_permission(
+                user=target_membership.user,
+                organization=organization,
+                permission_code=CHAT_MANAGE,
+            ):
+                raise PermissionDenied("support_shared_contact_not_available")
+            conversation, created = _open_private_manager_conversation(
+                connection=actor_connection,
+                manager_membership=target_membership,
+                created_by=actor,
+            )
+        else:
+            raise PermissionDenied("support_shared_contact_not_available")
+    record_audit_event(
+        organization=organization,
+        actor=actor,
+        action="conversation.shared_contact_opened",
+        target=message,
+        details={"conversation_id": str(conversation.public_id), "created": created},
+    )
+    return conversation, created
 
 
 def forward_text_message(*, sender, source_message, recipient, client_message_id):

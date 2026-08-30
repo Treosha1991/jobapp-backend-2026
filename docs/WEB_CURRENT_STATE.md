@@ -1,71 +1,108 @@
-# JobHub Support: current employer web state
+# JobHub Support: текущее состояние web-кабинета
 
-**As of:** 2026-08-18
-**Environment:** staging-only, protected by `SUPPORT_FEATURE_ENABLED` and
-`SUPPORT_PROJECT_FIRST_ENABLED`. Production JobHub is not switched by these
-notes or by ordinary staging deploys.
+**Статус:** `ACTIVE`
 
-## Canonical operating model
+**Проверено:** 26.08.2026
 
-The employer web cabinet now follows one source of truth:
+**Среда:** staging, ветка `feature/jobhub-support-staging`
 
-`project -> crew -> calendar day -> driver + vehicle + passengers`
+**Feature flags:** `SUPPORT_FEATURE_ENABLED=1`,
+`SUPPORT_PROJECT_FIRST_ENABLED=1`
 
-- The project page is the main editor for crews, dates and staffing.
-- A crew has a stable identity. Driver, vehicle and passengers are resolved for
-  concrete dates and remain in history when changed.
-- The worker page is a read/exception workspace: it shows the worker's real
-  project, crew and calendar and allows only individual actions such as release
-  from selected days or a day off.
-- A driving-licence flag makes a person eligible to drive; the person becomes a
-  driver only when a vehicle is assigned for the relevant operation.
-- Housing and the vehicle registry are independent registries and survive
-  project cleanup.
+Документ описывает фактически реализованный employer web workspace («рабочий
+web-кабинет работодателя»). Продуктовые правила определяет
+[единый источник истины](JOBHUB_SUPPORT_SOURCE_OF_TRUTH.md), а критерии проверки
+— [матрица приёмки](WEB_ACCEPTANCE_MATRIX.md).
 
-Legacy work-assignment drafts, route drafts and recurring schedule-template
-endpoints still exist only for compatibility with older clients. They are not
-the canonical employer web workflow and must not be used as the foundation for
-the new mobile manager interface.
+Обычный staging deploy («тестовое развёртывание») не включает эту механику в
+production JobHub автоматически.
 
-## Employer pages
+## 1. Каноническая операционная модель
 
-| Area | Current state | Important boundary |
-|---|---|---|
-| Home | Implemented | Summary and navigation, not the worker table. |
-| Applications / onboarding | Implemented | Candidate remains outside the worker list until the employer advances the stage. |
-| Document requests | Implemented | JobHub stores request/status/code only; documents go to the verified employer e-mail. |
-| Workers | Implemented | Search, sorting, current project/crew, housing, work and driver/vehicle state. |
-| Projects and crews | Implemented core | Main place for crew creation, calendar shifts, passengers, driver absence and substitution. |
-| Housing | Implemented core | Houses, rooms, automatic places, occupancy dates and worker links. |
-| Fleet | Implemented core | Vehicles, effective driver history and project/route summary. |
-| Work time | Implemented pilot slice | Weekly review, correction, confirmation and CSV export for manual accounting reconciliation. |
-| Worker requests | Implemented | Includes urgent absence flow and manager review. |
-| Conversations | Implemented pilot slice | Worker/staff tabs, unread state, internal forwarding and read reconciliation. No Support attachments. |
-| Team and access | Implemented core | Organization membership, permissions and worker scopes remain server-enforced. |
-| Tasks and announcements | API/mobile foundation only | No complete dedicated employer web workspace yet. |
-| Organization audit | Data/service foundation only | No complete employer-facing audit viewer yet. |
-| Subscription management | Partial | Access state exists; commercial App Store/Google Play lifecycle is not pilot-ready. |
-| Dynamic translation | Partial | RU/EN/PL/UK interface copy exists; private dynamic translation requires an approved provider. |
+Рабочая модель:
 
-## Safety invariants
+`организация → проект → экипаж → опубликованные дни → участники`
 
-- Every organization query is tenant-scoped on the server.
-- Object permissions are checked on writes; hiding a button is never treated as
-  authorization.
-- Multi-record crew/calendar changes are transactional: all changes succeed or
-  all are rolled back.
-- Conflicting driver shifts are rejected across projects. Passenger changes may
-  replace the passenger's selected dates but never silently convert another
-  crew's driver.
-- Support chats accept text only. Passport, visa, bank and other document files
-  are not a JobHub Support upload workflow.
-- New or changed interface copy must be UTF-8 and supplied in RU/EN/PL/UK. A
-  literal `???` or replacement character is a release blocker.
+- Страница проекта — основное место управления экипажами, календарём,
+  водителями, автомобилями и пассажирами.
+- Экипаж имеет постоянную идентичность, но фактический водитель, автомобиль и
+  состав пассажиров определяются для конкретных дат.
+- Страница работника показывает результат назначений и допускает только
+  точечные действия работника: просмотр, освобождение выбранного дня, выходной,
+  документы, жильё, запросы и разрешённые чаты.
+- Отметка о водительском удостоверении означает только eligibility
+  («допуск к выбору водителем»). Водителем человек становится после назначения
+  автомобиля в экипаже на соответствующие даты.
+- Жильё и автопарк — самостоятельные справочники организации. Удаление проекта
+  не должно удалять дома, комнаты, места и автомобили.
 
-## Readiness decision
+Legacy work assignments, route drafts и recurring templates («старые
+назначения работы, черновики маршрутов и повторяющиеся шаблоны») остаются в коде
+только для совместимости со старыми сборками. Новые функции на них не строятся.
 
-The web cabinet is suitable for continued staging QA and a controlled demo.
-It is not yet a declaration of commercial, legal or production readiness.
-Before the mobile manager interface is built, freeze a versioned project-first
-API, keep legacy endpoints read-only/compatible, and complete the manual
-acceptance checks in `WEB_ACCEPTANCE_MATRIX.md`.
+## 2. Реализованные страницы
+
+| Раздел | Состояние | Фактическая граница |
+| --- | --- | --- |
+| Главная | Реализовано | Сводка и навигация; таблица работников вынесена отдельно. |
+| Заявки / Оформление | Реализовано | Анкета, фильтры, уточнения, одобрение, чат и документы. До перевода этапа кандидат не попадает в рабочую таблицу. |
+| Документы по e-mail | Реализовано | JobHub хранит запрос, статус, проверенный e-mail и код аккаунта; файлы отправляются работодателю вне JobHub. История сохраняется после перевода в работники. |
+| Работники | Реализовано | Поиск, сортировки, этап, текущие проект/экипаж, жильё, работа и водитель/авто. |
+| Проекты и экипажи | Реализовано, основное ядро | Создание/редактирование/архивация проекта и экипажа, календарь, смены, пассажиры, отсутствие и подмена водителя. |
+| Жильё | Реализовано, основное ядро | Дома, комнаты, автоматически создаваемые места, заселение/выселение и проверка пересечений дат. |
+| Автопарк | Реализовано, основное ядро | Автомобили, вместимость, актуальный водитель, история закреплений и проектная сводка. |
+| Часы и график | Реализован pilot slice («пилотный срез») | Недельный табель, минуты и десятичные часы, корректировка, подтверждение и CSV для ручной сверки бухгалтером. Не является расчётом зарплаты. |
+| Запросы работников | Реализовано | Обычные формы и срочное отсутствие; срочное обращение требует push менеджеру. |
+| Чаты | Реализован pilot slice | Разделение работников/сотрудников, поиск, непрочитанные, read reconciliation и внутреннее перенаправление. Вложения Support заблокированы. |
+| Сотрудники и доступы | Реализовано, основное ядро | Приглашения, членство, права и worker scopes проверяются сервером. Заместитель раздаёт только разрешённые владельцем права. |
+| Задачи и объявления | Основа API/mobile | Отдельный законченный web-workflow пока отсутствует. |
+| Audit log | Основа данных/сервисов | Полноценный employer-facing viewer («просмотр аудита работодателем») ещё не готов. |
+| Подписка | Частично | Серверное состояние доступа существует; полный магазинный lifecycle, receipt validation и поддержка оплаты не готовы к пилоту. |
+| Динамический перевод | Частично | Статические RU/EN/PL/UK тексты есть. Перевод личной переписки требует утверждённого провайдера и правил приватности. |
+
+## 3. Связь web и mobile
+
+- Backend является authority («источником полномочий») для ролей, capabilities,
+  конфликтов, этапов и видимых данных.
+- Mobile manager mode использует project-first API и не должен повторять
+  бизнес-логику локально.
+- После любой составной операции клиент перечитывает каноническое состояние
+  проекта/экипажа с сервера.
+- Web и mobile должны показывать одинаковые даты, состав экипажа, жильё,
+  документы и статусы прочтения чата.
+
+## 4. Инварианты безопасности
+
+- Каждый запрос ограничен организацией и разрешённым worker scope.
+- Скрытая кнопка не является проверкой прав; write permission проверяется на
+  сервере.
+- Составные изменения экипажа и календаря выполняются transactionally
+  («транзакционно»): либо применяются полностью, либо полностью откатываются.
+- Конфликт водителя между проектами не разрешается молча. Пассажир может быть
+  заменён только в явно выбранной области дат.
+- В Support нельзя загружать паспорт, визу, банковские документы или их фото.
+- Новый видимый текст проходит UTF-8 и RU/EN/PL/UK проверку. `???`, replacement
+  glyph или сырой внутренний ключ блокируют релиз.
+
+## 5. Проверенное состояние
+
+26.08.2026 выполнено:
+
+- backend Support regression suite: **245/245 PASS**;
+- Django system check: без ошибок; отсутствующий Twilio service SID остаётся
+  предупреждением локального окружения;
+- mobile test suite: **14/14 PASS**.
+
+Автоматические тесты не заменяют визуальную проверку браузера, реальные push,
+TestFlight и проверку всех языков на устройстве.
+
+## 6. Решение о готовности
+
+Web-кабинет подходит для staging QA («тестирования на staging»), демонстрации и
+контролируемого пилота с тестовыми данными. Это не подтверждение юридической,
+коммерческой или production readiness («готовности к промышленной эксплуатации»).
+
+Перед следующим пилотом обязательны ручные пункты из
+[WEB_ACCEPTANCE_MATRIX.md](WEB_ACCEPTANCE_MATRIX.md): адаптивная вёрстка,
+четыре языка, реальные push/read-сценарии, разделение staging/production и один
+полный путь кандидат → оформление → работник → жильё → проект/экипаж → часы.

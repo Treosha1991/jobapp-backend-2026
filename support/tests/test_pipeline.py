@@ -252,6 +252,8 @@ class SupportPipelineTests(TestCase):
         )
         self.assertEqual(queue.status_code, 200, queue.data)
         self.assertEqual(queue.data["results"][0]["questionnaire"]["english_level"], "instructions")
+        self.assertEqual(queue.data["counts"]["pending_applications"], 1)
+        self.assertEqual(queue.data["counts"]["onboarding_candidates"], 0)
 
         approved = self.owner_client.post(
             f"/api/v2/support/applications/{application.public_id}/approve/"
@@ -433,6 +435,8 @@ class SupportPipelineTests(TestCase):
             processing_queue.data["processing_results"][0]["connection_id"],
             first_connection_id,
         )
+        self.assertEqual(processing_queue.data["counts"]["pending_applications"], 0)
+        self.assertEqual(processing_queue.data["counts"]["onboarding_candidates"], 1)
         self.assertTrue(processing_queue.data["permissions"]["document_request"])
         coordinator = self.owner_client.post(
             f"/api/v2/support/connections/{first_connection_id}/transition/",
