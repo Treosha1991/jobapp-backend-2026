@@ -91,6 +91,7 @@ from .permissions import (
     worker_connection_queryset_for,
 )
 from .selectors.workspace import transport_workspace_snapshot
+from .selectors.worker_workspace import worker_workspace_snapshot
 from .selectors.project_first import (
     project_first_creation_options,
     project_first_crew_days_payload,
@@ -4495,7 +4496,19 @@ class MySupportConversationListAPIView(SupportFeatureAPIView):
                 SupportOrganization,
                 public_id=organization_public_id,
             )
-            if active_membership_for(user=request.user, organization=organization) is None:
+            has_staff_access = (
+                active_membership_for(
+                    user=request.user,
+                    organization=organization,
+                )
+                is not None
+            )
+            has_worker_access = SupportConnection.objects.filter(
+                candidate=request.user,
+                organization=organization,
+                is_archived=False,
+            ).exists()
+            if not (has_staff_access or has_worker_access):
                 raise NotFound("support_organization_not_found")
             organization_filter = {"organization": organization}
         conversations = (
@@ -5587,6 +5600,40 @@ class MySupportOperationSummaryAPIView(SupportFeatureAPIView):
             connection_public_id=connection_public_id,
         )
         return Response(_worker_operation_summary_payload(connection))
+
+
+class MySupportWorkspaceAPIView(SupportFeatureAPIView):
+    """Return a project-first, worker-owned mobile workspace snapshot."""
+
+    def get(self, request, connection_public_id):
+        _require_active_support_access(request.user)
+        if not is_project_first_workspace_enabled():
+            raise NotFound("project_first_workspace_not_available")
+        connection = get_object_or_404(
+            SupportConnection.objects.select_related(
+                "organization",
+                "candidate",
+                "assigned_manager__user",
+            ),
+            public_id=connection_public_id,
+            candidate=request.user,
+            is_archived=False,
+        )
+        raw_month = (request.query_params.get("month") or "").strip()
+        try:
+            selected_month = (
+                date.fromisoformat(f"{raw_month}-01")
+                if raw_month
+                else timezone.localdate().replace(day=1)
+            )
+        except ValueError as error:
+            raise ValidationError({"month": "invalid_month"}) from error
+        return Response(
+            worker_workspace_snapshot(
+                connection=connection,
+                selected_month=selected_month,
+            )
+        )
 
 
 class MySupportDriverManifestAPIView(SupportFeatureAPIView):

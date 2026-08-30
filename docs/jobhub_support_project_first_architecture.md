@@ -394,3 +394,21 @@ organization-scoped worker connection or staff membership reference, never a
 phone number, e-mail address or chat history. A permitted staff member chooses
 the contact; opening the card performs a fresh access check and creates or
 restores the exact private staff/worker or worker/worker conversation.
+
+## Stage 19: worker-owned project-first workspace snapshot
+
+The mobile worker cabinet reads one tenant-safe snapshot from
+`GET /api/v2/support/connections/{connection_id}/workspace/mine/?month=YYYY-MM`.
+The endpoint requires active Support access and an unarchived connection owned
+by the authenticated user. It never reads legacy routes, recurring templates
+or `WorkerProjectAssignment` as the operational source.
+
+The snapshot resolves the current assignment from today's published
+project-first membership, then the nearest future membership, then the active
+permanent driver/passenger roster. It returns the selected month's own shifts,
+days off, crew absences and factual time-entry status; exact day details include
+only the visible crew members' names and roles. Current/upcoming published
+housing, the existing private manager conversation, compact worker-action
+counts and server-calculated planned/worked totals for the month and current
+week are returned alongside that calendar. No neighbour, staff note, other
+profile or legacy transport data is exposed.

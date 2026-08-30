@@ -1,6 +1,6 @@
 # JobHub Support: реестр документации
 
-**Проверено:** 26.08.2026
+**Проверено:** 30.08.2026
 **Область:** `backend` + `mobile`, ветка `feature/jobhub-support-staging`
 **Назначение:** единый `documentation inventory` («реестр документации»), который показывает, каким файлам можно доверять при продолжении разработки.
 
@@ -88,7 +88,7 @@
 | `13-client-confirmation-and-payroll-preparation.md` | `PLANNED` | Презентационная перспектива подтверждения часов компанией-клиентом. Не входит в текущий MVP. |
 | `14-client-company-workspace-and-staffing-requests.md` | `PLANNED` | Будущий B2B-кабинет принимающей компании. Не является текущей ролью работодателя JobHub Support. |
 | `15-employer-workspace-and-registries.md` | `ACTIVE` | Синхронизирован с текущим header, заявками/оформлением, работниками, проектами, экипажами, жильём, автопарком, временем и чатами. |
-| `16-mobile-workspace-mode.md` | `ACTIVE` | Сверен с текущими worker/staff workspace, Workers, Projects, Applications, Fleet, Housing, time, chats и worker card. |
+| `16-mobile-workspace-mode.md` | `ACTIVE` | Сверен с worker-навигацией «Сегодня»/«График»/«Чаты»/«Ещё», worker-owned project-first snapshot и текущими staff workspace, Workers, Projects, Applications, Fleet, Housing, time и chats. |
 | `17-templates-and-batch-actions.md` | `LEGACY` | Recurring shift batch и ShiftTemplate нельзя использовать в новых функциях. Исторические идеи массового выбора дат можно сохранить только после переписывания под project-first. |
 | `18-work-chats-and-translation.md` | `ACTIVE` | Сверен с точными приватными парами, типами разговоров, read/unread, групповым push и мобильной навигацией. API перевода есть, provider отключён и честно помечен неготовым. |
 | `19-subscription-status-and-sponsored-access.md` | `PARTIAL` | Ручной grant JobHub на 7/14/30 дней реализован. Apple/Google billing, менеджерский extension workflow и sponsored access остаются `PLANNED`. |
@@ -96,7 +96,7 @@
 | `21-manual-employer-onboarding.md` | `ACTIVE` | Ручная проверка и подключение первой фирмы соответствует принятому процессу MVP. |
 | `22-first-operational-pilot-checklist.md` | `ACTIVE` | Release gate переписан под application → onboarding → worker и project-first проект/экипаж/календарь; содержит ручные device/push/offboarding проверки. |
 | `23-technical-blueprint.md` | `ACTIVE` | Архитектура 2.0: каноническая модель, домены, backend layers, распределение web/mobile, надёжность записей, среды и критерии передачи. Детали endpoints остаются в `24-mobile-api-contract.md`. |
-| `24-mobile-api-contract.md` | `ACTIVE` | Версионированный mobile API contract 1.0: реализованные backend/Flutter семьи, project-first команды, ошибки, idempotency и актуальный технический долг. |
+| `24-mobile-api-contract.md` | `ACTIVE` | Версионированный mobile API contract 1.0: реализованные backend/Flutter семьи, worker-owned month snapshot, project-first команды, ошибки, idempotency и актуальный технический долг. |
 
 ## Mobile: другие документы и operational files
 
@@ -150,7 +150,7 @@ codes и переведены в `ACTIVE`. Документы `01` и `04` ос�
 
 ## Последняя синхронизация пакетов
 
-На 26.08.2026 синхронизированы и переведены в `ACTIVE`:
+На 30.08.2026 синхронизированы и остаются `ACTIVE`:
 
 - путь кандидата и права: `00`, `02`, `03`;
 - работник и координация: `08`;
@@ -162,7 +162,16 @@ codes и переведены в `ACTIVE`. Документы `01` и `04` ос�
 - рабочие чаты, read/unread и push: `18`;
 - операционный release gate пилота: `22`.
 
-На этом documentation-only этапе API, модели, миграции, web UI, mobile UI,
-staging и production не изменялись. Документ `19` намеренно оставлен
-`PARTIAL`: текущий ручной grant описан отдельно от ещё не реализованного
-коммерческого billing lifecycle и sponsored access.
+Отдельно 30.08.2026 документы `16` и `24` сверены с worker-owned
+`GET /api/v2/support/connections/{connection_id}/workspace/mine/?month=YYYY-MM`:
+основные worker-экраны больше не должны получать проект, экипаж, жильё и
+календарь из legacy operational summary. Удаление старых routes/screens этим не
+подтверждено и остаётся под `TD-001`; реальная device-приёмка worker mode
+отслеживается в `TD-012`.
+
+Обновление реестра само по себе не доказывает deploy, TestFlight или
+real-device acceptance: фактическое состояние endpoint и Flutter проверяется
+по коду, тестам и матрице приёмки. Staging и production этим документом не
+изменяются. Документ `19` намеренно оставлен `PARTIAL`: текущий ручной grant
+описан отдельно от ещё не реализованного коммерческого billing lifecycle и
+sponsored access.

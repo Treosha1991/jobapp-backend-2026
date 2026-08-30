@@ -35,6 +35,7 @@ from .api_views import (
     MySupportApplicationClarificationResponseAPIView,
     MySupportConnectionListAPIView,
     MySupportOperationSummaryAPIView,
+    MySupportWorkspaceAPIView,
     MySupportDriverManifestAPIView,
     MySupportConversationListAPIView,
     MySupportNotificationListAPIView,
@@ -564,6 +565,11 @@ urlpatterns = [
         name="support-application-decline",
     ),
     path("connections/mine/", MySupportConnectionListAPIView.as_view(), name="support-my-connections"),
+    path(
+        "connections/<uuid:connection_public_id>/workspace/mine/",
+        MySupportWorkspaceAPIView.as_view(),
+        name="support-my-workspace",
+    ),
     path(
         "connections/<uuid:connection_public_id>/operations/mine/",
         MySupportOperationSummaryAPIView.as_view(),
