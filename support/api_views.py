@@ -1196,6 +1196,87 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
             organization=organization,
             permission_code=HOUSING_MANAGE,
         )
+        today = timezone.localdate()
+        worker_count = allowed_connections.count() if may_view_workers else 0
+        assigned_connection_ids = set()
+        if may_view_workers:
+            assigned_connection_ids.update(
+                ProjectCrewResourceAssignment.objects.filter(
+                    driver_connection__in=allowed_connections,
+                    crew__state=ProjectCrew.STATE_ACTIVE,
+                    crew__project__is_active=True,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .values_list("driver_connection_id", flat=True)
+            )
+            assigned_connection_ids.update(
+                ProjectCrewPassenger.objects.filter(
+                    connection__in=allowed_connections,
+                    crew__state=ProjectCrew.STATE_ACTIVE,
+                    crew__project__is_active=True,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .values_list("connection_id", flat=True)
+            )
+            assigned_connection_ids.update(
+                ProjectCrewShiftMember.objects.filter(
+                    connection__in=allowed_connections,
+                    shift__state=ProjectCrewShift.STATE_PUBLISHED,
+                    shift__work_date__gte=today,
+                    shift__crew__state=ProjectCrew.STATE_ACTIVE,
+                    shift__crew__project__is_active=True,
+                ).values_list("connection_id", flat=True)
+            )
+
+        active_vehicles = Vehicle.objects.filter(
+            organization=organization,
+            is_active=True,
+        )
+        fleet_total = active_vehicles.count() if may_manage_transport else 0
+        reserved_vehicle_ids = set()
+        if may_manage_transport:
+            reserved_vehicle_ids.update(
+                ProjectCrewResourceAssignment.objects.filter(
+                    crew__organization=organization,
+                    crew__state=ProjectCrew.STATE_ACTIVE,
+                    crew__project__is_active=True,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .values_list("vehicle_id", flat=True)
+            )
+            reserved_vehicle_ids.update(
+                DriverVehicleAssignment.objects.filter(
+                    organization=organization,
+                    state=DriverVehicleAssignment.STATE_PUBLISHED,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .values_list("vehicle_id", flat=True)
+            )
+
+        active_housing_places = HousingPlace.objects.filter(
+            room__site__organization=organization,
+            room__site__is_active=True,
+            room__is_active=True,
+            is_active=True,
+        )
+        housing_places_total = (
+            active_housing_places.count() if may_manage_housing else 0
+        )
+        housing_places_free = 0
+        if may_manage_housing:
+            local_now = timezone.localtime(timezone.now())
+            day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            occupied_place_ids = HousingAssignment.objects.filter(
+                organization=organization,
+                state=HousingAssignment.STATE_PUBLISHED,
+                check_in_at__lt=day_end,
+            ).filter(
+                Q(check_out_at__isnull=True) | Q(check_out_at__gt=day_start)
+            ).values_list("place_id", flat=True)
+            housing_places_free = active_housing_places.exclude(
+                id__in=occupied_place_ids
+            ).count()
         candidate_queue_counts = (
             _candidate_queue_counts(organization)
             if may_review_pipeline
@@ -1225,7 +1306,19 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
                     "housing_manage": may_manage_housing,
                 },
                 "counts": {
-                    "workers": allowed_connections.count() if may_view_workers else 0,
+                    "workers": worker_count,
+                    "workers_unassigned": max(
+                        0,
+                        worker_count - len(assigned_connection_ids),
+                    ),
+                    "fleet_total": fleet_total,
+                    "fleet_in_reserve": (
+                        active_vehicles.exclude(id__in=reserved_vehicle_ids).count()
+                        if may_manage_transport
+                        else 0
+                    ),
+                    "housing_places_total": housing_places_total,
+                    "housing_places_free": housing_places_free,
                     **candidate_queue_counts,
                     "open_requests": (
                         WorkerRequest.objects.filter(

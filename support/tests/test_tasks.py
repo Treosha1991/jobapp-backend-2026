@@ -8,7 +8,13 @@ from rest_framework.test import APIClient
 from support.models import (
     AnnouncementAcknowledgement,
     ContentTemplate,
+    HousingAssignment,
+    HousingPlace,
+    HousingRoom,
+    HousingSite,
     NotificationOutbox,
+    ProjectCrew,
+    ProjectCrewResourceAssignment,
     SupportAccessGrant,
     SupportApplication,
     SupportConnection,
@@ -18,6 +24,9 @@ from support.models import (
     PermissionGrant,
     WorkerAccessScope,
     WorkerTask,
+    Vehicle,
+    WorkProject,
+    Worksite,
 )
 from support.permission_codes import TASK_MANAGE, WORKER_VIEW
 from support.services.organizations import create_organization
@@ -335,6 +344,11 @@ class SupportTaskAndAnnouncementTests(TestCase):
         self.assertTrue(summary.data["permissions"]["worker_view"])
         self.assertTrue(summary.data["permissions"]["pipeline_review"])
         self.assertEqual(summary.data["counts"]["workers"], 2)
+        self.assertEqual(summary.data["counts"]["workers_unassigned"], 2)
+        self.assertEqual(summary.data["counts"]["fleet_total"], 0)
+        self.assertEqual(summary.data["counts"]["fleet_in_reserve"], 0)
+        self.assertEqual(summary.data["counts"]["housing_places_total"], 0)
+        self.assertEqual(summary.data["counts"]["housing_places_free"], 0)
         self.assertEqual(summary.data["counts"]["pending_applications"], 0)
         self.assertEqual(summary.data["counts"]["onboarding_candidates"], 0)
 
@@ -347,6 +361,89 @@ class SupportTaskAndAnnouncementTests(TestCase):
             directory.data["results"][0]["candidate"]["display_name"],
             "Oleh Worker",
         )
+
+    def test_workspace_summary_reports_available_workers_fleet_and_housing(self):
+        self.connection.has_driving_license = True
+        self.connection.save(update_fields=("has_driving_license", "updated_at"))
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Main site",
+            country_code="NL",
+            city="Lelystad",
+            street="Werkstraat",
+            building="1",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Main project",
+            worker_visible_name="Main project",
+            worker_capacity=4,
+            created_by=self.owner,
+        )
+        crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=project,
+            internal_name="Crew A",
+            created_by=self.owner,
+        )
+        assigned_vehicle = Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Assigned van",
+            registration_identifier="TEST-01",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        Vehicle.objects.create(
+            organization=self.organization,
+            internal_name="Reserve van",
+            registration_identifier="TEST-02",
+            seat_capacity=4,
+            created_by=self.owner,
+        )
+        ProjectCrewResourceAssignment.objects.create(
+            crew=crew,
+            driver_connection=self.connection,
+            vehicle=assigned_vehicle,
+            starts_on=timezone.localdate(),
+            created_by=self.owner,
+        )
+
+        housing = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="Test housing",
+            country_code="NL",
+            city="Lelystad",
+            street="Home street",
+            building="2",
+            created_by=self.owner,
+        )
+        room = HousingRoom.objects.create(site=housing, label="1A", capacity=2)
+        occupied_place = HousingPlace.objects.create(room=room, label="1")
+        HousingPlace.objects.create(room=room, label="2")
+        HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=self.connection,
+            place=occupied_place,
+            check_in_at=timezone.now() - timedelta(days=1),
+            check_out_at=timezone.now() + timedelta(days=1),
+            state=HousingAssignment.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+
+        summary = self.owner_client.get(
+            f"{self.organization_url}/workspace-summary/"
+        )
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["counts"]["workers"], 2)
+        self.assertEqual(summary.data["counts"]["workers_unassigned"], 1)
+        self.assertEqual(summary.data["counts"]["fleet_total"], 2)
+        self.assertEqual(summary.data["counts"]["fleet_in_reserve"], 1)
+        self.assertEqual(summary.data["counts"]["housing_places_total"], 2)
+        self.assertEqual(summary.data["counts"]["housing_places_free"], 1)
 
         scoped_manager = User.objects.create_user(
             username="task-scoped-manager",
