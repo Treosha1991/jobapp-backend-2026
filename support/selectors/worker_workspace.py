@@ -35,6 +35,7 @@ from support.models import (
 )
 from support.permission_codes import CHAT_MANAGE
 from support.permissions import has_permission
+from support.services.timekeeping import worker_time_entry_access
 
 
 def _display_name(user):
@@ -600,6 +601,7 @@ def worker_workspace_snapshot(*, connection, selected_month):
 
     shift_by_date = {item.work_date: item for item in absence_shifts}
     shift_by_date.update({item.work_date: item for item in month_shifts})
+    worker_shift_dates = {item.work_date for item in month_shifts}
     day_off_dates = set(
         WorkerScheduleDayOff.objects.filter(
             connection=connection,
@@ -637,6 +639,13 @@ def worker_workspace_snapshot(*, connection, selected_month):
                 "day_off": work_date in day_off_dates,
                 "absence": work_date in absence_dates,
                 "time_entry": _time_entry_payload(time_entries.get(work_date)),
+                "time_entry_access": worker_time_entry_access(
+                    scheduled_shift=(
+                        shift if work_date in worker_shift_dates else None
+                    ),
+                    entry=time_entries.get(work_date),
+                    now=now,
+                ),
             }
         )
 

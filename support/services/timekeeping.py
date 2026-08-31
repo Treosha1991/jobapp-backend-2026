@@ -97,6 +97,60 @@ def _published_shift_for_day(*, connection, work_date):
     )
 
 
+def worker_time_entry_access(*, scheduled_shift, entry, now=None):
+    """Return the server-owned worker capabilities for one factual-time day."""
+
+    current_time = now or timezone.now()
+    available_at = scheduled_shift.ends_at if scheduled_shift is not None else None
+    if entry is not None:
+        if entry.status == WorkTimeEntry.STATUS_SUBMITTED:
+            return {
+                "can_create": False,
+                "can_edit": True,
+                "can_submit": True,
+                "code": "submitted_editable",
+                "available_at": available_at,
+            }
+        if entry.status == WorkTimeEntry.STATUS_CORRECTION_REQUESTED:
+            return {
+                "can_create": False,
+                "can_edit": True,
+                "can_submit": True,
+                "code": "correction_requested",
+                "available_at": available_at,
+            }
+        return {
+            "can_create": False,
+            "can_edit": False,
+            "can_submit": False,
+            "code": entry.status,
+            "available_at": available_at,
+        }
+    if scheduled_shift is None:
+        return {
+            "can_create": False,
+            "can_edit": False,
+            "can_submit": False,
+            "code": "no_published_shift",
+            "available_at": None,
+        }
+    if scheduled_shift.ends_at > current_time:
+        return {
+            "can_create": False,
+            "can_edit": False,
+            "can_submit": False,
+            "code": "shift_not_finished",
+            "available_at": scheduled_shift.ends_at,
+        }
+    return {
+        "can_create": True,
+        "can_edit": False,
+        "can_submit": True,
+        "code": "ready",
+        "available_at": scheduled_shift.ends_at,
+    }
+
+
 def _template_shift_datetimes(*, work_date, template):
     """Build a timezone-aware shift from a reusable local-time template."""
 
@@ -1037,7 +1091,7 @@ def submit_work_time_entry(
     ended_at,
     break_minutes,
 ):
-    """Create or re-submit the worker's daily record after a correction request."""
+    """Create or update factual time after the published shift has ended."""
 
     with transaction.atomic():
         connection = (
@@ -1051,6 +1105,7 @@ def submit_work_time_entry(
             connection=connection,
             organization=connection.organization,
         )
+        now = timezone.now()
         worked_minutes = _worked_minutes(
             started_at=started_at,
             ended_at=ended_at,
@@ -1062,18 +1117,26 @@ def submit_work_time_entry(
             .filter(connection=connection, work_date=work_date)
             .first()
         )
-        today = timezone.localdate()
-        if entry is None and work_date not in {today, today - timedelta(days=1)}:
-            raise ValidationError({"work_date": "worker_may_submit_only_today_or_yesterday"})
-        now = timezone.now()
+        scheduled_shift = _published_shift_for_day(
+            connection=connection,
+            work_date=work_date,
+        )
+        access = worker_time_entry_access(
+            scheduled_shift=scheduled_shift,
+            entry=entry,
+            now=now,
+        )
+        if entry is None and access["code"] == "no_published_shift":
+            raise ValidationError({"work_date": "published_shift_required"})
+        if entry is None and access["code"] == "shift_not_finished":
+            raise ValidationError({"work_date": "shift_must_finish_before_time_entry"})
+        if entry is not None and not access["can_edit"]:
+            raise ValidationError({"entry": "time_entry_is_not_open_for_worker_change"})
         if entry is None:
             entry = WorkTimeEntry.objects.create(
                 organization=connection.organization,
                 connection=connection,
-                scheduled_shift=_published_shift_for_day(
-                    connection=connection,
-                    work_date=work_date,
-                ),
+                scheduled_shift=scheduled_shift,
                 work_date=work_date,
                 started_at=started_at,
                 ended_at=ended_at,
@@ -1085,8 +1148,6 @@ def submit_work_time_entry(
                 last_changed_by=worker,
             )
         else:
-            if entry.status != WorkTimeEntry.STATUS_CORRECTION_REQUESTED:
-                raise ValidationError({"entry": "time_entry_is_not_open_for_worker_change"})
             entry.started_at = started_at
             entry.ended_at = ended_at
             entry.break_minutes = break_minutes

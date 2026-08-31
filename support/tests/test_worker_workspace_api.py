@@ -496,6 +496,8 @@ class WorkerWorkspaceAPITests(TestCase):
         self.assertEqual(today["time_entry"]["worked_minutes"], 450)
         self.assertEqual(today["time_entry"]["worked_duration"], "7:30")
         self.assertEqual(today["time_entry"]["decimal_hours"], "7.50")
+        self.assertFalse(today["time_entry_access"]["can_edit"])
+        self.assertEqual(today["time_entry_access"]["code"], "manager_adjusted")
         self.assertTrue(by_date[self.day_off_date.isoformat()]["day_off"])
         absence = by_date[self.absence_date.isoformat()]
         self.assertTrue(absence["absence"])

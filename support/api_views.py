@@ -221,6 +221,7 @@ from .services.timekeeping import (
     publish_scheduled_shift,
     request_work_time_correction,
     submit_work_time_entry,
+    worker_time_entry_access,
 )
 from .services.worker_requests import (
     cancel_worker_request,
@@ -5689,8 +5690,13 @@ class MyWorkTimeDayAPIView(SupportFeatureAPIView):
             {
                 "connection_id": str(connection.public_id),
                 "work_date": work_date,
+                "server_now": timezone.now(),
                 "scheduled_shift": _scheduled_shift_payload(scheduled_shift),
                 "time_entry": _time_entry_payload(entry) if entry else None,
+                "time_entry_access": worker_time_entry_access(
+                    scheduled_shift=scheduled_shift,
+                    entry=entry,
+                ),
                 "calendar_marks": [
                     _calendar_mark_payload(item) for item in calendar_marks
                 ],

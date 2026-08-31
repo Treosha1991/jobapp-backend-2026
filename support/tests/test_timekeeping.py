@@ -259,6 +259,9 @@ class TimekeepingTests(TestCase):
         self.assertEqual(day.status_code, 200, day.data)
         self.assertEqual(day.data["scheduled_shift"]["id"], shift_id)
         self.assertIsNone(day.data["time_entry"])
+        self.assertTrue(day.data["time_entry_access"]["can_create"])
+        self.assertEqual(day.data["time_entry_access"]["code"], "ready")
+        self.assertIn("server_now", day.data)
 
         submit_url = (
             f"/api/v2/support/connections/{self.connection.public_id}/"
@@ -378,6 +381,136 @@ class TimekeepingTests(TestCase):
         self.assertEqual(len(staff_list.data["results"]), 1)
         self.assertEqual(staff_list.data["results"][0]["worker"]["display_name"], "Ihor Hours")
 
+    def test_worker_can_submit_old_completed_shift_and_edit_until_confirmation(self):
+        now = timezone.now().replace(second=0, microsecond=0)
+        starts_at = now - timedelta(days=30, hours=8)
+        ends_at = now - timedelta(days=30)
+        work_date = timezone.localtime(starts_at).date()
+        shift = create_scheduled_shift(
+            actor=self.accountant,
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=30,
+            worker_label="Old completed shift",
+        )
+        publish_scheduled_shift(actor=self.accountant, shift=shift)
+        submit_url = (
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "time-entries/mine/submit/"
+        )
+
+        submitted = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(starts_at),
+                "ended_at": self._iso(ends_at),
+                "break_minutes": 30,
+            },
+            format="json",
+        )
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        self.assertEqual(submitted.data["time_entry"]["revision"], 1)
+        entry_id = submitted.data["time_entry"]["id"]
+
+        edited_end = ends_at - timedelta(minutes=15)
+        edited = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(starts_at),
+                "ended_at": self._iso(edited_end),
+                "break_minutes": 30,
+            },
+            format="json",
+        )
+        self.assertEqual(edited.status_code, 201, edited.data)
+        self.assertEqual(edited.data["time_entry"]["status"], "submitted")
+        self.assertEqual(edited.data["time_entry"]["revision"], 2)
+
+        day = self.worker_client.get(
+            f"/api/v2/support/connections/{self.connection.public_id}/time-entries/mine/"
+            f"?work_date={work_date.isoformat()}"
+        )
+        self.assertEqual(day.status_code, 200, day.data)
+        self.assertTrue(day.data["time_entry_access"]["can_edit"])
+        self.assertEqual(
+            day.data["time_entry_access"]["code"],
+            "submitted_editable",
+        )
+
+        confirmed = self.accountant_client.post(
+            f"/api/v2/support/time-entries/{entry_id}/confirm/",
+            {},
+            format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        blocked = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(starts_at),
+                "ended_at": self._iso(edited_end),
+                "break_minutes": 30,
+            },
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+
+    def test_worker_cannot_create_time_before_shift_end_or_without_shift(self):
+        now = timezone.now().replace(second=0, microsecond=0)
+        starts_at = now - timedelta(minutes=30)
+        ends_at = now + timedelta(hours=7, minutes=30)
+        work_date = timezone.localtime(starts_at).date()
+        shift = create_scheduled_shift(
+            actor=self.accountant,
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=30,
+            worker_label="Shift in progress",
+        )
+        publish_scheduled_shift(actor=self.accountant, shift=shift)
+        submit_url = (
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "time-entries/mine/submit/"
+        )
+
+        in_progress = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(starts_at),
+                "ended_at": self._iso(now),
+                "break_minutes": 0,
+            },
+            format="json",
+        )
+        self.assertEqual(in_progress.status_code, 400, in_progress.data)
+        self.assertEqual(
+            in_progress.data["work_date"],
+            "shift_must_finish_before_time_entry",
+        )
+
+        date_without_shift = work_date - timedelta(days=1)
+        without_shift = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": date_without_shift.isoformat(),
+                "started_at": self._iso(starts_at - timedelta(days=1)),
+                "ended_at": self._iso(now - timedelta(days=1)),
+                "break_minutes": 0,
+            },
+            format="json",
+        )
+        self.assertEqual(without_shift.status_code, 400, without_shift.data)
+        self.assertEqual(without_shift.data["work_date"], "published_shift_required")
+
     def test_shift_template_batch_is_scoped_drafted_and_published_atomically(self):
         organization_url = f"/api/v2/support/organizations/{self.organization.public_id}"
         starts_on = timezone.localdate() + timedelta(days=7)
@@ -482,6 +615,17 @@ class TimekeepingTests(TestCase):
     def test_staff_scope_blocks_other_workers_and_worker_cannot_submit_future_day(self):
         now = timezone.now().replace(second=0, microsecond=0)
         work_date = timezone.localtime(now - timedelta(hours=2)).date()
+        other_shift = create_scheduled_shift(
+            actor=self.owner,
+            organization=self.organization,
+            connection=self.other_connection,
+            work_date=work_date,
+            starts_at=now - timedelta(hours=2),
+            ends_at=now - timedelta(minutes=1),
+            break_minutes=0,
+            worker_label="Other worker completed shift",
+        )
+        publish_scheduled_shift(actor=self.owner, shift=other_shift)
         other_submit_url = (
             f"/api/v2/support/connections/{self.other_connection.public_id}/"
             "time-entries/mine/submit/"

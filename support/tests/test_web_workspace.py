@@ -2745,6 +2745,7 @@ class SupportWorkspaceWebTests(TestCase):
         card_url = (
             f"/employer/support/workers/{self.worker_connection.public_id}/"
             f"?tab=transport&transport_template={template.public_id}"
+            f"&month={shift_date:%Y-%m}"
         )
         self.client.force_login(self.owner)
 
@@ -2770,6 +2771,7 @@ class SupportWorkspaceWebTests(TestCase):
                 "return_transport_crew": (
                     f"{driver_assignment.public_id}.{template.public_id}"
                 ),
+                "return_month": shift_date.strftime("%Y-%m"),
             },
             follow=True,
         )
@@ -2789,6 +2791,7 @@ class SupportWorkspaceWebTests(TestCase):
         project_url = (
             f"/employer/support/projects/{project.public_id}/"
             f"?organization={self.organization.public_id}"
+            f"&month={shift_date:%Y-%m}"
         )
         project_page = self.client.get(project_url)
         self.assertEqual(project_page.status_code, 200)
@@ -2808,6 +2811,7 @@ class SupportWorkspaceWebTests(TestCase):
                 "return_project_crew": (
                     f"{driver_assignment.public_id}.{template.public_id}"
                 ),
+                "return_month": shift_date.strftime("%Y-%m"),
             },
             follow=True,
         )
