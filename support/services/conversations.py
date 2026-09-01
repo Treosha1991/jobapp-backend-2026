@@ -284,6 +284,9 @@ def open_staff_conversation(*, actor, target_membership):
         raise PermissionDenied("support_staff_conversation_not_available")
 
     with transaction.atomic():
+        # One user can have only one membership per conversation.  Keeping the
+        # membership join without DISTINCT is therefore safe and, importantly,
+        # remains compatible with PostgreSQL SELECT ... FOR UPDATE.
         candidates = (
             SupportConversation.objects.select_for_update()
             .filter(
@@ -293,7 +296,6 @@ def open_staff_conversation(*, actor, target_membership):
                 members__user=actor,
             )
             .prefetch_related("members__user")
-            .distinct()
         )
         conversation = next(
             (
@@ -658,6 +660,9 @@ def _open_worker_peer_conversation(
     ):
         raise PermissionDenied(unavailable_code)
     candidates = list(
+        # The membership constraint already makes this join unique per
+        # conversation.  DISTINCT combined with SELECT ... FOR UPDATE raises on
+        # PostgreSQL, which previously turned worker-to-worker chat into a 500.
         SupportConversation.objects.select_for_update()
         .filter(
             organization=organization,
@@ -666,7 +671,6 @@ def _open_worker_peer_conversation(
             members__user=actor,
         )
         .prefetch_related("members")
-        .distinct()
     )
     conversation = next(
         (
