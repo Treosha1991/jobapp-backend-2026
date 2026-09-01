@@ -6,6 +6,8 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
+from jobs.models import UserProfile
+
 from support.models import (
     DriverVehicleAssignment,
     HousingAssignment,
@@ -36,7 +38,10 @@ from support.services.operations import (
 from support.services.organizations import create_organization
 
 
-@override_settings(SUPPORT_FEATURE_ENABLED=True)
+@override_settings(
+    SUPPORT_FEATURE_ENABLED=True,
+    AVATAR_PUBLIC_BASE_URL="https://cdn.example.test",
+)
 class SupportOperationsTests(TestCase):
     """The first operational slice stays hidden behind the Support feature flag.
 
@@ -70,6 +75,14 @@ class SupportOperationsTests(TestCase):
             username="operations-outsider",
             email="operations-outsider@example.com",
             password="password",
+        )
+        UserProfile.objects.create(
+            user=self.candidate,
+            avatar_key="avatars/operations-candidate.png",
+        )
+        UserProfile.objects.create(
+            user=self.passenger,
+            avatar_key="avatars/operations-passenger.png",
         )
         self.organization, _ = create_organization(
             jobhub_operator=self.operator,
@@ -206,6 +219,11 @@ class SupportOperationsTests(TestCase):
             place_data["assignments"][0]["worker"]["display_name"],
             self.candidate.username,
         )
+        self.assertEqual(
+            place_data["assignments"][0]["worker"]["avatar_url"],
+            "https://cdn.example.test/avatars/operations-candidate.png",
+        )
+        self.assertNotIn("avatar_key", str(workspace.data))
 
         check_out_at = check_in_at + timedelta(days=30)
         checked_out = self.owner_client.post(
@@ -252,6 +270,10 @@ class SupportOperationsTests(TestCase):
         self.assertEqual(
             [item["id"] for item in overlapping.data["results"]],
             [str(self.passenger_connection.public_id)],
+        )
+        self.assertEqual(
+            overlapping.data["results"][0]["candidate"]["avatar_url"],
+            "https://cdn.example.test/avatars/operations-passenger.png",
         )
         self.assertEqual(after_check_out.status_code, 200, after_check_out.data)
         self.assertEqual(

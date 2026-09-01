@@ -1,11 +1,12 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from jobs.models import Vacancy
+from jobs.models import UserProfile, Vacancy
 
 from support.models import (
     ApplicationDecisionEvent,
@@ -13,8 +14,10 @@ from support.models import (
     SupportApplication,
     SupportConnection,
     SupportConversation,
+    SupportVacancy,
 )
 from support.services.organizations import create_organization
+from support.services.pipeline import submit_application as submit_application_service
 
 
 def bot_content(title="Warehouse helper"):
@@ -29,7 +32,10 @@ def bot_content(title="Warehouse helper"):
     }
 
 
-@override_settings(SUPPORT_FEATURE_ENABLED=True)
+@override_settings(
+    SUPPORT_FEATURE_ENABLED=True,
+    AVATAR_PUBLIC_BASE_URL="https://cdn.example.test",
+)
 class SupportPipelineTests(TestCase):
     def setUp(self):
         self.operator = User.objects.create_user(
@@ -146,6 +152,10 @@ class SupportPipelineTests(TestCase):
         self.assertEqual(before.status_code, 200, before.data)
         self.assertEqual(before.data["workflow"]["id"], support_vacancy_id)
         self.assertEqual(before.data["workflow"]["vacancy_title"], public_vacancy.title)
+        self.assertEqual(
+            before.data["workflow"]["questionnaire_version"],
+            "support-questionnaire-v3",
+        )
         self.assertEqual(before.data["bot"]["content"]["title"], "Warehouse helper")
         self.assertIsNone(before.data["application"])
 
@@ -177,23 +187,7 @@ class SupportPipelineTests(TestCase):
             format="json",
         )
 
-    def test_published_bot_hides_internal_limit_and_application_rejects_document_fields(self):
-        vacancy_id = self.create_published_vacancy()
-
-        bot = self.candidate_client.get(f"/api/v2/support/vacancies/{vacancy_id}/bot/?language=ru")
-
-        self.assertEqual(bot.status_code, 200)
-        self.assertEqual(bot.data["bot"]["content"]["title"], "Warehouse helper")
-        self.assertNotIn("internal_position_limit", str(bot.data))
-        self.assertNotIn("internal_title", str(bot.data))
-
-        rejected = self.submit_application(vacancy_id, extra={"passport": "123456"})
-
-        self.assertEqual(rejected.status_code, 400)
-        self.assertEqual(SupportApplication.objects.count(), 0)
-
-    def test_structured_questionnaire_is_validated_and_returned_to_staff(self):
-        vacancy_id = self.create_published_vacancy()
+    def valid_questionnaire(self, **overrides):
         questionnaire = {
             "adult_confirmed": True,
             "legal_status": "polish_work_visa",
@@ -233,6 +227,27 @@ class SupportPipelineTests(TestCase):
             "safety_policy_accepted": True,
             "additional_note": "Ready for cold storage.",
         }
+        questionnaire.update(overrides)
+        return questionnaire
+
+    def test_published_bot_hides_internal_limit_and_application_rejects_document_fields(self):
+        vacancy_id = self.create_published_vacancy()
+
+        bot = self.candidate_client.get(f"/api/v2/support/vacancies/{vacancy_id}/bot/?language=ru")
+
+        self.assertEqual(bot.status_code, 200)
+        self.assertEqual(bot.data["bot"]["content"]["title"], "Warehouse helper")
+        self.assertNotIn("internal_position_limit", str(bot.data))
+        self.assertNotIn("internal_title", str(bot.data))
+
+        rejected = self.submit_application(vacancy_id, extra={"passport": "123456"})
+
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(SupportApplication.objects.count(), 0)
+
+    def test_structured_questionnaire_is_validated_and_returned_to_staff(self):
+        vacancy_id = self.create_published_vacancy()
+        questionnaire = self.valid_questionnaire()
 
         response = self.submit_application(
             vacancy_id,
@@ -261,6 +276,121 @@ class SupportPipelineTests(TestCase):
         self.assertEqual(approved.status_code, 201, approved.data)
         connection = SupportConnection.objects.get(application=application)
         self.assertTrue(connection.has_driving_license)
+
+    def test_questionnaire_v3_normalizes_identity_updates_user_and_keeps_snapshot(self):
+        vacancy_id = self.create_published_vacancy()
+        UserProfile.objects.create(
+            user=self.candidate,
+            avatar_key="avatars/pipeline-candidate.png",
+        )
+
+        response = self.submit_application(
+            vacancy_id,
+            extra={
+                "questionnaire_version": "support-questionnaire-v3",
+                "questionnaire": self.valid_questionnaire(
+                    first_name="  Jo\u0301zef   Jan  ",
+                    last_name="  Kowalski  ",
+                ),
+                "consent_version": "support-application-v3",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.candidate.refresh_from_db()
+        self.assertEqual(self.candidate.first_name, "Józef Jan")
+        self.assertEqual(self.candidate.last_name, "Kowalski")
+        application = SupportApplication.objects.get(public_id=response.data["application"]["id"])
+        self.assertEqual(application.questionnaire_answers["first_name"], "Józef Jan")
+        self.assertEqual(application.questionnaire_answers["last_name"], "Kowalski")
+        queue = self.owner_client.get(
+            f"/api/v2/support/organizations/{self.organization.public_id}/applications/"
+        )
+        self.assertEqual(queue.status_code, 200, queue.data)
+        candidate = queue.data["results"][0]["candidate"]
+        self.assertEqual(candidate["first_name"], "Józef Jan")
+        self.assertEqual(candidate["last_name"], "Kowalski")
+        self.assertEqual(
+            candidate["avatar_url"],
+            "https://cdn.example.test/avatars/pipeline-candidate.png",
+        )
+        self.assertNotIn("avatar_key", str(queue.data))
+
+    def test_questionnaire_v3_requires_safe_first_and_last_names(self):
+        vacancy_id = self.create_published_vacancy()
+        invalid_names = (
+            ({"last_name": "Kowalski"}, "first_name_required"),
+            ({"first_name": "Józef"}, "last_name_required"),
+            ({"first_name": "   ", "last_name": "Kowalski"}, "identity_name_required"),
+            ({"first_name": "Józef\nJan", "last_name": "Kowalski"}, "identity_name_invalid"),
+            ({"first_name": "???", "last_name": "Kowalski"}, "identity_name_invalid"),
+            ({"first_name": "Józef\ufffd", "last_name": "Kowalski"}, "identity_name_invalid"),
+            ({"first_name": "J" * 151, "last_name": "Kowalski"}, "identity_name_too_long"),
+        )
+        for identity, error_code in invalid_names:
+            with self.subTest(identity=identity):
+                response = self.submit_application(
+                    vacancy_id,
+                    extra={
+                        "questionnaire_version": "support-questionnaire-v3",
+                        "questionnaire": self.valid_questionnaire(**identity),
+                        "consent_version": "support-application-v3",
+                    },
+                )
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertIn(error_code, str(response.data))
+        self.assertEqual(SupportApplication.objects.count(), 0)
+
+    def test_questionnaire_v3_identity_update_rolls_back_with_application(self):
+        vacancy_id = self.create_published_vacancy()
+        vacancy = SupportVacancy.objects.get(public_id=vacancy_id)
+        self.candidate.first_name = "Before"
+        self.candidate.last_name = "Candidate"
+        self.candidate.save(update_fields=["first_name", "last_name"])
+
+        with patch("support.services.pipeline.record_audit_event", side_effect=RuntimeError("audit failed")):
+            with self.assertRaisesRegex(RuntimeError, "audit failed"):
+                submit_application_service(
+                    candidate=self.candidate,
+                    vacancy=vacancy,
+                    preferred_language="ru",
+                    citizenship_country_code="BY",
+                    current_country_code="PL",
+                    availability_note="",
+                    partner_reference_code="",
+                    consent_version="support-application-v3",
+                    questionnaire_version="support-questionnaire-v3",
+                    questionnaire_answers=self.valid_questionnaire(
+                        first_name="After",
+                        last_name="Update",
+                    ),
+                )
+
+        self.candidate.refresh_from_db()
+        self.assertEqual((self.candidate.first_name, self.candidate.last_name), ("Before", "Candidate"))
+        self.assertEqual(SupportApplication.objects.count(), 0)
+
+    def test_questionnaire_v2_remains_supported_and_does_not_update_user_identity(self):
+        vacancy_id = self.create_published_vacancy()
+        self.candidate.first_name = "Canonical"
+        self.candidate.last_name = "Candidate"
+        self.candidate.save(update_fields=["first_name", "last_name"])
+
+        response = self.submit_application(
+            vacancy_id,
+            extra={
+                "questionnaire_version": "support-questionnaire-v2",
+                "questionnaire": self.valid_questionnaire(
+                    first_name="Ignored",
+                    last_name="Input",
+                ),
+                "consent_version": "support-application-v2",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.candidate.refresh_from_db()
+        self.assertEqual((self.candidate.first_name, self.candidate.last_name), ("Canonical", "Candidate"))
 
     def test_declined_application_can_be_resubmitted_only_after_one_hour(self):
         vacancy_id = self.create_published_vacancy()

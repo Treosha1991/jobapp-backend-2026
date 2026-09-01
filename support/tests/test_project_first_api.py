@@ -6,6 +6,8 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from jobs.models import UserProfile
+
 from support.models import (
     AuditEvent,
     HousingAssignment,
@@ -27,6 +29,7 @@ from support.models import (
     SupportConnection,
     SupportVacancy,
     Vehicle,
+    WorkerAccessScope,
     WorkerScheduleDayOff,
     WorkProject,
     Worksite,
@@ -35,7 +38,11 @@ from support.permission_codes import SCHEDULE_MANAGE, TRANSPORT_MANAGE
 from support.services.organizations import activate_organization, create_organization
 
 
-@override_settings(SUPPORT_FEATURE_ENABLED=True, SUPPORT_PROJECT_FIRST_ENABLED=True)
+@override_settings(
+    SUPPORT_FEATURE_ENABLED=True,
+    SUPPORT_PROJECT_FIRST_ENABLED=True,
+    AVATAR_PUBLIC_BASE_URL="https://cdn.example.test",
+)
 class ProjectFirstReadAPITests(TestCase):
     def setUp(self):
         self.operator = User.objects.create_user(
@@ -187,6 +194,10 @@ class ProjectFirstReadAPITests(TestCase):
             first_name=first_name,
             last_name="Worker",
         )
+        UserProfile.objects.create(
+            user=candidate,
+            avatar_key=f"avatars/{suffix}.png",
+        )
         vacancy = SupportVacancy.objects.create(
             organization=self.organization,
             internal_title=f"Vacancy {suffix}",
@@ -254,11 +265,75 @@ class ProjectFirstReadAPITests(TestCase):
             vehicle["current_driver"]["display_name"],
             "Driver Worker",
         )
+        self.assertEqual(vehicle["current_driver"]["first_name"], "Driver")
+        self.assertEqual(
+            vehicle["current_driver"]["avatar_url"],
+            "https://cdn.example.test/avatars/driver.png",
+        )
+        self.assertNotIn("avatar_key", str(response.data))
         self.assertEqual(vehicle["current_driver"]["project"], "Food project")
         self.assertEqual(vehicle["current_driver"]["crew"], "Crew North")
         self.assertEqual(
             vehicle["current_driver"]["crew_id"],
             str(self.crew.public_id),
+        )
+
+    def test_vehicle_driver_identity_is_redacted_outside_manager_worker_scope(self):
+        resource = self.crew.resource_assignments.get()
+        resource.starts_on = min(resource.starts_on, timezone.localdate())
+        resource.save(update_fields=["starts_on", "updated_at"])
+        manager = User.objects.create_user(
+            username="fleet-scoped-manager",
+            email="fleet-scoped-manager@example.com",
+            password="password",
+        )
+        membership = OrganizationMembership.objects.create(
+            organization=self.organization,
+            user=manager,
+            display_role="Fleet manager",
+            state=OrganizationMembership.STATE_ACTIVE,
+        )
+        PermissionGrant.objects.create(
+            membership=membership,
+            permission_code=TRANSPORT_MANAGE,
+            scope_kind=PermissionGrant.SCOPE_ORGANIZATION,
+            is_active=True,
+            granted_by=self.owner,
+        )
+        client = APIClient()
+        client.force_authenticate(manager)
+        url = (
+            f"/api/v2/support/organizations/{self.organization.public_id}/"
+            "operations/vehicles/"
+        )
+
+        hidden = client.get(url)
+
+        self.assertEqual(hidden.status_code, 200, hidden.data)
+        hidden_driver = hidden.data["results"][0]["current_driver"]
+        self.assertTrue(hidden_driver["identity_restricted"])
+        self.assertIsNone(hidden_driver["id"])
+        self.assertEqual(hidden_driver["display_name"], "")
+        self.assertEqual(hidden_driver["avatar_url"], "")
+        self.assertNotIn("Driver Worker", str(hidden.data))
+        self.assertNotIn("avatars/driver.png", str(hidden.data))
+        self.assertEqual(hidden_driver["project"], "Food project")
+
+        WorkerAccessScope.objects.create(
+            membership=membership,
+            connection=self.driver,
+            granted_by=self.owner,
+        )
+        visible = client.get(url)
+
+        self.assertEqual(visible.status_code, 200, visible.data)
+        visible_driver = visible.data["results"][0]["current_driver"]
+        self.assertFalse(visible_driver["identity_restricted"])
+        self.assertEqual(visible_driver["id"], str(self.driver.public_id))
+        self.assertEqual(visible_driver["display_name"], "Driver Worker")
+        self.assertEqual(
+            visible_driver["avatar_url"],
+            "https://cdn.example.test/avatars/driver.png",
         )
 
     @patch("support.services.notifications.dispatch_outbox_entry")
@@ -1872,6 +1947,17 @@ class ProjectFirstReadAPITests(TestCase):
             {item["role"] for item in day["shift"]["members"]},
             {"driver", "passenger"},
         )
+        passenger = next(
+            item
+            for item in day["shift"]["members"]
+            if item["role"] == "passenger"
+        )
+        self.assertEqual(passenger["worker"]["first_name"], "Passenger")
+        self.assertEqual(
+            passenger["worker"]["avatar_url"],
+            "https://cdn.example.test/avatars/passenger.png",
+        )
+        self.assertNotIn("avatar_key", str(response.data))
         self.assertEqual(crew["absences"][0]["work_date"], "2026-08-19")
         self.assertEqual(crew["driver_substitutions"][0]["work_date"], "2026-08-21")
         self.assertEqual(

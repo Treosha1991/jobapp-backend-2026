@@ -15,10 +15,12 @@ from .questionnaire import (
     LANGUAGE_LEVELS,
     LEGAL_STATUSES,
     QUALIFICATIONS,
-    QUESTIONNAIRE_VERSION,
+    QUESTIONNAIRE_VERSION_V3,
     SHIFT_PREFERENCES,
+    SUPPORTED_QUESTIONNAIRE_VERSIONS,
     THREE_WAY_ANSWERS,
     WORK_CONDITIONS,
+    normalize_identity_name,
 )
 
 
@@ -94,6 +96,10 @@ class StrictInputSerializer(serializers.Serializer):
 
 class WorkerAccessScopeCreateSerializer(StrictInputSerializer):
     connection_id = serializers.UUIDField()
+
+
+class WorkerShiftPeerChatOpenSerializer(StrictInputSerializer):
+    target_connection_id = serializers.UUIDField()
 
 
 class ScheduledWorkShiftCreateSerializer(StrictInputSerializer):
@@ -473,6 +479,8 @@ class BotContentRevisionCreateSerializer(StrictInputSerializer):
 
 
 class SupportQuestionnaireSerializer(StrictInputSerializer):
+    first_name = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
+    last_name = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     adult_confirmed = serializers.BooleanField()
     legal_status = serializers.ChoiceField(choices=LEGAL_STATUSES)
     document_valid_until = serializers.DateField(required=False, allow_null=True, default=None)
@@ -514,6 +522,15 @@ class SupportQuestionnaireSerializer(StrictInputSerializer):
     planned_move_in = serializers.DateField(required=False, allow_null=True, default=None)
     safety_policy_accepted = serializers.BooleanField()
     additional_note = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+    def _validate_identity_name(self, value):
+        try:
+            return normalize_identity_name(value)
+        except ValueError as error:
+            raise serializers.ValidationError(str(error)) from error
+
+    validate_first_name = _validate_identity_name
+    validate_last_name = _validate_identity_name
 
     def validate_current_city(self, value):
         normalized = value.strip()
@@ -618,11 +635,19 @@ class SupportApplicationCreateSerializer(StrictInputSerializer):
         if not attrs.get("consent_accepted"):
             raise serializers.ValidationError({"consent_accepted": "consent_required"})
         questionnaire_version = attrs.get("questionnaire_version", "")
-        if questionnaire_version and questionnaire_version != QUESTIONNAIRE_VERSION:
+        if questionnaire_version and questionnaire_version not in SUPPORTED_QUESTIONNAIRE_VERSIONS:
             raise serializers.ValidationError({"questionnaire_version": "unsupported_questionnaire_version"})
-        if questionnaire_version == QUESTIONNAIRE_VERSION and not attrs.get("questionnaire"):
+        if questionnaire_version in SUPPORTED_QUESTIONNAIRE_VERSIONS and not attrs.get("questionnaire"):
             raise serializers.ValidationError({"questionnaire": "questionnaire_required"})
         questionnaire = attrs.get("questionnaire") or {}
+        if questionnaire_version == QUESTIONNAIRE_VERSION_V3:
+            identity_errors = {}
+            if not questionnaire.get("first_name"):
+                identity_errors["first_name"] = "first_name_required"
+            if not questionnaire.get("last_name"):
+                identity_errors["last_name"] = "last_name_required"
+            if identity_errors:
+                raise serializers.ValidationError({"questionnaire": identity_errors})
         for key in ("document_valid_until", "available_from", "planned_move_in"):
             if questionnaire.get(key) is not None:
                 questionnaire[key] = questionnaire[key].isoformat()

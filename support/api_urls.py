@@ -36,6 +36,8 @@ from .api_views import (
     MySupportConnectionListAPIView,
     MySupportOperationSummaryAPIView,
     MySupportWorkspaceAPIView,
+    MySupportWorkspaceWeekAPIView,
+    MyProjectShiftPeerConversationAPIView,
     MySupportDriverManifestAPIView,
     MySupportConversationListAPIView,
     MySupportNotificationListAPIView,
@@ -569,6 +571,17 @@ urlpatterns = [
         "connections/<uuid:connection_public_id>/workspace/mine/",
         MySupportWorkspaceAPIView.as_view(),
         name="support-my-workspace",
+    ),
+    path(
+        "connections/<uuid:connection_public_id>/workspace/mine/week/",
+        MySupportWorkspaceWeekAPIView.as_view(),
+        name="support-my-workspace-week",
+    ),
+    path(
+        "connections/<uuid:connection_public_id>/project-first/shifts/"
+        "<uuid:shift_public_id>/open-worker-chat/",
+        MyProjectShiftPeerConversationAPIView.as_view(),
+        name="support-my-project-shift-peer-chat",
     ),
     path(
         "connections/<uuid:connection_public_id>/operations/mine/",

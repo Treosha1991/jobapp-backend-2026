@@ -3309,6 +3309,7 @@ class SupportWorkspaceWebTests(TestCase):
 
     def test_worker_transport_card_lists_each_passenger_crew_as_a_tab(self):
         today = timezone.localdate()
+        month_start = today.replace(day=1)
 
         def connection_for(username, first_name, last_name):
             user = User.objects.create_user(
@@ -3478,8 +3479,8 @@ class SupportWorkspaceWebTests(TestCase):
             published_at=timezone.now(),
         )
         for work_date, schedule_template, route in (
-            (date(2026, 8, 10), first_template, first_route),
-            (date(2026, 8, 11), second_template, second_route),
+            (month_start + timedelta(days=9), first_template, first_route),
+            (month_start + timedelta(days=10), second_template, second_route),
         ):
             starts_at = timezone.make_aware(
                 datetime.combine(work_date, schedule_template.starts_at_time)
@@ -3504,7 +3505,7 @@ class SupportWorkspaceWebTests(TestCase):
         self.client.force_login(self.owner)
         base_url = (
             f"/employer/support/workers/{passenger.public_id}/"
-            "?tab=transport&month=2026-08"
+            f"?tab=transport&month={month_start:%Y-%m}"
         )
 
         page = self.client.get(base_url)

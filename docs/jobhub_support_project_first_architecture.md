@@ -412,3 +412,66 @@ housing, the existing private manager conversation, compact worker-action
 counts and server-calculated planned/worked totals for the month and current
 week are returned alongside that calendar. No neighbour, staff note, other
 profile or legacy transport data is exposed.
+
+## Stage 20: worker ISO week and shift-scoped peer chat
+
+The worker cabinet can load the selected ISO week independently from the
+month summary:
+
+```text
+GET /api/v2/support/connections/{connection_id}/workspace/mine/week/?selected_date=YYYY-MM-DD
+```
+
+The response always contains Monday through Sunday and identifies both the
+selected date and today's date. Every day is resolved from the authenticated
+worker's actual published `ProjectCrewShiftMember` rows. A shift member payload
+contains the public connection UUID, first/display name, avatar URL, role,
+`is_self` and a server-calculated `can_open_chat`; members from another day,
+crew or organization are never included. `shift` is the primary backwards-
+compatible day value and `shifts` preserves every non-overlapping shift when a
+worker legitimately has more than one on the same date.
+Factual time remains one day-level record: creation is unlocked only after the
+latest `ends_at` among all published shifts for that day, and that same
+latest-ending calendar shift is stored as its anchor. The primary `shift`
+continues to drive the compact day card without weakening this rule.
+
+The corresponding peer-chat command is:
+
+```text
+POST /api/v2/support/connections/{connection_id}/project-first/shifts/{shift_id}/open-worker-chat/
+{"target_connection_id": "<uuid>"}
+```
+
+It requires active Support access, an owned unarchived/non-closed connection,
+one published shift in the same organization and exact membership of both
+connections on that shift. Self, stale, inactive, cross-tenant and non-member
+targets are rejected before a conversation is created or restored. Manager
+chat opening remains idempotent and now works throughout every non-closed
+connection stage while preserving the exact assigned worker/manager pair.
+
+## Stage 21: questionnaire identity v3 and public avatar projection
+
+`support-questionnaire-v3` is the current application contract. Its optional
+serializer fields `first_name` and `last_name` become mandatory at the v3
+application boundary. The server applies Unicode NFC normalization, trims and
+collapses whitespace, enforces 150 characters, and rejects blank, control,
+replacement and placeholder (`???`) input. The application transaction locks
+the canonical user and updates the two identity columns together with the
+application snapshot. Any later failure rolls both changes back. During the
+migration window v2 and v3 are accepted; v2 never mutates canonical identity.
+
+Current staff/worker read models project `first_name`, `last_name`,
+`display_name` and a public `avatar_url` only after the existing tenant,
+permission and worker-scope checks. This projection is used by the application
+queue/onboarding list, worker directory/card, project-first crew and passenger
+selectors, housing occupants/choices, fleet drivers, and chat directory,
+participants, messages and shared contacts. The storage `avatar_key` is never
+part of the Support API. Candidate/profile relations are selected or
+prefetched with their parent rows so adding the public avatar does not create a
+per-row query.
+
+Vehicle visibility is also worker-scoped. A staff member with transport
+permission may still see the vehicle, project and crew needed for fleet work,
+but the current driver's UUID, name and avatar are redacted unless that worker
+is present in the member's canonical `WorkerAccessScope` (or the member has
+unrestricted worker access).

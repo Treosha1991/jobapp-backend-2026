@@ -1,6 +1,7 @@
 import secrets
 from datetime import timedelta
 
+from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -20,12 +21,14 @@ from support.models import (
 )
 from support.permission_codes import CONNECTION_TRANSITION, ORGANIZATION_MANAGE, PIPELINE_REVIEW
 from support.permissions import active_membership_for, require_permission
+from support.questionnaire import QUESTIONNAIRE_VERSION_V3, normalize_identity_name
 
 from .audit import record_audit_event
 from .entitlements import support_access_snapshot_for
 
 
 APPLICATION_RESUBMIT_COOLDOWN = timedelta(minutes=60)
+User = get_user_model()
 
 
 def application_resubmission_state(application, *, now=None):
@@ -221,9 +224,29 @@ def submit_application(
             raise ValidationError({"partner_reference_code": "partner_reference_not_available"})
 
     with transaction.atomic():
+        locked_candidate = User.objects.select_for_update().get(pk=candidate.pk)
+        normalized_questionnaire_answers = dict(questionnaire_answers or {})
+        if questionnaire_version == QUESTIONNAIRE_VERSION_V3:
+            try:
+                first_name = normalize_identity_name(normalized_questionnaire_answers.get("first_name"))
+                last_name = normalize_identity_name(normalized_questionnaire_answers.get("last_name"))
+            except ValueError as error:
+                raise ValidationError({"questionnaire": str(error)}) from error
+            normalized_questionnaire_answers["first_name"] = first_name
+            normalized_questionnaire_answers["last_name"] = last_name
+            changed_fields = []
+            if locked_candidate.first_name != first_name:
+                locked_candidate.first_name = first_name
+                changed_fields.append("first_name")
+            if locked_candidate.last_name != last_name:
+                locked_candidate.last_name = last_name
+                changed_fields.append("last_name")
+            if changed_fields:
+                locked_candidate.save(update_fields=changed_fields)
+
         latest_application = (
             SupportApplication.objects.select_for_update()
-            .filter(vacancy=vacancy, candidate=candidate)
+            .filter(vacancy=vacancy, candidate=locked_candidate)
             .prefetch_related("decision_events")
             .order_by("-revision", "-submitted_at", "-id")
             .first()
@@ -248,10 +271,10 @@ def submit_application(
                     }
                 )
         latest_revision = latest_application.revision if latest_application is not None else 0
-        applicant_reference = applicant_reference_for(user=candidate)
+        applicant_reference = applicant_reference_for(user=locked_candidate)
         application = SupportApplication.objects.create(
             vacancy=vacancy,
-            candidate=candidate,
+            candidate=locked_candidate,
             revision=latest_revision + 1,
             preferred_language=preferred_language,
             citizenship_country_code=(citizenship_country_code or "").upper(),
@@ -259,7 +282,7 @@ def submit_application(
             availability_note=(availability_note or "").strip(),
             partner_reference_code=partner_code,
             questionnaire_version=(questionnaire_version or "").strip(),
-            questionnaire_answers=questionnaire_answers or {},
+            questionnaire_answers=normalized_questionnaire_answers,
             consent_version=consent_version,
             consented_at=timezone.now(),
         )
@@ -301,11 +324,11 @@ def submit_application(
         ApplicationDecisionEvent.objects.create(
             application=application,
             action=ApplicationDecisionEvent.ACTION_SUBMITTED,
-            actor=candidate,
+            actor=locked_candidate,
         )
         record_audit_event(
             organization=vacancy.organization,
-            actor=candidate,
+            actor=locked_candidate,
             action="application.submitted",
             target=application,
             details={"vacancy": str(vacancy.public_id), "revision": application.revision},

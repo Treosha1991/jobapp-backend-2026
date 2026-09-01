@@ -93,6 +93,7 @@ def _published_shift_for_day(*, connection, work_date):
             state=ScheduledWorkShift.STATE_PUBLISHED,
         )
         .select_related("work_assignment")
+        .order_by("-ends_at", "-id")
         .first()
     )
 
@@ -1160,22 +1161,29 @@ def submit_work_time_entry(
             entry.confirmed_by = None
             entry.worker_acknowledged_at = None
             entry.last_changed_by = worker
+            update_fields = [
+                "started_at",
+                "ended_at",
+                "break_minutes",
+                "worked_minutes",
+                "status",
+                "revision",
+                "manager_note",
+                "submitted_at",
+                "confirmed_at",
+                "confirmed_by",
+                "worker_acknowledged_at",
+                "last_changed_by",
+                "updated_at",
+            ]
+            if (
+                scheduled_shift is not None
+                and entry.scheduled_shift_id != scheduled_shift.id
+            ):
+                entry.scheduled_shift = scheduled_shift
+                update_fields.append("scheduled_shift")
             entry.save(
-                update_fields=[
-                    "started_at",
-                    "ended_at",
-                    "break_minutes",
-                    "worked_minutes",
-                    "status",
-                    "revision",
-                    "manager_note",
-                    "submitted_at",
-                    "confirmed_at",
-                    "confirmed_by",
-                    "worker_acknowledged_at",
-                    "last_changed_by",
-                    "updated_at",
-                ]
+                update_fields=update_fields
             )
         _record_revision(
             entry=entry,

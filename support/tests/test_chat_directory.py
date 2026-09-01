@@ -9,6 +9,8 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from jobs.models import UserProfile
+
 from support.models import (
     OrganizationMembership,
     PermissionGrant,
@@ -30,7 +32,10 @@ from support.permission_codes import CHAT_MANAGE, WORKER_VIEW
 from support.services.organizations import create_organization
 
 
-@override_settings(SUPPORT_FEATURE_ENABLED=True)
+@override_settings(
+    SUPPORT_FEATURE_ENABLED=True,
+    AVATAR_PUBLIC_BASE_URL="https://cdn.example.test",
+)
 class StaffChatDirectoryTests(TestCase):
     def setUp(self):
         self.operator = User.objects.create_user(
@@ -60,6 +65,9 @@ class StaffChatDirectoryTests(TestCase):
             email="chat-directory-worker@example.com",
             password="password",
         )
+        UserProfile.objects.create(user=self.owner, avatar_key="avatars/owner.png")
+        UserProfile.objects.create(user=self.manager, avatar_key="avatars/manager.png")
+        UserProfile.objects.create(user=self.worker, avatar_key="avatars/worker.png")
         self.organization, _ = create_organization(
             jobhub_operator=self.operator,
             legal_name="Chat Directory Agency sp. z o.o.",
@@ -113,6 +121,14 @@ class StaffChatDirectoryTests(TestCase):
                 for item in results
             )
         )
+        worker = next(item for item in results if item["target_type"] == "worker")
+        self.assertEqual(worker["first_name"], "Worker")
+        self.assertEqual(worker["last_name"], "Three")
+        self.assertEqual(
+            worker["avatar_url"],
+            "https://cdn.example.test/avatars/worker.png",
+        )
+        self.assertNotIn("avatar_key", str(response.data))
         self.assertTrue(
             any(
                 item["target_type"] == "staff"
@@ -170,6 +186,24 @@ class StaffChatDirectoryTests(TestCase):
         self.assertEqual(
             response.data["conversation"]["connection_id"],
             str(self.connection.public_id),
+        )
+        participant = response.data["conversation"]["participants"][0]
+        self.assertEqual(participant["first_name"], "Worker")
+        self.assertEqual(
+            participant["avatar_url"],
+            "https://cdn.example.test/avatars/worker.png",
+        )
+
+        sent = self.client.post(
+            f"/api/v2/support/conversations/{response.data['conversation']['id']}/messages/send/",
+            {"body": "Hello", "original_language": "ru"},
+            format="json",
+        )
+        self.assertEqual(sent.status_code, 201, sent.data)
+        self.assertEqual(sent.data["message"]["sender_first_name"], "Owner")
+        self.assertEqual(
+            sent.data["message"]["sender_avatar_url"],
+            "https://cdn.example.test/avatars/owner.png",
         )
 
     def test_same_worker_across_applications_uses_one_private_manager_chat(self):
@@ -309,6 +343,11 @@ class StaffChatDirectoryTests(TestCase):
         self.assertEqual(owner_summary.status_code, 200, owner_summary.data)
         self.assertEqual(manager_summary.status_code, 200, manager_summary.data)
         self.assertEqual(
+            owner_summary.data["connection"]["candidate"]["avatar_url"],
+            "https://cdn.example.test/avatars/worker.png",
+        )
+        self.assertNotIn("avatar_key", str(owner_summary.data))
+        self.assertEqual(
             owner_summary.data["manager_conversation_id"],
             str(owner_conversation.public_id),
         )
@@ -439,6 +478,11 @@ class StaffChatDirectoryTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         worker = response.data["results"][0]
         self.assertTrue(worker["has_driving_license"])
+        self.assertEqual(worker["candidate"]["first_name"], "Worker")
+        self.assertEqual(
+            worker["candidate"]["avatar_url"],
+            "https://cdn.example.test/avatars/worker.png",
+        )
         self.assertEqual(worker["project_crews"][0]["project_name"], "Packing project")
         self.assertEqual(worker["project_crews"][0]["crew_name"], "Morning crew")
         self.assertEqual(worker["project_crews"][0]["role"], "driver")
@@ -450,6 +494,10 @@ class StaffChatDirectoryTests(TestCase):
             last_name="Driver",
             email="chat-directory-second-worker@example.com",
             password="password",
+        )
+        UserProfile.objects.create(
+            user=second_worker,
+            avatar_key="avatars/second-worker.png",
         )
         second_vacancy = SupportVacancy.objects.create(
             organization=self.organization,
@@ -513,6 +561,11 @@ class StaffChatDirectoryTests(TestCase):
             shared.data["message"]["shared_contact"]["display_name"],
             "Second Driver",
         )
+        self.assertEqual(
+            shared.data["message"]["shared_contact"]["avatar_url"],
+            "https://cdn.example.test/avatars/second-worker.png",
+        )
+        self.assertNotIn("avatar_key", str(shared.data))
 
         outsider = User.objects.create_user(
             username="chat-directory-contact-outsider",

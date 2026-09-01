@@ -11,6 +11,8 @@ from datetime import date
 from django.db.models import Prefetch, Q
 from django.utils import timezone
 
+from jobs.avatar_utils import avatar_public_url
+
 from support.models import (
     DriverVehicleAssignment,
     ProjectCrew,
@@ -34,9 +36,14 @@ def _display_name(connection):
 
 
 def _connection_payload(connection):
+    candidate = connection.candidate
+    profile = getattr(candidate, "profile", None)
     return {
         "id": str(connection.public_id),
         "display_name": _display_name(connection),
+        "first_name": (candidate.first_name or "").strip(),
+        "last_name": (candidate.last_name or "").strip(),
+        "avatar_url": avatar_public_url(getattr(profile, "avatar_key", "")),
         "stage": connection.stage,
         "has_driving_license": connection.has_driving_license,
     }
@@ -56,13 +63,17 @@ def project_first_crew_payload(crew):
 
     resource = (
         ProjectCrewResourceAssignment.objects.filter(crew=crew, ends_on__isnull=True)
-        .select_related("driver_connection__candidate", "vehicle")
+        .select_related(
+            "driver_connection__candidate",
+            "driver_connection__candidate__profile",
+            "vehicle",
+        )
         .order_by("-starts_on", "-id")
         .first()
     )
     passengers = (
         ProjectCrewPassenger.objects.filter(crew=crew, ends_on__isnull=True)
-        .select_related("connection__candidate")
+        .select_related("connection__candidate", "connection__candidate__profile")
         .order_by(
             "connection__candidate__first_name",
             "connection__candidate__last_name",
@@ -99,7 +110,9 @@ def project_first_crew_payload(crew):
 
 def _crew_shift_payload(shift):
     members = []
-    for member in shift.members.select_related("connection__candidate", "vehicle"):
+    for member in shift.members.select_related(
+        "connection__candidate", "connection__candidate__profile", "vehicle"
+    ):
         item = {
             "id": str(member.public_id),
             "role": member.role,
@@ -137,6 +150,7 @@ def project_first_crew_days_payload(*, crew, work_dates):
                 "members",
                 queryset=ProjectCrewShiftMember.objects.select_related(
                     "connection__candidate",
+                    "connection__candidate__profile",
                     "vehicle",
                 ).order_by("role", "connection__candidate__first_name", "id"),
             )
@@ -163,14 +177,16 @@ def project_first_driver_exceptions_payload(*, crew, work_dates):
     absences = ProjectCrewMemberAbsence.objects.filter(
         crew=crew,
         work_date__in=dates,
-    ).select_related("connection__candidate")
+    ).select_related("connection__candidate", "connection__candidate__profile")
     substitutions = ProjectCrewDriverSubstitution.objects.filter(
         crew=crew,
         work_date__in=dates,
         state=ProjectCrewDriverSubstitution.STATE_ACTIVE,
     ).select_related(
         "primary_driver_connection__candidate",
+        "primary_driver_connection__candidate__profile",
         "substitute_driver_connection__candidate",
+        "substitute_driver_connection__candidate__profile",
         "vehicle",
     )
     return {
@@ -315,7 +331,7 @@ def project_first_creation_options(*, organization):
                 SupportConnection.STAGE_ACTIVE_WORKER,
             ),
         )
-        .select_related("candidate")
+        .select_related("candidate", "candidate__profile")
         .order_by(
             "candidate__first_name",
             "candidate__last_name",
@@ -404,7 +420,11 @@ def project_first_project_workspace(*, project, selected_month):
                     Q(ends_on__isnull=True) | Q(ends_on__gte=month_start),
                     starts_on__lte=month_end,
                 )
-                .select_related("driver_connection__candidate", "vehicle")
+                .select_related(
+                    "driver_connection__candidate",
+                    "driver_connection__candidate__profile",
+                    "vehicle",
+                )
                 .order_by("-starts_on", "-id"),
             ),
             Prefetch(
@@ -413,7 +433,9 @@ def project_first_project_workspace(*, project, selected_month):
                     Q(ends_on__isnull=True) | Q(ends_on__gte=month_start),
                     starts_on__lte=month_end,
                 )
-                .select_related("connection__candidate")
+                .select_related(
+                    "connection__candidate", "connection__candidate__profile"
+                )
                 .order_by("starts_on", "id"),
             ),
             Prefetch(
@@ -427,6 +449,7 @@ def project_first_project_workspace(*, project, selected_month):
                         "members",
                         queryset=ProjectCrewShiftMember.objects.select_related(
                             "connection__candidate",
+                            "connection__candidate__profile",
                             "vehicle",
                         ).order_by("role", "connection__candidate__first_name", "id"),
                     )
@@ -438,7 +461,9 @@ def project_first_project_workspace(*, project, selected_month):
                 queryset=ProjectCrewMemberAbsence.objects.filter(
                     work_date__range=(month_start, month_end),
                 )
-                .select_related("connection__candidate")
+                .select_related(
+                    "connection__candidate", "connection__candidate__profile"
+                )
                 .order_by("work_date", "connection_id"),
             ),
             Prefetch(
@@ -448,7 +473,9 @@ def project_first_project_workspace(*, project, selected_month):
                 )
                 .select_related(
                     "primary_driver_connection__candidate",
+                    "primary_driver_connection__candidate__profile",
                     "substitute_driver_connection__candidate",
+                    "substitute_driver_connection__candidate__profile",
                     "vehicle",
                 )
                 .order_by("work_date", "id"),

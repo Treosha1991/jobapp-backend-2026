@@ -13,6 +13,8 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from jobs.avatar_utils import avatar_public_url
+
 from .feature_flags import is_project_first_workspace_enabled, is_support_feature_enabled
 from .models import (
     Announcement,
@@ -90,8 +92,12 @@ from .permissions import (
     require_worker_connection_access,
     worker_connection_queryset_for,
 )
+from .questionnaire import QUESTIONNAIRE_VERSION
 from .selectors.workspace import transport_workspace_snapshot
-from .selectors.worker_workspace import worker_workspace_snapshot
+from .selectors.worker_workspace import (
+    worker_workspace_snapshot,
+    worker_workspace_week_snapshot,
+)
 from .selectors.project_first import (
     project_first_creation_options,
     project_first_crew_days_payload,
@@ -159,6 +165,7 @@ from .serializers import (
     WorkTimeEntrySubmitSerializer,
     WorkerRequestCreateSerializer,
     WorkerRequestDecisionSerializer,
+    WorkerShiftPeerChatOpenSerializer,
 )
 from .services.audit import record_audit_event
 from .services.conversations import (
@@ -169,6 +176,7 @@ from .services.conversations import (
     open_staff_conversation,
     contact_share_options,
     open_shared_contact_conversation,
+    open_project_shift_peer_conversation,
     require_conversation_access,
     send_contact_message,
     send_text_message,
@@ -367,6 +375,16 @@ def _user_display_name(user):
     return full_name or user.username
 
 
+def _user_identity_payload(user):
+    profile = getattr(user, "profile", None)
+    return {
+        "first_name": (user.first_name or "").strip(),
+        "last_name": (user.last_name or "").strip(),
+        "display_name": _user_display_name(user),
+        "avatar_url": avatar_public_url(getattr(profile, "avatar_key", "")),
+    }
+
+
 def _application_payload(application, *, include_staff_fields=False):
     public_vacancy = application.vacancy.public_vacancy
     payload = {
@@ -391,7 +409,7 @@ def _application_payload(application, *, include_staff_fields=False):
             {
                 "candidate": {
                     "id": str(application.candidate_id),
-                    "display_name": _user_display_name(application.candidate),
+                    **_user_identity_payload(application.candidate),
                 },
                 "vacancy": {
                     "id": str(application.vacancy.public_id),
@@ -515,13 +533,19 @@ def _connection_payload(connection):
 
 
 def _conversation_payload(conversation, *, viewer):
+    if "members" in getattr(conversation, "_prefetched_objects_cache", {}):
+        members = list(conversation.members.all())
+    else:
+        members = list(
+            conversation.members.select_related("user", "user__profile").all()
+        )
     other_members = [
         member
-        for member in conversation.members.select_related("user").filter(left_at__isnull=True)
-        if member.user_id != viewer.id
+        for member in members
+        if member.left_at is None and member.user_id != viewer.id
     ]
     viewer_member = next(
-        (member for member in conversation.members.all() if member.user_id == viewer.id),
+        (member for member in members if member.user_id == viewer.id),
         None,
     )
     last_message = conversation.messages.order_by("-created_at", "-id").first()
@@ -544,7 +568,7 @@ def _conversation_payload(conversation, *, viewer):
         "organization": _organization_payload(conversation.organization),
         "state": conversation.state,
         "participants": [
-            {"display_name": _user_display_name(member.user), "role": member.role}
+            {**_user_identity_payload(member.user), "role": member.role}
             for member in other_members
         ],
         "audience": audience,
@@ -587,6 +611,9 @@ def _message_payload(message, *, viewer):
                 else None
             ),
             "display_name": _user_display_name(message.shared_contact_user),
+            "first_name": (message.shared_contact_user.first_name or "").strip(),
+            "last_name": (message.shared_contact_user.last_name or "").strip(),
+            "avatar_url": _user_identity_payload(message.shared_contact_user)["avatar_url"],
             "subtitle": (
                 message.shared_contact_connection.vacancy.internal_title
                 if message.shared_contact_connection_id
@@ -602,6 +629,11 @@ def _message_payload(message, *, viewer):
         "original_language": message.original_language,
         "is_mine": message.sender_id == viewer.id,
         "sender_display_name": _user_display_name(message.sender) if message.sender else "",
+        "sender_first_name": (message.sender.first_name or "").strip() if message.sender else "",
+        "sender_last_name": (message.sender.last_name or "").strip() if message.sender else "",
+        "sender_avatar_url": (
+            _user_identity_payload(message.sender)["avatar_url"] if message.sender else ""
+        ),
         "created_at": message.created_at,
         "edited_at": message.edited_at,
         "deleted_at": message.deleted_at,
@@ -611,13 +643,20 @@ def _message_payload(message, *, viewer):
             if message.forwarded_from_id and message.forwarded_from.sender
             else ""
         ),
+        "forwarded_from_sender_avatar_url": (
+            _user_identity_payload(message.forwarded_from.sender)["avatar_url"]
+            if message.forwarded_from_id and message.forwarded_from.sender
+            else ""
+        ),
         "shared_contact": shared_contact,
     }
 
 
 def _staff_application_or_not_found(*, user, application_public_id):
     application = get_object_or_404(
-        SupportApplication.objects.select_related("vacancy__organization", "candidate")
+        SupportApplication.objects.select_related(
+            "vacancy__organization", "candidate", "candidate__profile"
+        )
         .filter(
             vacancy__organization__memberships__user=user,
             vacancy__organization__memberships__state=OrganizationMembership.STATE_ACTIVE,
@@ -2748,7 +2787,7 @@ class OrganizationWorkerConnectionListAPIView(
             user=request.user,
             organization=organization,
             queryset=SupportConnection.objects.filter(is_archived=False),
-        ).select_related("candidate", "vacancy")
+        ).select_related("candidate", "candidate__profile", "vacancy")
         term = (request.query_params.get("q") or "").strip()
         if term:
             queryset = queryset.filter(
@@ -2833,7 +2872,7 @@ class OrganizationWorkerConnectionListAPIView(
                     {
                         "id": str(connection.public_id),
                         "candidate": {
-                            "display_name": _user_display_name(connection.candidate),
+                            **_user_identity_payload(connection.candidate),
                         },
                         "vacancy": {
                             "id": str(connection.vacancy.public_id),
@@ -2868,7 +2907,7 @@ class OrganizationChatDirectoryAPIView(
                 organization=organization,
                 state=OrganizationMembership.STATE_ACTIVE,
             )
-            .select_related("user")
+            .select_related("user", "user__profile")
             .order_by("-created_at", "-id")
         )
         conversations = list(
@@ -2879,7 +2918,7 @@ class OrganizationChatDirectoryAPIView(
                 members__left_at__isnull=True,
             )
             .select_related("connection", "private_worker")
-            .prefetch_related("members__user")
+            .prefetch_related("members__user__profile")
             .distinct()
         )
         conversation_by_worker = {}
@@ -2920,7 +2959,7 @@ class OrganizationChatDirectoryAPIView(
                 user=request.user,
                 organization=organization,
                 queryset=SupportConnection.objects.filter(is_archived=False),
-            ).select_related("candidate", "vacancy")
+            ).select_related("candidate", "candidate__profile", "vacancy")
             seen_worker_user_ids = set()
             for connection in worker_queryset.order_by("-created_at", "-id")[:250]:
                 if connection.candidate_id in seen_worker_user_ids:
@@ -2932,6 +2971,9 @@ class OrganizationChatDirectoryAPIView(
                         "target_type": "worker",
                         "target_id": str(connection.public_id),
                         "display_name": _user_display_name(connection.candidate),
+                        "first_name": (connection.candidate.first_name or "").strip(),
+                        "last_name": (connection.candidate.last_name or "").strip(),
+                        "avatar_url": _user_identity_payload(connection.candidate)["avatar_url"],
                         "subtitle": connection.vacancy.internal_title,
                         "created_at": connection.created_at,
                         "conversation": (
@@ -2950,6 +2992,9 @@ class OrganizationChatDirectoryAPIView(
                     "target_type": "staff",
                     "target_id": str(membership.public_id),
                     "display_name": _user_display_name(membership.user),
+                    "first_name": (membership.user.first_name or "").strip(),
+                    "last_name": (membership.user.last_name or "").strip(),
+                    "avatar_url": _user_identity_payload(membership.user)["avatar_url"],
                     "subtitle": membership.display_role,
                     "created_at": membership.created_at,
                     "conversation": (
@@ -2985,7 +3030,9 @@ class OrganizationChatDirectoryOpenAPIView(
                 permission_code=CHAT_MANAGE,
             )
             connection = get_object_or_404(
-                SupportConnection.objects.select_related("organization", "candidate"),
+                SupportConnection.objects.select_related(
+                    "organization", "candidate", "candidate__profile"
+                ),
                 organization=organization,
                 public_id=target_id,
                 is_archived=False,
@@ -3001,7 +3048,9 @@ class OrganizationChatDirectoryOpenAPIView(
             )
         else:
             target_membership = get_object_or_404(
-                OrganizationMembership.objects.select_related("organization", "user"),
+                OrganizationMembership.objects.select_related(
+                    "organization", "user", "user__profile"
+                ),
                 organization=organization,
                 public_id=target_id,
                 state=OrganizationMembership.STATE_ACTIVE,
@@ -3010,7 +3059,9 @@ class OrganizationChatDirectoryOpenAPIView(
                 actor=request.user,
                 target_membership=target_membership,
             )
-        conversation = SupportConversation.objects.prefetch_related("members__user").get(
+        conversation = SupportConversation.objects.prefetch_related(
+            "members__user__profile"
+        ).get(
             pk=conversation.pk
         )
         return Response(
@@ -3050,7 +3101,7 @@ class OrganizationWorkerConnectionSummaryAPIView(
                 organization=organization,
                 queryset=SupportConnection.objects.filter(
                     is_archived=False,
-                ).select_related("candidate", "vacancy"),
+                ).select_related("candidate", "candidate__profile", "vacancy"),
             ),
             public_id=connection_public_id,
         )
@@ -3266,13 +3317,17 @@ class OrganizationWorkerConnectionSummaryAPIView(
                         shift_id__in=shift_ids,
                         connection_id__in=accessible_worker_ids,
                     )
-                    .select_related("connection__candidate", "vehicle")
+                    .select_related(
+                        "connection__candidate",
+                        "connection__candidate__profile",
+                        "vehicle",
+                    )
                     .order_by("role", "connection__candidate__first_name", "id")
                 ):
                     members_by_shift.setdefault(member.shift_id, []).append(
                         {
                             "connection_id": str(member.connection.public_id),
-                            "display_name": _user_display_name(member.connection.candidate),
+                            **_user_identity_payload(member.connection.candidate),
                             "role": member.role,
                             "vehicle": (
                                 {
@@ -3569,7 +3624,7 @@ class OrganizationWorkerConnectionSummaryAPIView(
                 "connection": {
                     "id": str(connection.public_id),
                     "candidate": {
-                        "display_name": _user_display_name(connection.candidate),
+                        **_user_identity_payload(connection.candidate),
                         "has_driving_license": connection.has_driving_license,
                     },
                     "vacancy": {
@@ -4153,6 +4208,7 @@ class SupportVacancyBotAPIView(SupportFeatureAPIView):
         return Response(
             {
                 "vacancy": {"id": str(vacancy.public_id)},
+                "questionnaire_version": QUESTIONNAIRE_VERSION,
                 "bot": {
                     "version": revision.version,
                     "language": language,
@@ -4218,6 +4274,7 @@ class PublicVacancySupportWorkflowAPIView(SupportFeatureAPIView):
                     "id": str(vacancy.public_id),
                     "organization": _organization_payload(vacancy.organization),
                     "vacancy_title": vacancy.public_vacancy.title,
+                    "questionnaire_version": QUESTIONNAIRE_VERSION,
                 },
                 "bot": (
                     {
@@ -4301,7 +4358,7 @@ class SupportApplicationQueueAPIView(SupportFeatureAPIView, OrganizationAccessMi
         )
         applications = (
             SupportApplication.objects.filter(vacancy__organization=organization)
-            .select_related("vacancy", "candidate")
+            .select_related("vacancy", "candidate", "candidate__profile")
             .order_by("-submitted_at", "-id")
         )
         may_request_documents = has_permission(
@@ -4315,7 +4372,14 @@ class SupportApplicationQueueAPIView(SupportFeatureAPIView, OrganizationAccessMi
                 is_archived=False,
                 stage=SupportConnection.STAGE_DOCUMENTS,
             )
-            .select_related("candidate", "vacancy", "application")
+            .select_related(
+                "candidate",
+                "candidate__profile",
+                "vacancy",
+                "application__candidate",
+                "application__candidate__profile",
+                "application__vacancy",
+            )
             .prefetch_related("stage_events", "document_request_packages__account_reference")
             .order_by("-updated_at", "-id")
         )
@@ -4337,7 +4401,7 @@ class SupportApplicationQueueAPIView(SupportFeatureAPIView, OrganizationAccessMi
                     "updated_at": connection.updated_at,
                     "candidate": {
                         "id": str(connection.candidate_id),
-                        "display_name": _user_display_name(connection.candidate),
+                        **_user_identity_payload(connection.candidate),
                     },
                     "vacancy": {
                         "id": str(connection.vacancy.public_id),
@@ -4459,7 +4523,9 @@ class SupportConnectionOpenManagerConversationAPIView(SupportFeatureAPIView):
             candidate=request.user,
             connection=connection,
         )
-        conversation = SupportConversation.objects.prefetch_related("members__user").get(pk=conversation.pk)
+        conversation = SupportConversation.objects.prefetch_related(
+            "members__user__profile"
+        ).get(pk=conversation.pk)
         return Response(
             {"created": created, "conversation": _conversation_payload(conversation, viewer=request.user)},
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
@@ -4520,7 +4586,7 @@ class MySupportConversationListAPIView(SupportFeatureAPIView):
                 **organization_filter,
             )
             .select_related("connection", "organization")
-            .prefetch_related("members__user")
+            .prefetch_related("members__user__profile")
             .distinct()
             .order_by("-updated_at", "-id")
         )
@@ -4549,7 +4615,7 @@ class SupportConversationGroupPushPreferenceAPIView(SupportFeatureAPIView):
                 members__user=request.user,
                 members__left_at__isnull=True,
             )
-            .prefetch_related("members__user")
+            .prefetch_related("members__user__profile")
             .distinct()
         )
         if conversation.kind != SupportConversation.KIND_GROUP:
@@ -4579,8 +4645,11 @@ class SupportConversationMessageListAPIView(SupportFeatureAPIView):
         require_conversation_access(user=request.user, conversation=conversation)
         messages = conversation.messages.select_related(
             "sender",
+            "sender__profile",
             "forwarded_from__sender",
+            "forwarded_from__sender__profile",
             "shared_contact_user",
+            "shared_contact_user__profile",
             "shared_contact_connection__vacancy",
             "shared_contact_membership",
         ).all()
@@ -4661,7 +4730,9 @@ class SupportConversationContactMessageCreateAPIView(SupportFeatureAPIView):
         )
         message = SupportMessage.objects.select_related(
             "sender",
+            "sender__profile",
             "shared_contact_user",
+            "shared_contact_user__profile",
             "shared_contact_connection__vacancy",
             "shared_contact_membership",
         ).get(pk=message.pk)
@@ -4699,7 +4770,7 @@ class SupportMessageSharedContactOpenAPIView(SupportFeatureAPIView):
             message=message,
         )
         target_conversation = SupportConversation.objects.prefetch_related(
-            "members__user"
+            "members__user__profile"
         ).get(pk=target_conversation.pk)
         return Response(
             {
@@ -4852,7 +4923,7 @@ def _housing_assignment_detail_payload(assignment, *, may_view_worker=True):
         "worker": (
             {
                 "connection_id": str(assignment.connection.public_id),
-                "display_name": _user_display_name(assignment.connection.candidate),
+                **_user_identity_payload(assignment.connection.candidate),
             }
             if may_view_worker
             else None
@@ -5614,6 +5685,7 @@ class MySupportWorkspaceAPIView(SupportFeatureAPIView):
             SupportConnection.objects.select_related(
                 "organization",
                 "candidate",
+                "candidate__profile",
                 "assigned_manager__user",
             ),
             public_id=connection_public_id,
@@ -5634,6 +5706,96 @@ class MySupportWorkspaceAPIView(SupportFeatureAPIView):
                 connection=connection,
                 selected_month=selected_month,
             )
+        )
+
+
+class MySupportWorkspaceWeekAPIView(SupportFeatureAPIView):
+    """Return the selected worker-owned ISO week from project-first days."""
+
+    def get(self, request, connection_public_id):
+        _require_active_support_access(request.user)
+        if not is_project_first_workspace_enabled():
+            raise NotFound("project_first_workspace_not_available")
+        connection = get_object_or_404(
+            SupportConnection.objects.select_related(
+                "organization",
+                "candidate",
+                "candidate__profile",
+            ),
+            public_id=connection_public_id,
+            candidate=request.user,
+            is_archived=False,
+        )
+        raw_selected_date = (request.query_params.get("selected_date") or "").strip()
+        try:
+            selected_date = (
+                date.fromisoformat(raw_selected_date)
+                if raw_selected_date
+                else timezone.localdate()
+            )
+            week_start = selected_date - timedelta(days=selected_date.weekday())
+            week_start + timedelta(days=6)
+        except (ValueError, OverflowError) as error:
+            raise ValidationError({"selected_date": "invalid_date"}) from error
+        return Response(
+            worker_workspace_week_snapshot(
+                connection=connection,
+                selected_date=selected_date,
+            )
+        )
+
+
+class MyProjectShiftPeerConversationAPIView(SupportFeatureAPIView):
+    """Open a private peer chat only for two members of the selected shift."""
+
+    def post(self, request, connection_public_id, shift_public_id):
+        _require_active_support_access(request.user)
+        if not is_project_first_workspace_enabled():
+            raise NotFound("project_first_workspace_not_available")
+        connection = get_object_or_404(
+            SupportConnection.objects.select_related("organization", "candidate")
+            .exclude(stage=SupportConnection.STAGE_CLOSED),
+            public_id=connection_public_id,
+            candidate=request.user,
+            is_archived=False,
+        )
+        shift = get_object_or_404(
+            ProjectCrewShift.objects.select_related("crew__organization").filter(
+                crew__organization=connection.organization,
+                state=ProjectCrewShift.STATE_PUBLISHED,
+                members__connection=connection,
+            ).distinct(),
+            public_id=shift_public_id,
+        )
+        serializer = WorkerShiftPeerChatOpenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        target_connection = get_object_or_404(
+            SupportConnection.objects.select_related(
+                "organization", "candidate", "candidate__profile"
+            )
+            .exclude(stage=SupportConnection.STAGE_CLOSED),
+            organization=connection.organization,
+            public_id=serializer.validated_data["target_connection_id"],
+            is_archived=False,
+        )
+        conversation, created = open_project_shift_peer_conversation(
+            actor=request.user,
+            actor_connection=connection,
+            target_connection=target_connection,
+            shift=shift,
+        )
+        conversation = SupportConversation.objects.prefetch_related(
+            "members__user__profile"
+        ).get(pk=conversation.pk)
+        return Response(
+            {
+                "created": created,
+                "conversation": _conversation_payload(
+                    conversation,
+                    viewer=request.user,
+                ),
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
 
@@ -5668,6 +5830,7 @@ class MyWorkTimeDayAPIView(SupportFeatureAPIView):
                 state=ScheduledWorkShift.STATE_PUBLISHED,
             )
             .select_related("connection", "work_assignment")
+            .order_by("-ends_at", "-id")
             .first()
         )
         entry = (
@@ -6790,7 +6953,9 @@ class ScheduledShiftBatchCreateAPIView(SupportFeatureAPIView, OrganizationAccess
         )
         shifts = list(
             ScheduledWorkShift.objects.filter(batch=batch)
-            .select_related("connection__candidate")
+            .select_related(
+                "connection__candidate", "connection__candidate__profile"
+            )
             .order_by("connection_id", "work_date", "id")
         )
         return Response(
@@ -6965,7 +7130,9 @@ class HousingSiteListCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixi
                 ),
             )
             .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=now))
-            .select_related("connection__candidate")
+            .select_related(
+                "connection__candidate", "connection__candidate__profile"
+            )
             .order_by("check_in_at", "id")
         )
         visible_connection_ids = set(
@@ -7105,6 +7272,32 @@ class VehicleListCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
                 "internal_name", "id"
             )
         )
+        visible_connection_ids = set(
+            worker_connection_queryset_for(
+                user=request.user,
+                organization=organization,
+                queryset=SupportConnection.objects.filter(
+                    organization=organization,
+                    is_archived=False,
+                ),
+            ).values_list("id", flat=True)
+        )
+
+        def driver_identity(connection):
+            if connection.id not in visible_connection_ids:
+                return {
+                    "id": None,
+                    "first_name": "",
+                    "last_name": "",
+                    "display_name": "",
+                    "avatar_url": "",
+                    "identity_restricted": True,
+                }
+            return {
+                "id": str(connection.public_id),
+                **_user_identity_payload(connection.candidate),
+                "identity_restricted": False,
+            }
 
         # Project crews are the canonical source for the new employer workflow.
         # Keep the published legacy assignment as a fallback for vehicles that
@@ -7117,17 +7310,18 @@ class VehicleListCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
                 starts_on__lte=today,
             )
             .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
-            .select_related("driver_connection__candidate", "crew__project")
+            .select_related(
+                "driver_connection__candidate",
+                "driver_connection__candidate__profile",
+                "crew__project",
+            )
             .order_by("vehicle_id", "-starts_on", "-id")
         )
         for resource in project_resources:
             current_driver_by_vehicle.setdefault(
                 resource.vehicle_id,
                 {
-                    "id": str(resource.driver_connection.public_id),
-                    "display_name": _user_display_name(
-                        resource.driver_connection.candidate
-                    ),
+                    **driver_identity(resource.driver_connection),
                     "project": resource.crew.project.worker_visible_name
                     or resource.crew.project.internal_name,
                     "project_id": str(resource.crew.project.public_id),
@@ -7143,17 +7337,17 @@ class VehicleListCreateAPIView(SupportFeatureAPIView, OrganizationAccessMixin):
                 starts_on__lte=today,
             )
             .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
-            .select_related("driver_connection__candidate")
+            .select_related(
+                "driver_connection__candidate",
+                "driver_connection__candidate__profile",
+            )
             .order_by("vehicle_id", "-starts_on", "-id")
         )
         for resource in legacy_resources:
             current_driver_by_vehicle.setdefault(
                 resource.vehicle_id,
                 {
-                    "id": str(resource.driver_connection.public_id),
-                    "display_name": _user_display_name(
-                        resource.driver_connection.candidate
-                    ),
+                    **driver_identity(resource.driver_connection),
                     "project": None,
                     "project_id": None,
                     "crew": None,
@@ -7240,7 +7434,7 @@ class HousingAvailableWorkersAPIView(SupportFeatureAPIView, OrganizationAccessMi
                 ),
             )
             .exclude(id__in=unavailable_connection_ids)
-            .select_related("candidate")
+            .select_related("candidate", "candidate__profile")
             .order_by(
                 "candidate__first_name",
                 "candidate__last_name",
@@ -7257,9 +7451,7 @@ class HousingAvailableWorkersAPIView(SupportFeatureAPIView, OrganizationAccessMi
                         "stage": connection.stage,
                         "candidate": {
                             "id": str(connection.candidate_id),
-                            "display_name": _user_display_name(
-                                connection.candidate
-                            ),
+                            **_user_identity_payload(connection.candidate),
                         },
                     }
                     for connection in connections
@@ -7302,7 +7494,7 @@ class HousingAssignmentAssignAPIView(SupportFeatureAPIView, OrganizationAccessMi
                 assignment=assignment,
             )
         assignment = HousingAssignment.objects.select_related(
-            "connection__candidate"
+            "connection__candidate", "connection__candidate__profile"
         ).get(pk=assignment.pk)
         return Response(
             {
@@ -7351,7 +7543,7 @@ class HousingAssignmentCheckOutAPIView(SupportFeatureAPIView):
             check_out_at=serializer.validated_data["check_out_at"],
         )
         assignment = HousingAssignment.objects.select_related(
-            "connection__candidate"
+            "connection__candidate", "connection__candidate__profile"
         ).get(pk=assignment.pk)
         return Response(
             {"housing_assignment": _housing_assignment_detail_payload(assignment)}

@@ -3,11 +3,14 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
+from jobs.avatar_utils import avatar_public_url
 from jobs.models import UserBlock
 
 from support.models import (
     InAppNotification,
     OrganizationMembership,
+    ProjectCrewShift,
+    ProjectCrewShiftMember,
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
@@ -24,6 +27,18 @@ from support.permissions import (
 from .audit import record_audit_event
 from .entitlements import support_access_snapshot_for
 from .notifications import enqueue_support_notification
+
+
+def _contact_identity(user):
+    profile = getattr(user, "profile", None)
+    return {
+        "first_name": (user.first_name or "").strip(),
+        "last_name": (user.last_name or "").strip(),
+        "display_name": (
+            user.get_full_name().strip() or user.username or user.email
+        ),
+        "avatar_url": avatar_public_url(getattr(profile, "avatar_key", "")),
+    }
 
 
 def find_private_manager_conversation(*, organization, worker, manager):
@@ -46,6 +61,11 @@ def find_private_manager_conversation(*, organization, worker, manager):
         .filter(
             members__user=manager,
             members__role=SupportConversationMember.ROLE_STAFF,
+            members__left_at__isnull=True,
+        )
+        .filter(
+            members__user=worker,
+            members__role=SupportConversationMember.ROLE_WORKER,
             members__left_at__isnull=True,
         )
         .distinct()
@@ -176,10 +196,7 @@ def open_manager_conversation(*, candidate, connection):
             raise PermissionDenied("support_connection_not_available")
         if support_access_snapshot_for(candidate)["state"] != "active":
             raise PermissionDenied("support_access_required")
-        if connection.stage not in {
-            SupportConnection.STAGE_AWAITING_SUPPORT,
-            SupportConnection.STAGE_MANAGER,
-        }:
+        if connection.stage == SupportConnection.STAGE_CLOSED:
             raise ValidationError({"connection": "manager_chat_not_available_at_current_stage"})
         manager_membership = connection.assigned_manager
         if manager_membership is None or not manager_membership.is_active:
@@ -507,7 +524,7 @@ def contact_share_options(*, sender, conversation):
         queryset=SupportConnection.objects.filter(is_archived=False).exclude(
             stage=SupportConnection.STAGE_CLOSED
         ),
-    ).select_related("candidate", "vacancy")
+    ).select_related("candidate", "candidate__profile", "vacancy")
     seen_users = set()
     for connection in workers.order_by("candidate__first_name", "candidate__last_name", "id"):
         if connection.candidate_id == sender.id or connection.candidate_id in seen_users:
@@ -517,18 +534,14 @@ def contact_share_options(*, sender, conversation):
             {
                 "target_type": "worker",
                 "target_id": str(connection.public_id),
-                "display_name": (
-                    connection.candidate.get_full_name().strip()
-                    or connection.candidate.username
-                    or connection.candidate.email
-                ),
+                **_contact_identity(connection.candidate),
                 "subtitle": connection.vacancy.internal_title,
             }
         )
     memberships = OrganizationMembership.objects.filter(
         organization=organization,
         state=OrganizationMembership.STATE_ACTIVE,
-    ).select_related("user")
+    ).select_related("user", "user__profile")
     for membership in memberships.order_by("user__first_name", "user__last_name", "id"):
         if membership.user_id == sender.id:
             continue
@@ -536,11 +549,7 @@ def contact_share_options(*, sender, conversation):
             {
                 "target_type": "staff",
                 "target_id": str(membership.public_id),
-                "display_name": (
-                    membership.user.get_full_name().strip()
-                    or membership.user.username
-                    or membership.user.email
-                ),
+                **_contact_identity(membership.user),
                 "subtitle": membership.display_role,
             }
         )
@@ -571,7 +580,9 @@ def send_contact_message(
     if selected is None:
         raise PermissionDenied("support_contact_share_target_not_available")
     if target_type == "worker":
-        connection = SupportConnection.objects.select_related("candidate").get(
+        connection = SupportConnection.objects.select_related(
+            "candidate", "candidate__profile"
+        ).get(
             organization=conversation.organization,
             public_id=target_id,
             is_archived=False,
@@ -579,7 +590,9 @@ def send_contact_message(
         membership = None
         shared_user = connection.candidate
     else:
-        membership = OrganizationMembership.objects.select_related("user").get(
+        membership = OrganizationMembership.objects.select_related(
+            "user", "user__profile"
+        ).get(
             organization=conversation.organization,
             public_id=target_id,
             state=OrganizationMembership.STATE_ACTIVE,
@@ -611,25 +624,39 @@ def send_contact_message(
     return message, created
 
 
-def _open_worker_peer_conversation(*, actor, target_connection):
+def _open_worker_peer_conversation(
+    *,
+    actor,
+    target_connection,
+    actor_connection=None,
+    unavailable_code="support_shared_contact_not_available",
+):
     organization = target_connection.organization
-    actor_connection = (
-        SupportConnection.objects.filter(
-            organization=organization,
-            candidate=actor,
-            is_archived=False,
+    organization.__class__.objects.select_for_update().get(pk=organization.pk)
+    if actor_connection is None:
+        actor_connection = (
+            SupportConnection.objects.filter(
+                organization=organization,
+                candidate=actor,
+                is_archived=False,
+            )
+            .exclude(stage=SupportConnection.STAGE_CLOSED)
+            .order_by("-updated_at", "-id")
+            .first()
         )
-        .exclude(stage=SupportConnection.STAGE_CLOSED)
-        .order_by("-updated_at", "-id")
-        .first()
-    )
     if (
         actor_connection is None
+        or actor_connection.organization_id != organization.id
+        or actor_connection.candidate_id != actor.id
+        or actor_connection.is_archived
+        or actor_connection.stage == SupportConnection.STAGE_CLOSED
+        or target_connection.is_archived
+        or target_connection.stage == SupportConnection.STAGE_CLOSED
         or actor.id == target_connection.candidate_id
         or support_access_snapshot_for(actor)["state"] != "active"
         or support_access_snapshot_for(target_connection.candidate)["state"] != "active"
     ):
-        raise PermissionDenied("support_shared_contact_not_available")
+        raise PermissionDenied(unavailable_code)
     candidates = list(
         SupportConversation.objects.select_for_update()
         .filter(
@@ -688,6 +715,53 @@ def _open_worker_peer_conversation(*, actor, target_connection):
             if member.left_at is not None:
                 member.left_at = None
                 member.save(update_fields=("left_at",))
+    return conversation, created
+
+
+@transaction.atomic
+def open_project_shift_peer_conversation(
+    *,
+    actor,
+    actor_connection,
+    target_connection,
+    shift,
+):
+    """Open an exact worker pair only when both belong to this published day."""
+
+    if (
+        actor_connection.candidate_id != actor.id
+        or actor_connection.organization_id != shift.crew.organization_id
+        or target_connection.organization_id != shift.crew.organization_id
+        or shift.state != ProjectCrewShift.STATE_PUBLISHED
+        or target_connection.id == actor_connection.id
+        or not ProjectCrewShiftMember.objects.filter(
+            shift=shift,
+            connection=actor_connection,
+        ).exists()
+        or not ProjectCrewShiftMember.objects.filter(
+            shift=shift,
+            connection=target_connection,
+        ).exists()
+    ):
+        raise PermissionDenied("support_shift_peer_chat_not_available")
+
+    conversation, created = _open_worker_peer_conversation(
+        actor=actor,
+        actor_connection=actor_connection,
+        target_connection=target_connection,
+        unavailable_code="support_shift_peer_chat_not_available",
+    )
+    record_audit_event(
+        organization=shift.crew.organization,
+        actor=actor,
+        action="conversation.shift_peer_opened",
+        target=conversation,
+        details={
+            "shift_id": str(shift.public_id),
+            "target_connection_id": str(target_connection.public_id),
+            "created": created,
+        },
+    )
     return conversation, created
 
 

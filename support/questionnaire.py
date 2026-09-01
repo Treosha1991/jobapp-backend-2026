@@ -1,9 +1,39 @@
-"""Stable vocabulary and presentation helpers for candidate questionnaire v2."""
+"""Stable vocabulary and presentation helpers for the candidate questionnaire."""
 
 from datetime import date
+import unicodedata
 
 
-QUESTIONNAIRE_VERSION = "support-questionnaire-v2"
+QUESTIONNAIRE_VERSION_V2 = "support-questionnaire-v2"
+QUESTIONNAIRE_VERSION_V3 = "support-questionnaire-v3"
+QUESTIONNAIRE_VERSION = QUESTIONNAIRE_VERSION_V3
+SUPPORTED_QUESTIONNAIRE_VERSIONS = (
+    QUESTIONNAIRE_VERSION_V2,
+    QUESTIONNAIRE_VERSION_V3,
+)
+
+
+def normalize_identity_name(value):
+    """Return a canonical, display-safe first or last name.
+
+    Identity is copied to the canonical ``User`` only for questionnaire v3,
+    therefore the normalization rules live in one shared helper used by both
+    the API boundary and the transaction service.
+    """
+
+    if not isinstance(value, str):
+        raise ValueError("identity_name_required")
+    normalized = unicodedata.normalize("NFC", value)
+    if any(unicodedata.category(character).startswith("C") for character in normalized):
+        raise ValueError("identity_name_invalid")
+    normalized = " ".join(normalized.split())
+    if not normalized:
+        raise ValueError("identity_name_required")
+    if len(normalized) > 150:
+        raise ValueError("identity_name_too_long")
+    if "???" in normalized or "\ufffd" in normalized:
+        raise ValueError("identity_name_invalid")
+    return normalized
 
 LEGAL_STATUSES = (
     "visa_free",

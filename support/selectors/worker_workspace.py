@@ -14,6 +14,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.db.models import Prefetch, Q, Sum
 from django.utils import timezone
 
+from jobs.avatar_utils import avatar_public_url
+
 from support.models import (
     Announcement,
     AnnouncementAcknowledgement,
@@ -35,12 +37,31 @@ from support.models import (
 )
 from support.permission_codes import CHAT_MANAGE
 from support.permissions import has_permission
+from support.services.conversations import find_private_manager_conversation
+from support.services.entitlements import (
+    support_access_snapshot_for,
+    users_with_active_support_access,
+)
 from support.services.timekeeping import worker_time_entry_access
 
 
 def _display_name(user):
     full_name = user.get_full_name().strip()
     return full_name or user.username or user.email
+
+
+def _avatar_url(user):
+    profile = getattr(user, "profile", None)
+    return avatar_public_url(getattr(profile, "avatar_key", ""))
+
+
+def _identity_payload(user):
+    return {
+        "first_name": (user.first_name or "").strip(),
+        "last_name": (user.last_name or "").strip(),
+        "display_name": _display_name(user),
+        "avatar_url": _avatar_url(user),
+    }
 
 
 def _duration_label(minutes):
@@ -103,6 +124,7 @@ def _member_queryset(*, organization):
         )
         .select_related(
             "connection__candidate",
+            "connection__candidate__profile",
             "vehicle",
         )
         .order_by("role", "connection__candidate__first_name", "id")
@@ -196,18 +218,38 @@ def _shift_payload(
             driver_member.vehicle if driver_member is not None else None
         ),
         "effective_driver": (
-            {"display_name": _display_name(driver_member.connection.candidate)}
+            _identity_payload(driver_member.connection.candidate)
             if driver_member is not None
             else None
         ),
         "crew_members": [
             {
-                "display_name": _display_name(item.connection.candidate),
+                **_identity_payload(item.connection.candidate),
                 "role": item.role,
             }
             for item in members
         ],
     }
+
+
+def _week_shift_payload(shift, *, connection, chat_access_by_user):
+    payload = _shift_payload(shift, connection=connection)
+    payload["crew_members"] = [
+        {
+            "connection_id": str(item.connection.public_id),
+            **_identity_payload(item.connection.candidate),
+            "role": item.role,
+            "is_self": item.connection_id == connection.id,
+            "can_open_chat": bool(
+                item.connection_id != connection.id
+                and not item.connection.is_archived
+                and item.connection.stage != item.connection.STAGE_CLOSED
+                and chat_access_by_user.get(item.connection.candidate_id, False)
+            ),
+        }
+        for item in shift.members.all()
+    ]
+    return payload
 
 
 def _current_assignment_from_shift(shift, *, connection, basis):
@@ -228,9 +270,7 @@ def _current_assignment_from_shift(shift, *, connection, basis):
         "role": payload["own_role"],
         "vehicle": payload["effective_vehicle"],
         "driver": (
-            {
-                "display_name": _display_name(driver_member.connection.candidate),
-            }
+            _identity_payload(driver_member.connection.candidate)
             if driver_member is not None
             else None
         ),
@@ -255,6 +295,7 @@ def _permanent_assignment(connection, *, today):
         .select_related(
             "crew__project__worksite",
             "driver_connection__candidate",
+            "driver_connection__candidate__profile",
             "vehicle",
         )
         .order_by("-starts_on", "-id")
@@ -303,7 +344,11 @@ def _permanent_assignment(connection, *, today):
                 starts_on__lte=today,
             )
             .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
-            .select_related("driver_connection__candidate", "vehicle")
+            .select_related(
+                "driver_connection__candidate",
+                "driver_connection__candidate__profile",
+                "vehicle",
+            )
             .order_by("-starts_on", "-id")
             .first()
         )
@@ -318,11 +363,7 @@ def _permanent_assignment(connection, *, today):
             active_resource.vehicle if active_resource is not None else None
         ),
         "driver": (
-            {
-                "display_name": _display_name(
-                    active_resource.driver_connection.candidate
-                ),
-            }
+            _identity_payload(active_resource.driver_connection.candidate)
             if active_resource is not None
             else None
         ),
@@ -403,39 +444,12 @@ def _time_total(*, connection, date_from, date_to):
 
 
 def _manager_conversation(connection):
-    base = SupportConversation.objects.filter(
+    if not connection.assigned_manager_id or not connection.assigned_manager.user_id:
+        return None
+    return find_private_manager_conversation(
         organization=connection.organization,
-        kind=SupportConversation.KIND_MANAGER,
-        state=SupportConversation.STATE_ACTIVE,
-        members__user=connection.candidate,
-        members__left_at__isnull=True,
-    )
-    if connection.assigned_manager_id and connection.assigned_manager.user_id:
-        exact = (
-            base.filter(
-                Q(
-                    private_worker=connection.candidate,
-                    private_manager=connection.assigned_manager.user,
-                )
-                | Q(
-                    private_worker__isnull=True,
-                    private_manager__isnull=True,
-                    connection=connection,
-                    members__user=connection.assigned_manager.user,
-                    members__left_at__isnull=True,
-                )
-            )
-            .distinct()
-            .order_by("-updated_at", "-id")
-            .first()
-        )
-        if exact is not None:
-            return exact
-    return (
-        base.filter(connection=connection)
-        .distinct()
-        .order_by("-updated_at", "-id")
-        .first()
+        worker=connection.candidate,
+        manager=connection.assigned_manager.user,
     )
 
 
@@ -529,6 +543,140 @@ def _attention_payload(connection, *, now):
     return values
 
 
+def worker_workspace_week_snapshot(*, connection, selected_date):
+    """Return exactly one ISO week owned by the authenticated worker.
+
+    Crew membership is taken only from each published project-first shift on
+    which this exact connection is an actual member.  A client therefore
+    cannot reuse a connection or shift UUID to discover another crew/day.
+    """
+
+    now = timezone.now()
+    today = timezone.localdate()
+    week_start = selected_date - timedelta(days=selected_date.weekday())
+    week_end = week_start + timedelta(days=6)
+    iso_year, iso_week, _ = selected_date.isocalendar()
+
+    week_shifts = list(
+        _worker_shift_queryset(connection).filter(
+            work_date__range=(week_start, week_end),
+        )
+    )
+    shifts_by_date = {}
+    candidate_users = {}
+    for shift in week_shifts:
+        shifts_by_date.setdefault(shift.work_date, []).append(shift)
+        for item in shift.members.all():
+            candidate_users.setdefault(
+                item.connection.candidate_id,
+                item.connection.candidate,
+            )
+    peer_user_ids = {
+        user_id
+        for user_id in candidate_users
+        if user_id != connection.candidate_id
+    }
+    active_peer_user_ids = users_with_active_support_access(
+        peer_user_ids,
+        at_time=now,
+    )
+    chat_access_by_user = {
+        user_id: user_id in active_peer_user_ids for user_id in peer_user_ids
+    }
+
+    day_off_dates = set(
+        WorkerScheduleDayOff.objects.filter(
+            connection=connection,
+            organization=connection.organization,
+            work_date__range=(week_start, week_end),
+        ).values_list("work_date", flat=True)
+    )
+    absence_dates = set(
+        ProjectCrewMemberAbsence.objects.filter(
+            connection=connection,
+            organization=connection.organization,
+            crew__organization=connection.organization,
+            work_date__range=(week_start, week_end),
+        ).values_list("work_date", flat=True)
+    )
+    time_entries = {
+        item.work_date: item
+        for item in WorkTimeEntry.objects.filter(
+            connection=connection,
+            organization=connection.organization,
+            work_date__range=(week_start, week_end),
+        ).order_by("work_date", "id")
+    }
+
+    days = []
+    for offset in range(7):
+        work_date = week_start + timedelta(days=offset)
+        shifts = shifts_by_date.get(work_date, [])
+        access_shift = max(
+            shifts,
+            key=lambda item: (item.ends_at, item.id),
+            default=None,
+        )
+        entry = time_entries.get(work_date)
+        days.append(
+            {
+                "date": work_date.isoformat(),
+                "is_today": work_date == today,
+                "is_selected": work_date == selected_date,
+                "day_off": work_date in day_off_dates,
+                "absence": work_date in absence_dates,
+                "shift": (
+                    _week_shift_payload(
+                        shifts[0],
+                        connection=connection,
+                        chat_access_by_user=chat_access_by_user,
+                    )
+                    if shifts
+                    else None
+                ),
+                "shifts": [
+                    _week_shift_payload(
+                        shift,
+                        connection=connection,
+                        chat_access_by_user=chat_access_by_user,
+                    )
+                    for shift in shifts
+                ],
+                "time_entry": _time_entry_payload(entry),
+                "time_entry_access": worker_time_entry_access(
+                    scheduled_shift=access_shift,
+                    entry=entry,
+                    now=now,
+                ),
+            }
+        )
+
+    return {
+        "generated_at": now,
+        "today": today.isoformat(),
+        "selected_date": selected_date.isoformat(),
+        "week": {
+            "iso_year": iso_year,
+            "number": iso_week,
+            "starts_on": week_start.isoformat(),
+            "ends_on": week_end.isoformat(),
+        },
+        "connection": {
+            "id": str(connection.public_id),
+            "stage": connection.stage,
+        },
+        "organization": {
+            "id": str(connection.organization.public_id),
+            "display_name": connection.organization.display_name,
+        },
+        "worker": {
+            **_identity_payload(connection.candidate),
+            "has_driving_license": connection.has_driving_license,
+        },
+        "days": days,
+    }
+
+
 def worker_workspace_snapshot(*, connection, selected_month):
     """Return one safe, authoritative worker workspace month."""
 
@@ -589,7 +737,11 @@ def worker_workspace_snapshot(*, connection, selected_month):
             starts_on__lte=month_end,
         )
         .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=month_start))
-        .select_related("driver_connection__candidate", "vehicle")
+        .select_related(
+            "driver_connection__candidate",
+            "driver_connection__candidate__profile",
+            "vehicle",
+        )
     )
     roster_passengers = list(
         ProjectCrewPassenger.objects.filter(
@@ -692,11 +844,7 @@ def worker_workspace_snapshot(*, connection, selected_month):
         manager_conversation is None
         and assigned_manager is not None
         and assigned_manager.is_active
-        and connection.stage
-        in {
-            connection.STAGE_AWAITING_SUPPORT,
-            connection.STAGE_MANAGER,
-        }
+        and connection.stage != connection.STAGE_CLOSED
         and has_permission(
             user=assigned_manager.user,
             organization=connection.organization,
@@ -718,7 +866,7 @@ def worker_workspace_snapshot(*, connection, selected_month):
             "display_name": connection.organization.display_name,
         },
         "worker": {
-            "display_name": _display_name(connection.candidate),
+            **_identity_payload(connection.candidate),
             "has_driving_license": connection.has_driving_license,
             "stage": connection.stage,
         },

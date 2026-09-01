@@ -11,6 +11,9 @@ from support.models import (
     CalendarMarkTemplate,
     NotificationOutbox,
     OrganizationMembership,
+    ProjectCrew,
+    ProjectCrewShift,
+    ProjectCrewShiftMember,
     SupportAccessGrant,
     SupportApplication,
     SupportConnection,
@@ -21,6 +24,8 @@ from support.models import (
     WorkTimeEntry,
     WorkTimeEntryRevision,
     WorkerRequest,
+    WorkProject,
+    Worksite,
 )
 from support.permission_codes import (
     SCHEDULE_MANAGE,
@@ -459,6 +464,115 @@ class TimekeepingTests(TestCase):
             format="json",
         )
         self.assertEqual(blocked.status_code, 400, blocked.data)
+
+    def test_multi_shift_day_waits_for_latest_end_and_links_entry_to_latest_shift(self):
+        now = timezone.now().replace(second=0, microsecond=0)
+        work_date = timezone.localdate()
+        early = create_scheduled_shift(
+            actor=self.accountant,
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=now - timedelta(hours=4),
+            ends_at=now - timedelta(hours=2),
+            break_minutes=0,
+            worker_label="Early shift",
+        )
+        publish_scheduled_shift(actor=self.accountant, shift=early)
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Second shift site",
+            country_code="NL",
+            city="Lelystad",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Second shift project",
+            worker_visible_name="Second shift project",
+            worker_capacity=2,
+            starts_on=work_date,
+            created_by=self.owner,
+        )
+        crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=project,
+            internal_name="Late crew",
+            created_by=self.owner,
+        )
+        project_shift = ProjectCrewShift.objects.create(
+            crew=crew,
+            work_date=work_date,
+            starts_at=now - timedelta(hours=1),
+            ends_at=now + timedelta(hours=2),
+            break_minutes=0,
+            created_by=self.owner,
+        )
+        member = ProjectCrewShiftMember.objects.create(
+            shift=project_shift,
+            connection=self.connection,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            created_by=self.owner,
+        )
+        late = ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=self.connection,
+            project_crew_member=member,
+            work_date=work_date,
+            starts_at=project_shift.starts_at,
+            ends_at=project_shift.ends_at,
+            break_minutes=0,
+            worker_label="Late shift",
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.accountant,
+            published_by=self.accountant,
+            published_at=now,
+        )
+        day_url = (
+            f"/api/v2/support/connections/{self.connection.public_id}/time-entries/mine/"
+            f"?work_date={work_date.isoformat()}"
+        )
+        submit_url = (
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "time-entries/mine/submit/"
+        )
+
+        day = self.worker_client.get(day_url)
+        blocked = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(early.starts_at),
+                "ended_at": self._iso(early.ends_at),
+                "break_minutes": 0,
+            },
+            format="json",
+        )
+
+        self.assertEqual(day.status_code, 200, day.data)
+        self.assertEqual(day.data["scheduled_shift"]["id"], str(late.public_id))
+        self.assertEqual(day.data["time_entry_access"]["code"], "shift_not_finished")
+        self.assertEqual(day.data["time_entry_access"]["available_at"], late.ends_at)
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        self.assertEqual(blocked.data["work_date"], "shift_must_finish_before_time_entry")
+
+        late.ends_at = now - timedelta(minutes=5)
+        late.save(update_fields=("ends_at", "updated_at"))
+        submitted = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(early.starts_at),
+                "ended_at": self._iso(early.ends_at),
+                "break_minutes": 0,
+            },
+            format="json",
+        )
+
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        entry = WorkTimeEntry.objects.get(public_id=submitted.data["time_entry"]["id"])
+        self.assertEqual(entry.scheduled_shift, late)
 
     def test_worker_cannot_create_time_before_shift_end_or_without_shift(self):
         now = timezone.now().replace(second=0, microsecond=0)

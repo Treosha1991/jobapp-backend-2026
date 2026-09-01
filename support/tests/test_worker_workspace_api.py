@@ -6,6 +6,8 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from jobs.models import UserProfile
+
 from support.models import (
     Announcement,
     AnnouncementAcknowledgement,
@@ -40,7 +42,11 @@ from support.models import (
 from support.services.organizations import create_organization
 
 
-@override_settings(SUPPORT_FEATURE_ENABLED=True, SUPPORT_PROJECT_FIRST_ENABLED=True)
+@override_settings(
+    SUPPORT_FEATURE_ENABLED=True,
+    SUPPORT_PROJECT_FIRST_ENABLED=True,
+    AVATAR_PUBLIC_BASE_URL="https://avatars.example.test",
+)
 class WorkerWorkspaceAPITests(TestCase):
     def setUp(self):
         self.operator = User.objects.create_user(
@@ -97,6 +103,10 @@ class WorkerWorkspaceAPITests(TestCase):
             "future-driver",
             has_driving_license=True,
         )
+        UserProfile.objects.create(
+            user=self.other_worker,
+            avatar_key="users/driver/avatar.jpg",
+        )
         self.grant = SupportAccessGrant.objects.create(
             user=self.worker,
             organization=self.organization,
@@ -104,8 +114,15 @@ class WorkerWorkspaceAPITests(TestCase):
             ends_at=timezone.now() + timedelta(days=30),
             reason=SupportAccessGrant.REASON_TECHNICAL,
         )
-        SupportAccessGrant.objects.create(
+        self.driver_grant = SupportAccessGrant.objects.create(
             user=self.other_worker,
+            organization=self.organization,
+            granted_by=self.operator,
+            ends_at=timezone.now() + timedelta(days=30),
+            reason=SupportAccessGrant.REASON_TECHNICAL,
+        )
+        SupportAccessGrant.objects.create(
+            user=self.future_driver_user,
             organization=self.organization,
             granted_by=self.operator,
             ends_at=timezone.now() + timedelta(days=30),
@@ -454,23 +471,264 @@ class WorkerWorkspaceAPITests(TestCase):
             response.data["today_shift"]["effective_vehicle"]["registration_identifier"],
             "CUR-01",
         )
+        effective_driver = response.data["today_shift"]["effective_driver"]
+        self.assertEqual(effective_driver["display_name"], "Oleh Savchuk")
+        self.assertEqual(effective_driver["first_name"], "Oleh")
         self.assertEqual(
-            response.data["today_shift"]["effective_driver"],
-            {"display_name": "Oleh Savchuk"},
+            effective_driver["avatar_url"],
+            "https://avatars.example.test/users/driver/avatar.jpg",
         )
         self.assertEqual(
             response.data["current_assignment"]["driver"],
-            {"display_name": "Oleh Savchuk"},
+            effective_driver,
         )
         self.assertEqual(
             set(response.data["today_shift"]["crew_members"][0]),
-            {"display_name", "role"},
+            {"first_name", "last_name", "display_name", "avatar_url", "role"},
         )
         self.assertEqual(
             response.data["manager_conversation_id"],
             str(self.conversation.public_id),
         )
         self.assertTrue(response.data["can_open_manager_chat"])
+
+    def test_active_worker_manager_chat_reuses_the_exact_assigned_pair(self):
+        response = self.client.post(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "open-manager-chat/"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["created"])
+        self.assertEqual(
+            response.data["conversation"]["id"],
+            str(self.conversation.public_id),
+        )
+        self.assertEqual(
+            set(
+                self.conversation.members.filter(
+                    left_at__isnull=True,
+                ).values_list("user_id", flat=True)
+            ),
+            {self.worker.id, self.owner.id},
+        )
+
+    def test_active_worker_can_create_missing_assigned_manager_chat(self):
+        self.conversation.delete()
+
+        response = self.client.post(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "open-manager-chat/"
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(response.data["created"])
+        conversation = SupportConversation.objects.get(
+            public_id=response.data["conversation"]["id"]
+        )
+        self.assertEqual(conversation.private_worker, self.worker)
+        self.assertEqual(conversation.private_manager, self.owner)
+        self.assertEqual(
+            set(
+                conversation.members.filter(left_at__isnull=True).values_list(
+                    "user_id",
+                    flat=True,
+                )
+            ),
+            {self.worker.id, self.owner.id},
+        )
+
+    def test_week_snapshot_has_exactly_seven_days_and_day_specific_members(self):
+        response = self.client.get(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "workspace/mine/week/",
+            {"selected_date": self.today.isoformat()},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        week_start = self.today - timedelta(days=self.today.weekday())
+        self.assertEqual(response.data["selected_date"], self.today.isoformat())
+        self.assertEqual(response.data["week"]["starts_on"], week_start.isoformat())
+        self.assertEqual(
+            response.data["week"]["ends_on"],
+            (week_start + timedelta(days=6)).isoformat(),
+        )
+        self.assertEqual(response.data["week"]["number"], self.today.isocalendar().week)
+        self.assertEqual(len(response.data["days"]), 7)
+        self.assertEqual(
+            [item["date"] for item in response.data["days"]],
+            [
+                (week_start + timedelta(days=offset)).isoformat()
+                for offset in range(7)
+            ],
+        )
+        self.assertEqual(
+            sum(item["is_selected"] for item in response.data["days"]),
+            1,
+        )
+        self.assertEqual(
+            sum(item["is_today"] for item in response.data["days"]),
+            1,
+        )
+        by_date = {item["date"]: item for item in response.data["days"]}
+        today = by_date[self.today.isoformat()]
+        self.assertEqual(today["shift"]["id"], str(self.today_shift.public_id))
+        self.assertEqual(today["shifts"][0]["id"], str(self.today_shift.public_id))
+        members = today["shift"]["crew_members"]
+        self.assertEqual(
+            {item["connection_id"] for item in members},
+            {
+                str(self.connection.public_id),
+                str(self.driver_connection.public_id),
+            },
+        )
+        driver = next(item for item in members if item["role"] == "driver")
+        self.assertEqual(driver["first_name"], "Oleh")
+        self.assertEqual(driver["display_name"], "Oleh Savchuk")
+        self.assertEqual(
+            driver["avatar_url"],
+            "https://avatars.example.test/users/driver/avatar.jpg",
+        )
+        self.assertFalse(driver["is_self"])
+        self.assertTrue(driver["can_open_chat"])
+        self_member = next(item for item in members if item["is_self"])
+        self.assertFalse(self_member["can_open_chat"])
+        self.assertEqual(response.data["worker"]["first_name"], "Viktoriia")
+        self.assertEqual(response.data["worker"]["last_name"], "Tkachenko")
+        self.assertIn("avatar_url", response.data["worker"])
+
+        if self.next_shift.work_date <= week_start + timedelta(days=6):
+            next_members = by_date[self.next_shift.work_date.isoformat()]["shift"][
+                "crew_members"
+            ]
+            self.assertEqual(
+                {item["connection_id"] for item in next_members},
+                {
+                    str(self.connection.public_id),
+                    str(self.future_driver_connection.public_id),
+                },
+            )
+            self.assertNotIn(
+                str(self.driver_connection.public_id),
+                {item["connection_id"] for item in next_members},
+            )
+
+    def test_week_time_entry_access_waits_for_latest_shift_end_on_multi_shift_day(self):
+        self.time_entry.delete()
+        self.today_shift.delete()
+        now = timezone.now().replace(second=0, microsecond=0)
+        early = ProjectCrewShift.objects.create(
+            crew=self.current_crew,
+            work_date=self.today,
+            starts_at=now - timedelta(hours=4),
+            ends_at=now - timedelta(hours=2),
+            break_minutes=0,
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=early,
+            connection=self.driver_connection,
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+            vehicle=self.current_vehicle,
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=early,
+            connection=self.connection,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            created_by=self.owner,
+        )
+        late = ProjectCrewShift.objects.create(
+            crew=self.future_crew,
+            work_date=self.today,
+            starts_at=now - timedelta(hours=1),
+            ends_at=now + timedelta(hours=2),
+            break_minutes=0,
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=late,
+            connection=self.future_driver_connection,
+            role=ProjectCrewShiftMember.ROLE_DRIVER,
+            vehicle=self.future_vehicle,
+            created_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=late,
+            connection=self.connection,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            created_by=self.owner,
+        )
+
+        response = self.client.get(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "workspace/mine/week/",
+            {"selected_date": self.today.isoformat()},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        today = next(item for item in response.data["days"] if item["is_today"])
+        self.assertEqual(len(today["shifts"]), 2)
+        self.assertEqual(today["shift"]["id"], str(early.public_id))
+        self.assertEqual(today["time_entry_access"]["code"], "shift_not_finished")
+        self.assertEqual(today["time_entry_access"]["available_at"], late.ends_at)
+
+    def test_shift_peer_chat_is_idempotent_and_rejects_non_members(self):
+        url = (
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            f"project-first/shifts/{self.today_shift.public_id}/open-worker-chat/"
+        )
+        payload = {"target_connection_id": str(self.driver_connection.public_id)}
+
+        first = self.client.post(url, payload, format="json")
+        second = self.client.post(url, payload, format="json")
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(
+            first.data["conversation"]["id"],
+            second.data["conversation"]["id"],
+        )
+        conversation = SupportConversation.objects.get(
+            public_id=first.data["conversation"]["id"]
+        )
+        self.assertEqual(conversation.kind, SupportConversation.KIND_DRIVER)
+        self.assertEqual(
+            set(
+                conversation.members.filter(left_at__isnull=True).values_list(
+                    "user_id",
+                    flat=True,
+                )
+            ),
+            {self.worker.id, self.other_worker.id},
+        )
+
+        not_on_this_day = self.client.post(
+            url,
+            {
+                "target_connection_id": str(
+                    self.future_driver_connection.public_id
+                )
+            },
+            format="json",
+        )
+        self_target = self.client.post(
+            url,
+            {"target_connection_id": str(self.connection.public_id)},
+            format="json",
+        )
+        wrong_owner = self.other_client.post(url, payload, format="json")
+        self.assertEqual(not_on_this_day.status_code, 403, not_on_this_day.data)
+        self.assertEqual(self_target.status_code, 403, self_target.data)
+        self.assertEqual(wrong_owner.status_code, 404, wrong_owner.data)
+
+        self.driver_grant.status = SupportAccessGrant.STATUS_REVOKED
+        self.driver_grant.revoked_at = timezone.now()
+        self.driver_grant.save(
+            update_fields=("status", "revoked_at", "updated_at")
+        )
+        inactive_target = self.client.post(url, payload, format="json")
+        self.assertEqual(inactive_target.status_code, 403, inactive_target.data)
 
     def test_worker_can_scope_own_conversations_to_workspace_organization(self):
         response = self.client.get(
@@ -549,6 +807,16 @@ class WorkerWorkspaceAPITests(TestCase):
     def test_snapshot_requires_active_access_and_owned_non_archived_connection(self):
         other_response = self.other_client.get(self.url)
         self.assertEqual(other_response.status_code, 404, other_response.data)
+        other_week_response = self.other_client.get(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "workspace/mine/week/",
+            {"selected_date": self.today.isoformat()},
+        )
+        self.assertEqual(
+            other_week_response.status_code,
+            404,
+            other_week_response.data,
+        )
 
         self.grant.status = SupportAccessGrant.STATUS_REVOKED
         self.grant.revoked_at = timezone.now()
@@ -571,6 +839,21 @@ class WorkerWorkspaceAPITests(TestCase):
         )
         self.assertEqual(invalid.status_code, 400, invalid.data)
         self.assertEqual(invalid.data["month"], "invalid_month")
+
+        invalid_week = self.client.get(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "workspace/mine/week/",
+            {"selected_date": "2026-99-99"},
+        )
+        self.assertEqual(invalid_week.status_code, 400, invalid_week.data)
+        self.assertEqual(invalid_week.data["selected_date"], "invalid_date")
+        overflow_week = self.client.get(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "workspace/mine/week/",
+            {"selected_date": "9999-12-31"},
+        )
+        self.assertEqual(overflow_week.status_code, 400, overflow_week.data)
+        self.assertEqual(overflow_week.data["selected_date"], "invalid_date")
 
         with override_settings(SUPPORT_PROJECT_FIRST_ENABLED=False):
             disabled = self.client.get(self.url)

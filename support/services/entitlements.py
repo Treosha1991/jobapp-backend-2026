@@ -38,6 +38,23 @@ def support_access_snapshot_for(user, *, at_time=None):
     }
 
 
+def users_with_active_support_access(user_ids, *, at_time=None):
+    """Resolve active Support access for a bounded set without per-user queries."""
+
+    ids = {int(user_id) for user_id in user_ids}
+    if not ids:
+        return set()
+    current_time = at_time or timezone.now()
+    return set(
+        SupportAccessGrant.objects.filter(
+            user_id__in=ids,
+            status=SupportAccessGrant.STATUS_ACTIVE,
+            starts_at__lte=current_time,
+            ends_at__gt=current_time,
+        ).values_list("user_id", flat=True)
+    )
+
+
 def expire_elapsed_temporary_access_grants(*, limit=100, at_time=None):
     """Mark elapsed temporary grants expired and notify the affected user.
 
