@@ -518,6 +518,60 @@ def _unread_counts(connection):
     return unread_conversations, unread_messages
 
 
+def worker_missing_time_entry_actions(*, now, connection=None, user=None):
+    """Return one durable worker action for every ended day without facts.
+
+    The action is derived from the published project-first shift instead of a
+    disposable notification row. It therefore remains unread until a
+    ``WorkTimeEntry`` for the same connection and work date exists.
+    """
+
+    memberships = ProjectCrewShiftMember.objects.filter(
+        shift__state=ProjectCrewShift.STATE_PUBLISHED,
+    )
+    entries = WorkTimeEntry.objects.all()
+    if connection is not None:
+        memberships = memberships.filter(connection=connection)
+        entries = entries.filter(connection=connection)
+    elif user is not None:
+        memberships = memberships.filter(
+            connection__candidate=user,
+            connection__is_archived=False,
+        )
+        entries = entries.filter(
+            connection__candidate=user,
+            connection__is_archived=False,
+        )
+    else:
+        return []
+
+    completed_keys = set(entries.values_list("connection_id", "work_date"))
+    actions = []
+    seen = set()
+    for membership in memberships.select_related("shift", "connection").order_by(
+        "-shift__ends_at",
+        "-shift_id",
+    ):
+        key = (membership.connection_id, membership.shift.work_date)
+        if key in seen:
+            continue
+        seen.add(key)
+        # Ordering selects the last shift of the day. An earlier shift must
+        # never create the action while a later one is still running.
+        if membership.shift.ends_at > now or key in completed_keys:
+            continue
+        actions.append(
+            {
+                "connection_id": membership.connection_id,
+                "connection_public_id": membership.connection.public_id,
+                "shift_public_id": membership.shift.public_id,
+                "work_date": membership.shift.work_date,
+                "available_at": membership.shift.ends_at,
+            }
+        )
+    return actions
+
+
 def _attention_payload(connection, *, now):
     document_requests = DocumentRequestPackage.objects.filter(
         connection=connection,
@@ -552,7 +606,7 @@ def _attention_payload(connection, *, now):
         )
         .count()
     )
-    time_entries = WorkTimeEntry.objects.filter(
+    time_entry_corrections = WorkTimeEntry.objects.filter(
         connection=connection,
         organization=connection.organization,
         status__in=(
@@ -560,6 +614,9 @@ def _attention_payload(connection, *, now):
             WorkTimeEntry.STATUS_MANAGER_ADJUSTED,
         ),
     ).count()
+    time_entries = time_entry_corrections + len(
+        worker_missing_time_entry_actions(now=now, connection=connection)
+    )
     unread_conversations, unread_messages = _unread_counts(connection)
     values = {
         "document_requests": document_requests,

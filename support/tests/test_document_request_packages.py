@@ -162,7 +162,9 @@ class DocumentRequestPackageTests(TestCase):
         )
         self.assertEqual(active_center.status_code, 200, active_center.data)
         self.assertEqual(active_center.data["unread_counts"], {"documents": 1})
-        self.assertEqual(active_center.data["action_counts"], {"documents": 1})
+        self.assertEqual(
+            active_center.data["action_counts"], {"documents": 1, "time": 0}
+        )
         self.assertTrue(active_center.data["results"][0]["requires_action"])
 
         worker_list_url = (
@@ -185,7 +187,9 @@ class DocumentRequestPackageTests(TestCase):
             "/api/v2/support/notifications/mine/?include_chat=0"
         )
         self.assertEqual(resolved_center.data["unread_counts"], {})
-        self.assertEqual(resolved_center.data["action_counts"], {"documents": 0})
+        self.assertEqual(
+            resolved_center.data["action_counts"], {"documents": 0, "time": 0}
+        )
         self.assertFalse(resolved_center.data["results"][0]["requires_action"])
 
         correction = self.manager_client.post(

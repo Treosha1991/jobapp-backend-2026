@@ -40,6 +40,7 @@ from support.models import (
     Worksite,
 )
 from support.services.organizations import create_organization
+from support.selectors.worker_workspace import worker_missing_time_entry_actions
 
 
 @override_settings(
@@ -829,6 +830,91 @@ class WorkerWorkspaceAPITests(TestCase):
             },
         )
 
+    def test_ended_shift_without_facts_stays_in_attention_and_event_center(self):
+        missing_date = self.today - timedelta(days=1)
+        missing_shift = self._shift(
+            crew=self.current_crew,
+            work_date=missing_date,
+            driver=self.driver_connection,
+            passenger=self.connection,
+            vehicle=self.current_vehicle,
+        )
+
+        workspace = self.client.get(self.url)
+        center = self.client.get(
+            "/api/v2/support/notifications/mine/?include_chat=0"
+        )
+
+        self.assertEqual(workspace.status_code, 200, workspace.data)
+        self.assertEqual(workspace.data["attention"]["time_entries"], 2)
+        self.assertEqual(center.status_code, 200, center.data)
+        self.assertEqual(center.data["action_counts"]["time"], 1)
+        missing_events = [
+            item for item in center.data["results"]
+            if item["code"] == "time.missing"
+        ]
+        self.assertEqual(len(missing_events), 1)
+        self.assertEqual(missing_events[0]["work_date"], missing_date.isoformat())
+        self.assertEqual(
+            missing_events[0]["target"]["id"],
+            str(self.connection.public_id),
+        )
+        self.assertTrue(missing_events[0]["requires_action"])
+
+        WorkTimeEntry.objects.create(
+            organization=self.organization,
+            connection=self.connection,
+            work_date=missing_date,
+            started_at=missing_shift.starts_at,
+            ended_at=missing_shift.ends_at,
+            break_minutes=missing_shift.break_minutes,
+            worked_minutes=450,
+            status=WorkTimeEntry.STATUS_SUBMITTED,
+            submitted_at=timezone.now(),
+            last_changed_by=self.worker,
+        )
+        resolved = self.client.get(
+            "/api/v2/support/notifications/mine/?include_chat=0"
+        )
+        self.assertEqual(resolved.data["action_counts"]["time"], 0)
+        self.assertFalse(
+            any(item["code"] == "time.missing" for item in resolved.data["results"])
+        )
+
+    def test_missing_time_action_waits_for_last_shift_of_same_day(self):
+        now = timezone.now()
+        first_crew = self._crew("Split day early", self.current_project)
+        last_crew = self._crew("Split day late", self.current_project)
+        for crew, starts_at, ends_at in (
+            (first_crew, now - timedelta(hours=3), now - timedelta(hours=2)),
+            (last_crew, now - timedelta(hours=1), now + timedelta(hours=2)),
+        ):
+            shift = ProjectCrewShift.objects.create(
+                crew=crew,
+                work_date=timezone.localdate(now),
+                starts_at=starts_at,
+                ends_at=ends_at,
+                created_by=self.owner,
+            )
+            ProjectCrewShiftMember.objects.create(
+                shift=shift,
+                connection=self.future_driver_connection,
+                role=ProjectCrewShiftMember.ROLE_PASSENGER,
+                created_by=self.owner,
+            )
+
+        before_last_end = worker_missing_time_entry_actions(
+            now=now,
+            user=self.future_driver_user,
+        )
+        after_last_end = worker_missing_time_entry_actions(
+            now=now + timedelta(hours=3),
+            user=self.future_driver_user,
+        )
+
+        self.assertEqual(before_last_end, [])
+        self.assertEqual(len(after_last_end), 1)
+        self.assertEqual(after_last_end[0]["work_date"], timezone.localdate(now))
     def test_snapshot_requires_active_access_and_owned_non_archived_connection(self):
         other_response = self.other_client.get(self.url)
         self.assertEqual(other_response.status_code, 404, other_response.data)

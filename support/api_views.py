@@ -95,6 +95,7 @@ from .permissions import (
 from .questionnaire import QUESTIONNAIRE_VERSION
 from .selectors.workspace import transport_workspace_snapshot
 from .selectors.worker_workspace import (
+    worker_missing_time_entry_actions,
     worker_workspace_snapshot,
     worker_workspace_week_snapshot,
 )
@@ -5044,20 +5045,55 @@ class MySupportNotificationListAPIView(SupportFeatureAPIView):
                 unread_counts.get("documents", 0) + len(active_document_package_ids)
             )
 
+        missing_time_actions = worker_missing_time_entry_actions(
+            now=timezone.now(),
+            user=request.user,
+        )
+        if missing_time_actions:
+            unread_counts["time"] = (
+                unread_counts.get("time", 0) + len(missing_time_actions)
+            )
+
         notifications = queryset.order_by("-created_at", "-id")[:100]
+        results = [
+            _in_app_notification_payload(
+                item,
+                requires_action=item.id in active_document_notification_ids,
+            )
+            for item in notifications
+        ]
+        results.extend(
+            {
+                "id": (
+                    f"time-missing:{item['connection_public_id']}:"
+                    f"{item['work_date'].isoformat()}"
+                ),
+                "code": "time.missing",
+                "category": "time",
+                "target": {
+                    "kind": "connection",
+                    "id": str(item["connection_public_id"]),
+                    "key": (
+                        f"support:time-missing:{item['connection_public_id']}:"
+                        f"{item['work_date'].isoformat()}"
+                    ),
+                },
+                "read_at": None,
+                "requires_action": True,
+                "created_at": item["available_at"],
+                "work_date": item["work_date"].isoformat(),
+            }
+            for item in missing_time_actions
+        )
+        results.sort(key=lambda item: item["created_at"], reverse=True)
         return Response(
             {
-                "results": [
-                    _in_app_notification_payload(
-                        item,
-                        requires_action=item.id in active_document_notification_ids,
-                    )
-                    for item in notifications
-                ],
+                "results": results[:100],
                 "unread_count": sum(unread_counts.values()),
                 "unread_counts": unread_counts,
                 "action_counts": {
                     "documents": len(active_document_package_ids),
+                    "time": len(missing_time_actions),
                 },
             }
         )
