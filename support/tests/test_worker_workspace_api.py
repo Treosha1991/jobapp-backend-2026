@@ -593,9 +593,34 @@ class WorkerWorkspaceAPITests(TestCase):
         self.assertTrue(driver["can_open_chat"])
         self_member = next(item for item in members if item["is_self"])
         self.assertFalse(self_member["can_open_chat"])
+        self.assertTrue(
+            all("pickup_address" not in item for item in members),
+            "A passenger must not receive other crew members' housing addresses.",
+        )
         self.assertEqual(response.data["worker"]["first_name"], "Viktoriia")
         self.assertEqual(response.data["worker"]["last_name"], "Tkachenko")
         self.assertIn("avatar_url", response.data["worker"])
+
+        driver_response = self.other_client.get(
+            f"/api/v2/support/connections/{self.driver_connection.public_id}/"
+            "workspace/mine/week/",
+            {"selected_date": self.today.isoformat()},
+        )
+        self.assertEqual(driver_response.status_code, 200, driver_response.data)
+        driver_today = next(
+            item for item in driver_response.data["days"] if item["is_today"]
+        )
+        passenger = next(
+            item
+            for item in driver_today["shift"]["crew_members"]
+            if item["connection_id"] == str(self.connection.public_id)
+        )
+        self.assertEqual(
+            passenger["pickup_address"],
+            "Zandbang, 22, 8223XP, Lelystad",
+        )
+        self.assertNotIn("1A", passenger["pickup_address"])
+        self.assertNotIn("place_label", passenger)
 
         if self.next_shift.work_date <= week_start + timedelta(days=6):
             next_members = by_date[self.next_shift.work_date.isoformat()]["shift"][

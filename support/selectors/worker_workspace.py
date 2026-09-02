@@ -90,6 +90,15 @@ def _address(worksite):
     )
 
 
+def _housing_site_address(site):
+    return ", ".join(
+        filter(
+            None,
+            [site.street, site.building, site.postal_code, site.city],
+        )
+    )
+
+
 def _project_payload(project):
     return {
         "id": str(project.public_id),
@@ -232,8 +241,25 @@ def _shift_payload(
     }
 
 
-def _week_shift_payload(shift, *, connection, chat_access_by_user):
+def _pickup_address_for_shift(*, assignment_items, shift):
+    for assignment in assignment_items:
+        if assignment.check_in_at <= shift.starts_at and (
+            assignment.check_out_at is None
+            or assignment.check_out_at > shift.starts_at
+        ):
+            return _housing_site_address(assignment.place.room.site)
+    return ""
+
+
+def _week_shift_payload(
+    shift,
+    *,
+    connection,
+    chat_access_by_user,
+    housing_by_connection,
+):
     payload = _shift_payload(shift, connection=connection)
+    viewer_is_driver = payload["own_role"] == ProjectCrewShiftMember.ROLE_DRIVER
     payload["crew_members"] = [
         {
             "connection_id": str(item.connection.public_id),
@@ -245,6 +271,21 @@ def _week_shift_payload(shift, *, connection, chat_access_by_user):
                 and not item.connection.is_archived
                 and item.connection.stage != item.connection.STAGE_CLOSED
                 and chat_access_by_user.get(item.connection.candidate_id, False)
+            ),
+            **(
+                {
+                    "pickup_address": _pickup_address_for_shift(
+                        assignment_items=housing_by_connection.get(
+                            item.connection_id,
+                            (),
+                        ),
+                        shift=shift,
+                    )
+                }
+                if viewer_is_driver
+                and item.role == ProjectCrewShiftMember.ROLE_PASSENGER
+                and item.connection_id != connection.id
+                else {}
             ),
         }
         for item in shift.members.all()
@@ -583,6 +624,41 @@ def worker_workspace_week_snapshot(*, connection, selected_date):
     chat_access_by_user = {
         user_id: user_id in active_peer_user_ids for user_id in peer_user_ids
     }
+    passenger_connection_ids = {
+        item.connection_id
+        for shift in week_shifts
+        if any(
+            member.connection_id == connection.id
+            and member.role == ProjectCrewShiftMember.ROLE_DRIVER
+            for member in shift.members.all()
+        )
+        for item in shift.members.all()
+        if item.role == ProjectCrewShiftMember.ROLE_PASSENGER
+        and item.connection_id != connection.id
+    }
+    housing_by_connection = {}
+    if passenger_connection_ids and week_shifts:
+        first_shift_start = min(item.starts_at for item in week_shifts)
+        last_shift_start = max(item.starts_at for item in week_shifts)
+        housing_assignments = (
+            HousingAssignment.objects.filter(
+                organization=connection.organization,
+                connection_id__in=passenger_connection_ids,
+                state=HousingAssignment.STATE_PUBLISHED,
+                check_in_at__lte=last_shift_start,
+            )
+            .filter(
+                Q(check_out_at__isnull=True)
+                | Q(check_out_at__gt=first_shift_start)
+            )
+            .select_related("place__room__site")
+            .order_by("connection_id", "-check_in_at", "-id")
+        )
+        for assignment in housing_assignments:
+            housing_by_connection.setdefault(
+                assignment.connection_id,
+                [],
+            ).append(assignment)
 
     day_off_dates = set(
         WorkerScheduleDayOff.objects.filter(
@@ -630,6 +706,7 @@ def worker_workspace_week_snapshot(*, connection, selected_date):
                         shifts[0],
                         connection=connection,
                         chat_access_by_user=chat_access_by_user,
+                        housing_by_connection=housing_by_connection,
                     )
                     if shifts
                     else None
@@ -639,6 +716,7 @@ def worker_workspace_week_snapshot(*, connection, selected_date):
                         shift,
                         connection=connection,
                         chat_access_by_user=chat_access_by_user,
+                        housing_by_connection=housing_by_connection,
                     )
                     for shift in shifts
                 ],
