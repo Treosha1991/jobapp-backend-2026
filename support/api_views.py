@@ -4606,10 +4606,13 @@ class MySupportConversationListAPIView(SupportFeatureAPIView):
             except PermissionDenied:
                 continue
             visible.append(_conversation_payload(conversation, viewer=request.user))
-        # Keep recent activity inside each group, but always surface chats that
-        # still require the viewer's attention before already-read chats.
-        visible.sort(key=lambda item: item["updated_at"], reverse=True)
-        visible.sort(key=lambda item: item["unread_count"] > 0, reverse=True)
+        # Read state changes only the badge and date styling.  It must never
+        # reorder the directory: a newly sent or received message always moves
+        # its conversation to the top, while merely opening a chat does not.
+        visible.sort(
+            key=lambda item: item["last_message_at"] or item["updated_at"],
+            reverse=True,
+        )
         return Response({"results": visible})
 
 

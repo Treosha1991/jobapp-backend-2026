@@ -206,6 +206,55 @@ class StaffChatDirectoryTests(TestCase):
             "https://cdn.example.test/avatars/owner.png",
         )
 
+    def test_conversations_are_sorted_only_by_latest_message(self):
+        staff_chat = self.client.post(
+            f"{self.organization_url}/chat-directory/open/",
+            {
+                "target_type": "staff",
+                "target_id": str(self.manager_membership.public_id),
+            },
+            format="json",
+        )
+        worker_chat = self.client.post(
+            f"{self.organization_url}/chat-directory/open/",
+            {
+                "target_type": "worker",
+                "target_id": str(self.connection.public_id),
+            },
+            format="json",
+        )
+        self.assertEqual(staff_chat.status_code, 201, staff_chat.data)
+        self.assertEqual(worker_chat.status_code, 201, worker_chat.data)
+
+        manager_client = APIClient()
+        manager_client.force_authenticate(self.manager)
+        older_unread = manager_client.post(
+            f"/api/v2/support/conversations/{staff_chat.data['conversation']['id']}/messages/send/",
+            {"body": "Older unread", "original_language": "en"},
+            format="json",
+        )
+        newer_read = self.client.post(
+            f"/api/v2/support/conversations/{worker_chat.data['conversation']['id']}/messages/send/",
+            {"body": "Newer reply", "original_language": "en"},
+            format="json",
+        )
+        self.assertEqual(older_unread.status_code, 201, older_unread.data)
+        self.assertEqual(newer_read.status_code, 201, newer_read.data)
+
+        conversations = self.client.get("/api/v2/support/conversations/mine/")
+
+        self.assertEqual(conversations.status_code, 200, conversations.data)
+        results = conversations.data["results"]
+        self.assertEqual(
+            [item["id"] for item in results],
+            [
+                worker_chat.data["conversation"]["id"],
+                staff_chat.data["conversation"]["id"],
+            ],
+        )
+        self.assertEqual(results[0]["unread_count"], 0)
+        self.assertEqual(results[1]["unread_count"], 1)
+
     def test_same_worker_across_applications_uses_one_private_manager_chat(self):
         first = self.client.post(
             f"{self.organization_url}/chat-directory/open/",
