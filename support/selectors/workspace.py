@@ -2573,7 +2573,7 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
                 SupportConnection.STAGE_COORDINATOR,
                 SupportConnection.STAGE_ACTIVE_WORKER,
             ),
-        ).select_related("candidate", "vacancy"),
+        ).select_related("candidate", "candidate__profile", "vacancy"),
     )
     workers = list(
         workers_queryset.order_by(
@@ -2617,13 +2617,13 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
             state__in=(TransportRoute.STATE_DRAFT, TransportRoute.STATE_PUBLISHED),
         )
         .select_related(
-            "driver_vehicle_assignment__driver_connection__candidate",
+            "driver_vehicle_assignment__driver_connection__candidate__profile",
             "driver_vehicle_assignment__vehicle",
             "worksite",
         )
         .prefetch_related(
             "stops__housing_site",
-            "passenger_assignments__connection__candidate",
+            "passenger_assignments__connection__candidate__profile",
         )
         .order_by("state", "-starts_on", "-id")[:20]
     )
@@ -2655,7 +2655,11 @@ def transport_workspace_snapshot(*, user, organization_public_id=None):
             driver_connection_id__in=worker_ids,
         )
         .exclude(id__in=route_driver_assignment_ids)
-        .select_related("driver_connection__candidate", "vehicle")
+        .select_related(
+            "driver_connection__candidate",
+            "driver_connection__candidate__profile",
+            "vehicle",
+        )
         .order_by("starts_on", "id")
     )
     housing_sites = list(

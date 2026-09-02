@@ -231,6 +231,7 @@ def project_crew_vehicle_swap_options(*, actor, crew, effective_on=None):
         .select_related(
             "crew__project",
             "driver_connection__candidate",
+            "driver_connection__candidate__profile",
             "vehicle",
         )
         .order_by("vehicle_id", "crew_id", "-starts_on", "-id")

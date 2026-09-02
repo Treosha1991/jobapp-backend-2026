@@ -400,6 +400,7 @@ class WorkerRequestTests(TestCase):
         self.assertEqual(len(workspace.data["calendar_marks"]), 1)
         staff_mark = workspace.data["calendar_marks"][0]
         self.assertEqual(staff_mark["request_id"], request_id)
+        self.assertIn("avatar_url", staff_mark["worker"])
         self.assertNotEqual(staff_mark["request_id"], str(other_mark.public_id))
         self.assertNotIn("manager_note", staff_mark)
         self.assertNotIn("worker_note", staff_mark)

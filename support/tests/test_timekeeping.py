@@ -385,6 +385,7 @@ class TimekeepingTests(TestCase):
         self.assertEqual(staff_list.data["totals"]["decimal_hours"], "2.83")
         self.assertEqual(len(staff_list.data["results"]), 1)
         self.assertEqual(staff_list.data["results"][0]["worker"]["display_name"], "Ihor Hours")
+        self.assertIn("avatar_url", staff_list.data["results"][0]["worker"])
 
     def test_worker_can_submit_old_completed_shift_and_edit_until_confirmation(self):
         now = timezone.now().replace(second=0, microsecond=0)

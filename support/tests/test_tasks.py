@@ -302,6 +302,7 @@ class SupportTaskAndAnnouncementTests(TestCase):
         self.assertFalse(workspace.data["permissions"]["announcement_manage"])
         self.assertEqual(len(workspace.data["connections"]), 1)
         self.assertEqual(workspace.data["connections"][0]["id"], str(self.connection.public_id))
+        self.assertIn("avatar_url", workspace.data["connections"][0])
         self.assertEqual(
             [item["name"] for item in workspace.data["templates"]],
             ["Arrival reminder"],

@@ -2090,6 +2090,9 @@ class OrganizationProjectFirstCrewVehicleSwapAPIView(
                     "driver_name": _user_display_name(
                         resource.driver_connection.candidate
                     ),
+                    "driver_avatar_url": _user_identity_payload(
+                        resource.driver_connection.candidate
+                    )["avatar_url"],
                 }
                 if resource is not None
                 else None
@@ -2161,14 +2164,18 @@ class OrganizationProjectFirstCrewVehicleSwapAPIView(
             return _project_first_service_error(request, error.detail)
 
         source_driver = get_object_or_404(
-            SupportConnection.objects.select_related("candidate"),
+            SupportConnection.objects.select_related(
+                "candidate", "candidate__profile"
+            ),
             organization=organization,
             public_id=details["source_driver_id"],
         )
         driver_targets = [(source_driver, crew)]
         if details.get("target_driver_id"):
             target_driver = get_object_or_404(
-                SupportConnection.objects.select_related("candidate"),
+                SupportConnection.objects.select_related(
+                    "candidate", "candidate__profile"
+                ),
                 organization=organization,
                 public_id=details["target_driver_id"],
             )
@@ -2203,7 +2210,7 @@ class OrganizationProjectFirstCrewVehicleSwapAPIView(
                 "drivers": [
                     {
                         "id": str(connection.public_id),
-                        "display_name": _user_display_name(connection.candidate),
+                        **_user_identity_payload(connection.candidate),
                         "chat_target": {
                             "target_type": "worker",
                             "target_id": str(connection.public_id),
@@ -2511,7 +2518,7 @@ class OrganizationProjectFirstWorkspaceAPIView(
 def _transport_connection_choice_payload(connection):
     return {
         "id": str(connection.public_id),
-        "display_name": _user_display_name(connection.candidate),
+        **_user_identity_payload(connection.candidate),
         "stage": connection.stage,
         "vacancy_title": connection.vacancy.internal_title,
     }
@@ -2670,7 +2677,7 @@ class OrganizationScheduleWorkspaceAPIView(
                         SupportConnection.STAGE_COORDINATOR,
                         SupportConnection.STAGE_ACTIVE_WORKER,
                     ),
-                ).select_related("candidate", "vacancy"),
+                ).select_related("candidate", "candidate__profile", "vacancy"),
             ).order_by(
                 "candidate__first_name",
                 "candidate__last_name",
@@ -2688,7 +2695,9 @@ class OrganizationScheduleWorkspaceAPIView(
                 starts_on__lte=today + timedelta(days=62),
                 ends_on__gte=today - timedelta(days=31),
             )
-            .select_related("connection__candidate")
+            .select_related(
+                "connection__candidate", "connection__candidate__profile"
+            )
             .order_by("starts_on", "ends_on", "id")[:250]
         )
         calendar_templates = list(
@@ -2700,7 +2709,7 @@ class OrganizationScheduleWorkspaceAPIView(
         calendar_batches = list(
             CalendarMarkBatch.objects.filter(organization=organization)
             .select_related("template")
-            .prefetch_related("items__request__connection__candidate")
+            .prefetch_related("items__request__connection__candidate__profile")
             .order_by("-created_at", "-id")[:40]
         )
         visible_calendar_batches = []
@@ -2718,7 +2727,7 @@ class OrganizationScheduleWorkspaceAPIView(
                 ),
             )
             .select_related("template")
-            .prefetch_related("shifts__connection__candidate")
+            .prefetch_related("shifts__connection__candidate__profile")
             .order_by("-starts_on", "-created_at", "-id")[:20]
         )
         visible_batches = []
@@ -2739,7 +2748,7 @@ class OrganizationScheduleWorkspaceAPIView(
                 "workers": [
                     {
                         "id": str(item.public_id),
-                        "display_name": _user_display_name(item.candidate),
+                        **_user_identity_payload(item.candidate),
                         "stage": item.stage,
                         "vacancy_title": item.vacancy.internal_title,
                     }
@@ -5069,7 +5078,7 @@ def _scheduled_shift_batch_payload(batch, *, shifts=None):
         workers.append(
             {
                 "id": str(item.connection.public_id),
-                "display_name": _user_display_name(item.connection.candidate),
+                **_user_identity_payload(item.connection.candidate),
             }
         )
     return {
@@ -5112,7 +5121,7 @@ def _time_entry_payload(entry, *, include_staff_fields=False):
     if include_staff_fields:
         payload["worker"] = {
             "id": str(entry.connection.candidate_id),
-            "display_name": _user_display_name(entry.connection.candidate),
+            **_user_identity_payload(entry.connection.candidate),
         }
         payload["vacancy"] = {
             "id": str(entry.connection.vacancy.public_id),
@@ -5144,7 +5153,7 @@ def _worker_request_payload(item, *, include_staff_fields=False):
     if include_staff_fields:
         payload["worker"] = {
             "id": str(item.connection.candidate_id),
-            "display_name": _user_display_name(item.connection.candidate),
+            **_user_identity_payload(item.connection.candidate),
         }
         payload["vacancy"] = {
             "id": str(item.connection.vacancy.public_id),
@@ -5169,7 +5178,7 @@ def _calendar_mark_payload(item, *, include_staff_fields=False):
     if include_staff_fields:
         payload["worker"] = {
             "id": str(item.connection.candidate_id),
-            "display_name": _user_display_name(item.connection.candidate),
+            **_user_identity_payload(item.connection.candidate),
         }
     return payload
 
@@ -5192,7 +5201,7 @@ def _document_request_package_payload(item, *, include_staff_fields=False):
     if include_staff_fields:
         payload["worker"] = {
             "id": str(item.connection.candidate_id),
-            "display_name": _user_display_name(item.connection.candidate),
+            **_user_identity_payload(item.connection.candidate),
         }
         payload["created_by"] = (
             _user_display_name(item.created_by) if item.created_by_id else None
@@ -5234,7 +5243,7 @@ def _task_assignment_payload(item, *, include_staff_fields=False):
     if include_staff_fields:
         payload["worker"] = {
             "id": str(item.connection.candidate_id),
-            "display_name": _user_display_name(item.connection.candidate),
+            **_user_identity_payload(item.connection.candidate),
         }
         payload["vacancy"] = {
             "id": str(item.connection.vacancy.public_id),
@@ -5391,7 +5400,7 @@ def _worker_driver_manifest_payload(connection):
         .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
         .select_related("driver_vehicle_assignment__vehicle", "worksite")
         .prefetch_related(
-            "passenger_assignments__connection__candidate",
+            "passenger_assignments__connection__candidate__profile",
             "passenger_assignments__pickup_stop",
             "passenger_assignments__dropoff_stop",
         )
@@ -5410,6 +5419,9 @@ def _worker_driver_manifest_payload(connection):
                 "passengers": [
                     {
                         "name": _user_display_name(item.connection.candidate),
+                        "avatar_url": _user_identity_payload(
+                            item.connection.candidate
+                        )["avatar_url"],
                         "pickup": item.pickup_stop.label,
                         "dropoff": item.dropoff_stop.label,
                         "boarding_order": item.boarding_order,
@@ -6307,7 +6319,7 @@ class OrganizationContentWorkspaceAPIView(
                 organization=organization,
                 queryset=SupportConnection.objects.filter(is_archived=False),
             )
-            .select_related("candidate", "vacancy")
+            .select_related("candidate", "candidate__profile", "vacancy")
             .order_by("candidate__first_name", "candidate__last_name", "id")[:250]
         )
         templates = list(
@@ -6326,7 +6338,7 @@ class OrganizationContentWorkspaceAPIView(
                 "connections": [
                     {
                         "id": str(connection.public_id),
-                        "display_name": _user_display_name(connection.candidate),
+                        **_user_identity_payload(connection.candidate),
                         "vacancy_title": connection.vacancy.internal_title,
                         "stage": connection.stage,
                     }
@@ -6428,6 +6440,7 @@ class OrganizationWorkerTaskListCreateAPIView(
             queryset.select_related(
                 "task__responsible_membership__user",
                 "connection__candidate",
+                "connection__candidate__profile",
                 "connection__vacancy",
             ).order_by("-task__priority", "task__due_at", "-task__published_at", "-id")[:250]
         )
@@ -6498,6 +6511,7 @@ class WorkerTaskStaffDecisionAPIView(SupportFeatureAPIView):
         assignment = TaskAssignment.objects.select_related(
             "task__responsible_membership__user",
             "connection__candidate",
+            "connection__candidate__profile",
             "connection__vacancy",
         ).get(pk=assignment.pk)
         return Response(
@@ -6622,7 +6636,10 @@ class OrganizationWorkerRequestListAPIView(SupportFeatureAPIView, OrganizationAc
             queryset = queryset.filter(status=status_filter)
         items = list(
             queryset.select_related(
-                "connection__candidate", "connection__vacancy", "reviewed_by"
+                "connection__candidate",
+                "connection__candidate__profile",
+                "connection__vacancy",
+                "reviewed_by",
             ).order_by("-submitted_at", "-created_at", "-id")[:250]
         )
         return Response(
@@ -6650,7 +6667,10 @@ class WorkerRequestDecisionAPIView(SupportFeatureAPIView):
             manager_note=manager_note,
         )
         item = WorkerRequest.objects.select_related(
-            "connection__candidate", "connection__vacancy", "reviewed_by"
+            "connection__candidate",
+            "connection__candidate__profile",
+            "connection__vacancy",
+            "reviewed_by",
         ).get(pk=item.pk)
         return Response({"worker_request": _worker_request_payload(item, include_staff_fields=True)})
 
@@ -6702,6 +6722,7 @@ class OrganizationTimeEntryListAPIView(SupportFeatureAPIView, OrganizationAccess
             )
             .select_related(
                 "connection__candidate",
+                "connection__candidate__profile",
                 "connection__vacancy",
                 "scheduled_shift",
                 "confirmed_by",
@@ -7058,7 +7079,11 @@ class WorkTimeEntryCorrectionAPIView(SupportFeatureAPIView):
             reason=serializer.validated_data["reason"],
         )
         entry = WorkTimeEntry.objects.select_related(
-            "connection__candidate", "connection__vacancy", "scheduled_shift", "confirmed_by"
+            "connection__candidate",
+            "connection__candidate__profile",
+            "connection__vacancy",
+            "scheduled_shift",
+            "confirmed_by",
         ).get(pk=entry.pk)
         return Response({"time_entry": _time_entry_payload(entry, include_staff_fields=True)})
 
@@ -7074,7 +7099,11 @@ class WorkTimeEntryConfirmAPIView(SupportFeatureAPIView):
         )
         entry = confirm_work_time_entry(actor=request.user, entry=entry)
         entry = WorkTimeEntry.objects.select_related(
-            "connection__candidate", "connection__vacancy", "scheduled_shift", "confirmed_by"
+            "connection__candidate",
+            "connection__candidate__profile",
+            "connection__vacancy",
+            "scheduled_shift",
+            "confirmed_by",
         ).get(pk=entry.pk)
         return Response({"time_entry": _time_entry_payload(entry, include_staff_fields=True)})
 
@@ -7094,7 +7123,11 @@ class WorkTimeEntryStaffEditAPIView(SupportFeatureAPIView):
             **serializer.validated_data,
         )
         entry = WorkTimeEntry.objects.select_related(
-            "connection__candidate", "connection__vacancy", "scheduled_shift", "confirmed_by"
+            "connection__candidate",
+            "connection__candidate__profile",
+            "connection__vacancy",
+            "scheduled_shift",
+            "confirmed_by",
         ).get(pk=entry.pk)
         return Response({"time_entry": _time_entry_payload(entry, include_staff_fields=True)})
 

@@ -1203,6 +1203,10 @@ class SupportOperationsTests(TestCase):
             [
                 {
                     "name": "operations-passenger",
+                    "avatar_url": (
+                        "https://cdn.example.test/"
+                        "avatars/operations-passenger.png"
+                    ),
                     "pickup": "Passenger housing",
                     "dropoff": "Factory gate",
                     "boarding_order": 1,
