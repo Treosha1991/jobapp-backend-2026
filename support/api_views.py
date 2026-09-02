@@ -4936,7 +4936,33 @@ class SupportMessageTranslationAPIView(SupportFeatureAPIView):
         return Response({"message_id": str(message.public_id), "translation": payload})
 
 
-def _in_app_notification_payload(notification):
+def _document_package_id_from_notification(notification):
+    if not notification.outbox.notification_code.startswith("documents."):
+        return None
+    parts = notification.outbox.dedupe_key.split(":", 2)
+    if len(parts) < 3 or parts[0] != "document-package":
+        return None
+    try:
+        return uuid.UUID(parts[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _document_notification_requires_action(notification):
+    package_public_id = _document_package_id_from_notification(notification)
+    if package_public_id is None:
+        return False
+    return DocumentRequestPackage.objects.filter(
+        public_id=package_public_id,
+        connection__candidate=notification.recipient,
+        status__in=(
+            DocumentRequestPackage.STATUS_REQUESTED,
+            DocumentRequestPackage.STATUS_NEEDS_CORRECTION,
+        ),
+    ).exists()
+
+
+def _in_app_notification_payload(notification, *, requires_action=False):
     outbox = notification.outbox
     return {
         "id": str(notification.public_id),
@@ -4948,6 +4974,7 @@ def _in_app_notification_payload(notification):
             "key": outbox.target_key,
         },
         "read_at": notification.read_at,
+        "requires_action": requires_action,
         "created_at": notification.created_at,
     }
 
@@ -4980,21 +5007,58 @@ class MySupportNotificationListAPIView(SupportFeatureAPIView):
         if include_chat in {"0", "false", "no"}:
             queryset = queryset.exclude(outbox__notification_code="conversation.message")
 
+        active_document_package_ids = set(
+            DocumentRequestPackage.objects.filter(
+                connection__candidate=request.user,
+                status__in=(
+                    DocumentRequestPackage.STATUS_REQUESTED,
+                    DocumentRequestPackage.STATUS_NEEDS_CORRECTION,
+                ),
+            ).values_list("public_id", flat=True)
+        )
+        active_document_notification_ids = set()
+        remaining_document_package_ids = set(active_document_package_ids)
+        if remaining_document_package_ids:
+            document_notifications = queryset.filter(
+                outbox__notification_code__startswith="documents."
+            ).order_by("-created_at", "-id")
+            for item in document_notifications:
+                package_public_id = _document_package_id_from_notification(item)
+                if package_public_id in remaining_document_package_ids:
+                    active_document_notification_ids.add(item.id)
+                    remaining_document_package_ids.remove(package_public_id)
+                    if not remaining_document_package_ids:
+                        break
+
         unread_counts = {}
-        for code in queryset.filter(read_at__isnull=True).values_list(
-            "outbox__notification_code", flat=True
-        ):
+        for unread_notification in queryset.filter(read_at__isnull=True):
+            code = unread_notification.outbox.notification_code
+            if code.startswith("documents.") and (
+                _document_package_id_from_notification(unread_notification) is not None
+            ):
+                continue
             category = _notification_category(code)
             unread_counts[category] = unread_counts.get(category, 0) + 1
+        if active_document_package_ids:
+            unread_counts["documents"] = (
+                unread_counts.get("documents", 0) + len(active_document_package_ids)
+            )
 
         notifications = queryset.order_by("-created_at", "-id")[:100]
         return Response(
             {
                 "results": [
-                    _in_app_notification_payload(item) for item in notifications
+                    _in_app_notification_payload(
+                        item,
+                        requires_action=item.id in active_document_notification_ids,
+                    )
+                    for item in notifications
                 ],
                 "unread_count": sum(unread_counts.values()),
                 "unread_counts": unread_counts,
+                "action_counts": {
+                    "documents": len(active_document_package_ids),
+                },
             }
         )
 
@@ -5006,10 +5070,18 @@ class SupportNotificationReadAPIView(SupportFeatureAPIView):
             public_id=notification_public_id,
             recipient=request.user,
         )
-        if notification.read_at is None:
+        requires_action = _document_notification_requires_action(notification)
+        if notification.read_at is None and not requires_action:
             notification.read_at = timezone.now()
             notification.save(update_fields=["read_at"])
-        return Response({"notification": _in_app_notification_payload(notification)})
+        return Response(
+            {
+                "notification": _in_app_notification_payload(
+                    notification,
+                    requires_action=requires_action,
+                )
+            }
+        )
 
 
 def _operation_organization(view, *, request, organization_public_id, permission_code):

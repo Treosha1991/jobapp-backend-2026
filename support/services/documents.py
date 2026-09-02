@@ -9,6 +9,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from support.models import (
     DocumentRequestPackage,
     DocumentRequestPackageEvent,
+    InAppNotification,
     SupportConnection,
     SupportWorkerDocumentReference,
 )
@@ -66,6 +67,16 @@ def _record_event(*, package, action, actor):
         status_after=package.status,
         actor=actor,
     )
+
+
+def _mark_package_notifications_resolved(*, package, resolved_at=None):
+    """Close only the notification entries owned by this document request."""
+
+    return InAppNotification.objects.filter(
+        recipient=package.connection.candidate,
+        outbox__dedupe_key__startswith=f"document-package:{package.public_id}:",
+        read_at__isnull=True,
+    ).update(read_at=resolved_at or timezone.now())
 
 
 def create_document_request_package(
@@ -166,6 +177,10 @@ def mark_document_request_package_sent(*, worker, package):
             target=item,
             details={"connection": str(item.connection.public_id)},
         )
+        _mark_package_notifications_resolved(
+            package=item,
+            resolved_at=item.sent_marked_at,
+        )
     return item
 
 
@@ -246,4 +261,6 @@ def review_document_request_package(*, actor, package, action, manager_note=""):
                 collapse_key=target_key,
                 dedupe_key=f"document-package:{item.public_id}:{event.public_id}",
             )
+        else:
+            _mark_package_notifications_resolved(package=item)
     return item

@@ -145,12 +145,25 @@ class DocumentRequestPackageTests(TestCase):
             requested_notification.target_key,
             f"support:connection:{self.connection.public_id}:documents",
         )
-        self.assertTrue(
-            InAppNotification.objects.filter(
-                outbox=requested_notification,
-                recipient=self.worker,
-            ).exists()
+        requested_in_app = InAppNotification.objects.get(
+            outbox=requested_notification,
+            recipient=self.worker,
         )
+        premature_read = self.worker_client.post(
+            f"/api/v2/support/notifications/{requested_in_app.public_id}/read/"
+        )
+        self.assertEqual(premature_read.status_code, 200, premature_read.data)
+        self.assertTrue(premature_read.data["notification"]["requires_action"])
+        requested_in_app.refresh_from_db()
+        self.assertIsNone(requested_in_app.read_at)
+
+        active_center = self.worker_client.get(
+            "/api/v2/support/notifications/mine/?include_chat=0"
+        )
+        self.assertEqual(active_center.status_code, 200, active_center.data)
+        self.assertEqual(active_center.data["unread_counts"], {"documents": 1})
+        self.assertEqual(active_center.data["action_counts"], {"documents": 1})
+        self.assertTrue(active_center.data["results"][0]["requires_action"])
 
         worker_list_url = (
             f"/api/v2/support/connections/{self.connection.public_id}/document-packages/mine/"
@@ -166,6 +179,14 @@ class DocumentRequestPackageTests(TestCase):
         )
         self.assertEqual(marked.status_code, 200, marked.data)
         self.assertEqual(marked.data["document_package"]["status"], "sent_to_employer")
+        requested_in_app.refresh_from_db()
+        self.assertIsNotNone(requested_in_app.read_at)
+        resolved_center = self.worker_client.get(
+            "/api/v2/support/notifications/mine/?include_chat=0"
+        )
+        self.assertEqual(resolved_center.data["unread_counts"], {})
+        self.assertEqual(resolved_center.data["action_counts"], {"documents": 0})
+        self.assertFalse(resolved_center.data["results"][0]["requires_action"])
 
         correction = self.manager_client.post(
             f"/api/v2/support/document-packages/{package['id']}/needs-correction/",
@@ -180,6 +201,16 @@ class DocumentRequestPackageTests(TestCase):
                 notification_code="documents.needs_correction",
             ).exists()
         )
+        correction_outbox = NotificationOutbox.objects.get(
+            recipient=self.worker,
+            notification_code="documents.needs_correction",
+        )
+        correction_in_app = InAppNotification.objects.get(outbox=correction_outbox)
+        correction_center = self.worker_client.get(
+            "/api/v2/support/notifications/mine/?include_chat=0"
+        )
+        self.assertEqual(correction_center.data["unread_counts"], {"documents": 1})
+        self.assertTrue(correction_center.data["results"][0]["requires_action"])
 
         resent = self.worker_client.post(
             f"/api/v2/support/document-packages/{package['id']}/mark-sent/",
@@ -187,6 +218,8 @@ class DocumentRequestPackageTests(TestCase):
             format="json",
         )
         self.assertEqual(resent.status_code, 200, resent.data)
+        correction_in_app.refresh_from_db()
+        self.assertIsNotNone(correction_in_app.read_at)
         completed = self.manager_client.post(
             f"/api/v2/support/document-packages/{package['id']}/complete/",
             {"manager_note": "Received by employer."},
