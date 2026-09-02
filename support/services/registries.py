@@ -4,6 +4,7 @@ import hashlib
 import json
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -16,16 +17,19 @@ from support.models import (
     ProjectCrew,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
+    SupportConnection,
     SupportOrganization,
     Vehicle,
     ProjectScheduleTemplate,
     WorkProject,
+    WorkerProjectAssignment,
     Worksite,
 )
 from support.permission_codes import HOUSING_MANAGE, SCHEDULE_MANAGE, TRANSPORT_MANAGE
 from support.permissions import require_permission
 
 from .audit import record_audit_event
+from .notifications import enqueue_support_notification
 
 
 def create_housing_site(*, actor, organization, **data):
@@ -44,6 +48,73 @@ def create_housing_site(*, actor, organization, **data):
                 target=site,
                 details={},
             )
+    except IntegrityError as exc:
+        raise ValidationError(
+            {"internal_name": "housing_site_internal_name_already_exists"}
+        ) from exc
+    return site
+
+
+def update_housing_site(*, actor, organization, site, **data):
+    """Edit a housing registry entry and notify current/upcoming residents.
+
+    Only a real change to worker-facing rules or contact information creates an
+    event. Address-only corrections stay silent.
+    """
+
+    require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=HOUSING_MANAGE,
+    )
+    try:
+        with transaction.atomic():
+            site = HousingSite.objects.select_for_update().get(pk=site.pk)
+            if site.organization_id != organization.id:
+                raise ValidationError(
+                    {"site": "operation_related_record_not_in_organization"}
+                )
+            worker_facing_changed = any(
+                (getattr(site, field) or "") != (data.get(field, "") or "")
+                for field in ("rules_text", "contact_name", "contact_phone")
+            )
+            for field, value in data.items():
+                setattr(site, field, value)
+            site.save(update_fields=[*data.keys(), "updated_at"])
+            audit = record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="housing.site_updated",
+                target=site,
+                details={"worker_facing_changed": worker_facing_changed},
+            )
+            if worker_facing_changed:
+                now = timezone.now()
+                connection_ids = HousingAssignment.objects.filter(
+                    organization=organization,
+                    place__room__site=site,
+                    state=HousingAssignment.STATE_PUBLISHED,
+                ).filter(
+                    Q(check_out_at__isnull=True) | Q(check_out_at__gt=now)
+                ).values_list("connection_id", flat=True)
+                recipients = SupportConnection.objects.filter(
+                    id__in=connection_ids,
+                    is_archived=False,
+                ).select_related("candidate")
+                for connection in recipients:
+                    enqueue_support_notification(
+                        organization=organization,
+                        recipient=connection.candidate,
+                        notification_code="housing.information_changed",
+                        target_kind="housing_site",
+                        target_public_id=site.public_id,
+                        target_key=f"support:housing-site:{site.public_id}",
+                        collapse_key=f"support:housing:{connection.public_id}",
+                        dedupe_key=(
+                            f"housing.site.updated:{audit.public_id}:"
+                            f"{connection.public_id}"
+                        ),
+                    )
     except IntegrityError as exc:
         raise ValidationError(
             {"internal_name": "housing_site_internal_name_already_exists"}
@@ -280,6 +351,9 @@ def update_project(*, actor, project, name, **data):
     }
     with transaction.atomic():
         project = WorkProject.objects.select_for_update().select_related("worksite").get(pk=project.pk)
+        worker_information_changed = (
+            (project.instructions or "") != (data.get("instructions", "") or "")
+        )
         worksite = Worksite.objects.select_for_update().get(pk=project.worksite_id)
         permanent_worker_ids = set(
             ProjectCrewResourceAssignment.objects.filter(
@@ -322,13 +396,65 @@ def update_project(*, actor, project, name, **data):
             )
         except IntegrityError as exc:
             raise ValidationError({"name": "project_name_already_exists"}) from exc
-        record_audit_event(
+        audit = record_audit_event(
             organization=organization,
             actor=actor,
             action="work.project_updated",
             target=project,
-            details={"worksite": str(worksite.public_id)},
+            details={
+                "worksite": str(worksite.public_id),
+                "worker_information_changed": worker_information_changed,
+            },
         )
+        if worker_information_changed:
+            today = timezone.localdate()
+            connection_ids = set(
+                WorkerProjectAssignment.objects.filter(
+                    organization=organization,
+                    project=project,
+                    state=WorkerProjectAssignment.STATE_PUBLISHED,
+                )
+                .filter(
+                    Q(ends_at__isnull=True) | Q(ends_at__gt=timezone.now())
+                )
+                .values_list("connection_id", flat=True)
+            )
+            connection_ids.update(
+                ProjectCrewResourceAssignment.objects.filter(
+                    crew__project=project,
+                    crew__state=ProjectCrew.STATE_ACTIVE,
+                    starts_on__lte=today,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .values_list("driver_connection_id", flat=True)
+            )
+            connection_ids.update(
+                ProjectCrewPassenger.objects.filter(
+                    crew__project=project,
+                    crew__state=ProjectCrew.STATE_ACTIVE,
+                    starts_on__lte=today,
+                )
+                .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+                .values_list("connection_id", flat=True)
+            )
+            recipients = SupportConnection.objects.filter(
+                id__in=connection_ids,
+                is_archived=False,
+            ).select_related("candidate")
+            for connection in recipients:
+                enqueue_support_notification(
+                    organization=organization,
+                    recipient=connection.candidate,
+                    notification_code="work.information_changed",
+                    target_kind="work_project",
+                    target_public_id=project.public_id,
+                    target_key=f"support:work-project:{project.public_id}",
+                    collapse_key=f"support:work:{connection.public_id}",
+                    dedupe_key=(
+                        f"work.project.updated:{audit.public_id}:"
+                        f"{connection.public_id}"
+                    ),
+                )
     return WorkProject.objects.select_related("worksite").get(pk=project.pk)
 
 

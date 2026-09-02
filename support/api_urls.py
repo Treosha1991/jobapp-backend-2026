@@ -96,6 +96,7 @@ from .api_views import (
     SupportConversationReadAPIView,
     SupportMessageTranslationAPIView,
     SupportMessageSharedContactOpenAPIView,
+    SupportMessageForwardAPIView,
     SupportNotificationReadAPIView,
     SupportOrganizationCreateAPIView,
     SupportOrganizationActivateAPIView,
@@ -780,6 +781,12 @@ urlpatterns = [
         "<uuid:message_public_id>/open-contact/",
         SupportMessageSharedContactOpenAPIView.as_view(),
         name="support-message-shared-contact-open",
+    ),
+    path(
+        "conversations/<uuid:conversation_public_id>/messages/"
+        "<uuid:message_public_id>/forward/",
+        SupportMessageForwardAPIView.as_view(),
+        name="support-message-forward",
     ),
     path(
         "conversations/<uuid:conversation_public_id>/read/",

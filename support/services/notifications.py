@@ -47,11 +47,23 @@ _NOTIFICATION_COPY = {
         "pl": ("JobHub Support", "Twoje informacje o zakwaterowaniu zostały zaktualizowane."),
         "uk": ("JobHub Support", "Вашу інформацію про житло оновлено."),
     },
+    "housing.information_changed": {
+        "ru": ("JobHub Support", "Правила или контакт по вашему жилью обновлены."),
+        "en": ("JobHub Support", "Your housing rules or contact details were updated."),
+        "pl": ("JobHub Support", "Zaktualizowano zasady lub dane kontaktowe zakwaterowania."),
+        "uk": ("JobHub Support", "Правила або контактні дані вашого житла оновлено."),
+    },
     "work.assignment_published": {
         "ru": ("JobHub Support", "Ваша информация о работе обновлена."),
         "en": ("JobHub Support", "Your work information was updated."),
         "pl": ("JobHub Support", "Twoje informacje o pracy zostały zaktualizowane."),
         "uk": ("JobHub Support", "Вашу інформацію про роботу оновлено."),
+    },
+    "work.information_changed": {
+        "ru": ("JobHub Support", "Важная информация по вашему проекту обновлена."),
+        "en": ("JobHub Support", "Important information for your project was updated."),
+        "pl": ("JobHub Support", "Zaktualizowano ważne informacje o Twoim projekcie."),
+        "uk": ("JobHub Support", "Важливу інформацію про ваш проєкт оновлено."),
     },
     "transport.route_published": {
         "ru": ("JobHub Support", "Ваша информация о транспорте обновлена."),

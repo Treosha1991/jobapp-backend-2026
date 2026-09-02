@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from support.models import (
     DriverVehicleAssignment,
+    NotificationOutbox,
     ProjectCrew,
     ProjectCrewDriverSubstitution,
     ProjectCrewMemberAbsence,
@@ -546,6 +547,20 @@ class ProjectFirstWorkspaceTests(TestCase):
         self.assertEqual(self.project.internal_name, "Updated preview project")
         self.assertEqual(self.worksite.city, "Dronten")
         self.assertTrue(ProjectCrewShift.objects.filter(pk=shift.pk).exists())
+        self.assertEqual(
+            NotificationOutbox.objects.filter(
+                notification_code="work.information_changed"
+            ).count(),
+            2,
+        )
+
+        self.client.post(self._detail_url(), payload)
+        self.assertEqual(
+            NotificationOutbox.objects.filter(
+                notification_code="work.information_changed"
+            ).count(),
+            2,
+        )
 
     def test_owner_deletes_crew_and_releases_all_active_assignments(self):
         crew = self._create_crew()

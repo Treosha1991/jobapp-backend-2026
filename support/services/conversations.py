@@ -979,6 +979,35 @@ def forward_text_message(*, sender, source_message, recipient, client_message_id
     return target_conversation, message, created
 
 
+def forward_text_message_to_existing_conversation(
+    *, sender, source_message, target_conversation, client_message_id
+):
+    """Forward text only to another active chat the sender already belongs to."""
+
+    source_conversation = source_message.conversation
+    require_conversation_access(user=sender, conversation=source_conversation)
+    require_conversation_access(user=sender, conversation=target_conversation)
+    if (
+        source_conversation.organization_id != target_conversation.organization_id
+        or source_conversation.id == target_conversation.id
+        or target_conversation.state != SupportConversation.STATE_ACTIVE
+        or target_conversation.kind == SupportConversation.KIND_GROUP
+        or source_message.kind != SupportMessage.KIND_TEXT
+        or source_message.deleted_at is not None
+    ):
+        raise ValidationError(
+            {"target_conversation_id": "support_forward_conversation_not_available"}
+        )
+    return send_text_message(
+        sender=sender,
+        conversation=target_conversation,
+        body=source_message.body,
+        original_language=source_message.original_language,
+        client_message_id=client_message_id,
+        forwarded_from=source_message,
+    )
+
+
 def mark_conversation_read(*, user, conversation):
     """Mark the conversation and its notification-center entries as read.
 

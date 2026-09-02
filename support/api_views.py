@@ -141,6 +141,7 @@ from .serializers import (
     ProjectUpdateSerializer,
     SupportApplicationCreateSerializer,
     SupportMessageCreateSerializer,
+    SupportMessageForwardSerializer,
     SupportContactMessageCreateSerializer,
     SupportOrganizationCreateSerializer,
     SupportVacancyCreateSerializer,
@@ -180,6 +181,7 @@ from .services.conversations import (
     require_conversation_access,
     send_contact_message,
     send_text_message,
+    forward_text_message_to_existing_conversation,
 )
 from .services.entitlements import support_access_snapshot_for
 from .services.notifications import enqueue_support_notification
@@ -622,6 +624,19 @@ def _message_payload(message, *, viewer):
                 else ""
             ),
         }
+    reply_to = None
+    if message.reply_to_id:
+        reply_to = {
+            "id": str(message.reply_to.public_id),
+            "body": "" if message.reply_to.deleted_at else message.reply_to.body,
+            "sender_display_name": (
+                _user_display_name(message.reply_to.sender)
+                if message.reply_to.sender
+                else ""
+            ),
+            "is_mine": message.reply_to.sender_id == viewer.id,
+            "deleted_at": message.reply_to.deleted_at,
+        }
     return {
         "id": str(message.public_id),
         "kind": message.kind,
@@ -648,6 +663,7 @@ def _message_payload(message, *, viewer):
             if message.forwarded_from_id and message.forwarded_from.sender
             else ""
         ),
+        "reply_to": reply_to,
         "shared_contact": shared_contact,
     }
 
@@ -4660,6 +4676,8 @@ class SupportConversationMessageListAPIView(SupportFeatureAPIView):
             "sender__profile",
             "forwarded_from__sender",
             "forwarded_from__sender__profile",
+            "reply_to__sender",
+            "reply_to__sender__profile",
             "shared_contact_user",
             "shared_contact_user__profile",
             "shared_contact_connection__vacancy",
@@ -4686,15 +4704,83 @@ class SupportConversationMessageCreateAPIView(SupportFeatureAPIView):
         )
         serializer = SupportMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        reply_to = None
+        reply_to_message_id = serializer.validated_data.get(
+            "reply_to_message_id"
+        )
+        if reply_to_message_id:
+            reply_to = get_object_or_404(
+                SupportMessage.objects.select_related("sender", "sender__profile"),
+                conversation=conversation,
+                public_id=reply_to_message_id,
+                deleted_at__isnull=True,
+            )
         message, created = send_text_message(
             sender=request.user,
             conversation=conversation,
             body=serializer.validated_data["body"],
             original_language=serializer.validated_data["original_language"],
             client_message_id=serializer.validated_data["client_message_id"],
+            reply_to=reply_to,
         )
         return Response(
             {"created": created, "message": _message_payload(message, viewer=request.user)},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class SupportMessageForwardAPIView(SupportFeatureAPIView):
+    def post(self, request, conversation_public_id, message_public_id):
+        source_conversation = get_object_or_404(
+            SupportConversation.objects.filter(
+                members__user=request.user,
+                members__left_at__isnull=True,
+            )
+            .select_related("organization")
+            .distinct(),
+            public_id=conversation_public_id,
+            state=SupportConversation.STATE_ACTIVE,
+        )
+        source_message = get_object_or_404(
+            SupportMessage.objects.select_related("conversation", "sender"),
+            conversation=source_conversation,
+            public_id=message_public_id,
+            kind=SupportMessage.KIND_TEXT,
+            deleted_at__isnull=True,
+        )
+        serializer = SupportMessageForwardSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        target_conversation = get_object_or_404(
+            SupportConversation.objects.filter(
+                members__user=request.user,
+                members__left_at__isnull=True,
+            )
+            .select_related("organization")
+            .distinct(),
+            public_id=serializer.validated_data["target_conversation_id"],
+            state=SupportConversation.STATE_ACTIVE,
+        )
+        message, created = forward_text_message_to_existing_conversation(
+            sender=request.user,
+            source_message=source_message,
+            target_conversation=target_conversation,
+            client_message_id=serializer.validated_data["client_message_id"],
+        )
+        message = SupportMessage.objects.select_related(
+            "sender",
+            "sender__profile",
+            "forwarded_from__sender",
+            "forwarded_from__sender__profile",
+        ).get(pk=message.pk)
+        return Response(
+            {
+                "created": created,
+                "conversation": _conversation_payload(
+                    target_conversation,
+                    viewer=request.user,
+                ),
+                "message": _message_payload(message, viewer=request.user),
+            },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
@@ -4855,6 +4941,7 @@ def _in_app_notification_payload(notification):
     return {
         "id": str(notification.public_id),
         "code": outbox.notification_code,
+        "category": _notification_category(outbox.notification_code),
         "target": {
             "kind": outbox.target_kind,
             "id": str(outbox.target_public_id),
@@ -4865,14 +4952,51 @@ def _in_app_notification_payload(notification):
     }
 
 
+def _notification_category(code):
+    prefix = (code or "").partition(".")[0]
+    return {
+        "conversation": "chat",
+        "work": "work",
+        "housing": "housing",
+        "transport": "transport",
+        "documents": "documents",
+        "worker_request": "requests",
+        "worker_task": "tasks",
+        "announcement": "announcements",
+        "schedule": "schedule",
+        "time": "time",
+        "application": "applications",
+        "connection": "access",
+        "support": "access",
+    }.get(prefix, "other")
+
+
 class MySupportNotificationListAPIView(SupportFeatureAPIView):
     def get(self, request):
-        notifications = (
-            InAppNotification.objects.filter(recipient=request.user)
-            .select_related("outbox")
-            .order_by("-created_at", "-id")[:100]
+        queryset = InAppNotification.objects.filter(recipient=request.user).select_related(
+            "outbox"
         )
-        return Response({"results": [_in_app_notification_payload(item) for item in notifications]})
+        include_chat = (request.query_params.get("include_chat") or "1").strip().lower()
+        if include_chat in {"0", "false", "no"}:
+            queryset = queryset.exclude(outbox__notification_code="conversation.message")
+
+        unread_counts = {}
+        for code in queryset.filter(read_at__isnull=True).values_list(
+            "outbox__notification_code", flat=True
+        ):
+            category = _notification_category(code)
+            unread_counts[category] = unread_counts.get(category, 0) + 1
+
+        notifications = queryset.order_by("-created_at", "-id")[:100]
+        return Response(
+            {
+                "results": [
+                    _in_app_notification_payload(item) for item in notifications
+                ],
+                "unread_count": sum(unread_counts.values()),
+                "unread_counts": unread_counts,
+            }
+        )
 
 
 class SupportNotificationReadAPIView(SupportFeatureAPIView):

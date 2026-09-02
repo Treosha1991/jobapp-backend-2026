@@ -161,6 +161,7 @@ from .services.registries import (
     create_housing_place,
     create_housing_room,
     create_housing_site,
+    update_housing_site,
     create_vehicle,
     create_work_project,
     create_worksite,
@@ -2714,6 +2715,23 @@ def housing_workspace(request):
                     **_validated_post(HousingSiteCreateSerializer, request),
                 )
                 success_key = "support_housing_site_created"
+            elif action == "housing_site_update":
+                site = get_object_or_404(
+                    HousingSite,
+                    organization=organization,
+                    public_id=request.POST.get("site_id"),
+                )
+                redirect_site = update_housing_site(
+                    actor=request.user,
+                    organization=organization,
+                    site=site,
+                    **_validated_post(
+                        HousingSiteCreateSerializer,
+                        request,
+                        ignored_fields=("site_id",),
+                    ),
+                )
+                success_key = "support_housing_site_updated"
             elif action == "housing_room_create":
                 data = _validated_post(HousingRoomCreateSerializer, request)
                 site = get_object_or_404(

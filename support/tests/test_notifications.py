@@ -122,6 +122,24 @@ class SupportNotificationTests(TestCase):
         self.assertEqual(second_read.status_code, 200)
         self.assertEqual(forbidden.status_code, 404)
 
+    def test_notification_center_can_exclude_chat_and_returns_category_counts(self):
+        self._enqueue(code="conversation.message")
+        document_outbox, _ = self._enqueue(code="documents.requested")
+        document_notification = InAppNotification.objects.get(outbox=document_outbox)
+
+        listed = self.worker_client.get(
+            "/api/v2/support/notifications/mine/?include_chat=0"
+        )
+
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual(listed.data["unread_count"], 1)
+        self.assertEqual(listed.data["unread_counts"], {"documents": 1})
+        self.assertEqual(len(listed.data["results"]), 1)
+        self.assertEqual(
+            listed.data["results"][0]["id"], str(document_notification.public_id)
+        )
+        self.assertEqual(listed.data["results"][0]["category"], "documents")
+
     def test_translation_is_access_checked_and_never_uses_an_unapproved_provider(self):
         now = timezone.now()
         SupportAccessGrant.objects.create(

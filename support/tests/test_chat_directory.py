@@ -206,6 +206,69 @@ class StaffChatDirectoryTests(TestCase):
             "https://cdn.example.test/avatars/owner.png",
         )
 
+    def test_message_reply_and_internal_forward_use_existing_chats(self):
+        worker_chat = self.client.post(
+            f"{self.organization_url}/chat-directory/open/",
+            {
+                "target_type": "worker",
+                "target_id": str(self.connection.public_id),
+            },
+            format="json",
+        )
+        staff_chat = self.client.post(
+            f"{self.organization_url}/chat-directory/open/",
+            {
+                "target_type": "staff",
+                "target_id": str(self.manager_membership.public_id),
+            },
+            format="json",
+        )
+        source = self.client.post(
+            f"/api/v2/support/conversations/"
+            f"{worker_chat.data['conversation']['id']}/messages/send/",
+            {"body": "Original message", "original_language": "en"},
+            format="json",
+        )
+        reply = self.client.post(
+            f"/api/v2/support/conversations/"
+            f"{worker_chat.data['conversation']['id']}/messages/send/",
+            {
+                "body": "Reply message",
+                "original_language": "en",
+                "reply_to_message_id": source.data["message"]["id"],
+            },
+            format="json",
+        )
+        self.assertEqual(reply.status_code, 201, reply.data)
+        self.assertEqual(
+            reply.data["message"]["reply_to"]["body"],
+            "Original message",
+        )
+
+        forwarded = self.client.post(
+            f"/api/v2/support/conversations/"
+            f"{worker_chat.data['conversation']['id']}/messages/"
+            f"{source.data['message']['id']}/forward/",
+            {"target_conversation_id": staff_chat.data["conversation"]["id"]},
+            format="json",
+        )
+        self.assertEqual(forwarded.status_code, 201, forwarded.data)
+        self.assertEqual(
+            forwarded.data["conversation"]["id"],
+            staff_chat.data["conversation"]["id"],
+        )
+        self.assertTrue(forwarded.data["message"]["is_forwarded"])
+        self.assertEqual(forwarded.data["message"]["body"], "Original message")
+
+        invalid = self.client.post(
+            f"/api/v2/support/conversations/"
+            f"{worker_chat.data['conversation']['id']}/messages/"
+            f"{source.data['message']['id']}/forward/",
+            {"target_conversation_id": worker_chat.data["conversation"]["id"]},
+            format="json",
+        )
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+
     def test_conversations_are_sorted_only_by_latest_message(self):
         staff_chat = self.client.post(
             f"{self.organization_url}/chat-directory/open/",

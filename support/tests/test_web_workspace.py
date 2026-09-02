@@ -765,6 +765,58 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(current_assignment.state, HousingAssignment.STATE_PUBLISHED)
         self.assertContains(assigned, "workspace-active-worker")
 
+        updated = self.client.post(
+            site_url,
+            {
+                "action": "housing_site_update",
+                "site_id": str(site.public_id),
+                "internal_name": site.internal_name,
+                "country_code": site.country_code,
+                "city": site.city,
+                "postal_code": site.postal_code,
+                "street": site.street,
+                "building": site.building,
+                "rules_text": "Keep the shared kitchen tidy.",
+                "contact_name": "Housing coordinator",
+                "contact_phone": "+31612345678",
+            },
+            follow=True,
+        )
+        self.assertEqual(updated.status_code, 200)
+        site.refresh_from_db()
+        self.assertEqual(site.contact_name, "Housing coordinator")
+        self.assertEqual(
+            NotificationOutbox.objects.filter(
+                notification_code="housing.information_changed",
+                recipient=self.worker_connection.candidate,
+            ).count(),
+            1,
+        )
+
+        self.client.post(
+            site_url,
+            {
+                "action": "housing_site_update",
+                "site_id": str(site.public_id),
+                "internal_name": site.internal_name,
+                "country_code": site.country_code,
+                "city": site.city,
+                "postal_code": site.postal_code,
+                "street": site.street,
+                "building": site.building,
+                "rules_text": site.rules_text,
+                "contact_name": site.contact_name,
+                "contact_phone": site.contact_phone,
+            },
+        )
+        self.assertEqual(
+            NotificationOutbox.objects.filter(
+                notification_code="housing.information_changed",
+                recipient=self.worker_connection.candidate,
+            ).count(),
+            1,
+        )
+
         workers_page = self.client.get(
             f"/employer/support/workers/?organization={self.organization.public_id}"
         )

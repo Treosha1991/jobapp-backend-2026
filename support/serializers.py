@@ -672,6 +672,7 @@ class ConnectionTransitionSerializer(StrictInputSerializer):
 class SupportMessageCreateSerializer(StrictInputSerializer):
     original_language = serializers.ChoiceField(choices=("ru", "en", "pl", "uk"))
     body = serializers.CharField(max_length=1500)
+    reply_to_message_id = serializers.UUIDField(required=False, allow_null=True)
     client_message_id = serializers.UUIDField(required=False, default=uuid.uuid4)
 
     def validate_body(self, value):
@@ -679,6 +680,11 @@ class SupportMessageCreateSerializer(StrictInputSerializer):
         if not normalized:
             raise serializers.ValidationError("message_body_required")
         return normalized
+
+
+class SupportMessageForwardSerializer(StrictInputSerializer):
+    target_conversation_id = serializers.UUIDField()
+    client_message_id = serializers.UUIDField(required=False, default=uuid.uuid4)
 
 
 class SupportContactMessageCreateSerializer(StrictInputSerializer):
