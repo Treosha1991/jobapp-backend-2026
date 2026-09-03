@@ -125,7 +125,6 @@ from .api_views import (
     WorkTimeEntryCorrectionAPIView,
     WorkTimeEntryStaffEditAPIView,
     WorkerRequestApproveAPIView,
-    WorkerRequestClarificationAPIView,
     WorkerRequestDeclineAPIView,
     WorkerRequestExtraDateDeclineAPIView,
     WorkerAccessScopeCreateAPIView,
@@ -699,11 +698,6 @@ urlpatterns = [
         "announcements/<uuid:announcement_public_id>/publish/",
         AnnouncementPublishAPIView.as_view(),
         name="support-announcement-publish",
-    ),
-    path(
-        "worker-requests/<uuid:request_public_id>/clarification/",
-        WorkerRequestClarificationAPIView.as_view(),
-        name="support-worker-request-clarification",
     ),
     path(
         "worker-requests/<uuid:request_public_id>/approve/",

@@ -25,7 +25,7 @@ from support.models import (
     WorkerRequestDate,
     WorkerRequestEvent,
 )
-from support.permission_codes import REQUEST_DECIDE, SCHEDULE_MANAGE
+from support.permission_codes import CHAT_MANAGE, REQUEST_DECIDE, SCHEDULE_MANAGE
 from support.services.organizations import (
     activate_organization,
     create_organization,
@@ -87,6 +87,12 @@ class WorkerRequestTests(TestCase):
             organization=self.organization,
             membership=self.manager_membership,
             permission_code=REQUEST_DECIDE,
+        )
+        grant_permission(
+            actor=self.owner,
+            organization=self.organization,
+            membership=self.manager_membership,
+            permission_code=CHAT_MANAGE,
         )
         self.connection = self._connection_for(self.worker, "main")
         self.other_connection = self._connection_for(self.other_worker, "other")
@@ -500,6 +506,30 @@ class WorkerRequestTests(TestCase):
         )
         self.assertEqual(cancellation.status_code, 400)
 
+    def test_worker_request_clarification_endpoint_is_removed(self):
+        starts_on = timezone.localdate() + timedelta(days=2)
+        created = self.worker_client.post(
+            self._worker_request_url(),
+            {
+                "request_type": "day_off",
+                "starts_on": starts_on.isoformat(),
+                "ends_on": starts_on.isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        request_id = created.data["worker_request"]["id"]
+
+        removed = self.manager_client.post(
+            f"/api/v2/support/worker-requests/{request_id}/clarification/",
+            {"manager_note": "Please explain."},
+            format="json",
+        )
+
+        self.assertEqual(removed.status_code, 404)
+        item = WorkerRequest.objects.get(public_id=request_id)
+        self.assertEqual(item.status, WorkerRequest.STATUS_SUBMITTED)
+
     def test_request_queue_and_review_respect_manager_scope(self):
         other_created = self.other_worker_client.post(
             self._worker_request_url(self.other_connection),
@@ -544,6 +574,19 @@ class WorkerRequestTests(TestCase):
         opened = self.client.get(screen_url)
         self.assertEqual(opened.status_code, 200)
         self.assertContains(opened, "Ihor Requests")
+        self.assertContains(opened, "Open chat")
+        self.assertNotContains(opened, 'value="request_clarify"')
+
+        opened_chat = self.client.post(
+            screen_url,
+            {
+                "action": "request_open_chat",
+                "request_id": request_id,
+                "filter": "open",
+            },
+        )
+        self.assertEqual(opened_chat.status_code, 302)
+        self.assertIn("/employer/support/conversations/", opened_chat.url)
 
         approved = self.client.post(
             screen_url,

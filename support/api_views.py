@@ -1231,6 +1231,11 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
             organization=organization,
             permission_code=REQUEST_DECIDE,
         )
+        may_manage_chats = has_permission(
+            user=request.user,
+            organization=organization,
+            permission_code=CHAT_MANAGE,
+        )
         may_manage_tasks = has_permission(
             user=request.user,
             organization=organization,
@@ -1362,6 +1367,7 @@ class SupportStaffWorkspaceSummaryAPIView(SupportFeatureAPIView, OrganizationAcc
                     "pipeline_review": may_review_pipeline,
                     "worker_view": may_view_workers,
                     "request_decide": may_decide_requests,
+                    "chat_manage": may_manage_chats,
                     "task_manage": may_manage_tasks,
                     "announcement_manage": has_permission(
                         user=request.user,
@@ -6941,7 +6947,7 @@ class WorkerRequestDecisionAPIView(SupportFeatureAPIView):
         serializer = WorkerRequestDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         manager_note = serializer.validated_data["manager_note"]
-        if self.action in {"clarify", "decline"} and not manager_note:
+        if self.action == "decline" and not manager_note:
             raise ValidationError({"manager_note": "manager_note_required_for_request_decision"})
         item = _staff_worker_request_or_not_found(
             user=request.user,
@@ -6961,10 +6967,6 @@ class WorkerRequestDecisionAPIView(SupportFeatureAPIView):
         ).get(pk=item.pk)
         refresh_extra_shift_requests([item])
         return Response({"worker_request": _worker_request_payload(item, include_staff_fields=True)})
-
-
-class WorkerRequestClarificationAPIView(WorkerRequestDecisionAPIView):
-    action = "clarify"
 
 
 class WorkerRequestApproveAPIView(WorkerRequestDecisionAPIView):

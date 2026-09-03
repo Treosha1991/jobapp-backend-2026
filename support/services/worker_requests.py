@@ -326,7 +326,7 @@ def submit_worker_request(
 
 
 def decide_worker_request(*, actor, request, action, manager_note):
-    """Let scoped staff clarify, approve or decline without altering a shift."""
+    """Let scoped staff approve or decline without altering a shift."""
 
     organization = request.organization
     require_permission(user=actor, organization=organization, permission_code=REQUEST_DECIDE)
@@ -410,11 +410,6 @@ def decide_worker_request(*, actor, request, action, manager_note):
             )
             return item
         mapping = {
-            "clarify": (
-                WorkerRequest.STATUS_NEEDS_CLARIFICATION,
-                WorkerRequestEvent.ACTION_CLARIFICATION_REQUESTED,
-                "worker_request.clarification_requested",
-            ),
             "approve": (
                 WorkerRequest.STATUS_APPROVED,
                 WorkerRequestEvent.ACTION_APPROVED,
@@ -430,7 +425,7 @@ def decide_worker_request(*, actor, request, action, manager_note):
             next_status, event_action, audit_action = mapping[action]
         except KeyError as error:
             raise ValidationError({"action": "unsupported_worker_request_decision"}) from error
-        if action in {"clarify", "decline"} and not (manager_note or "").strip():
+        if action == "decline" and not (manager_note or "").strip():
             raise ValidationError({"manager_note": "manager_note_required_for_request_decision"})
         now = timezone.now()
         item.status = next_status

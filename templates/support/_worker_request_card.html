@@ -57,8 +57,8 @@
         <input type="hidden" name="filter" value="{{ status_filter }}">
         <label class="jh-field"><span>{{ employer_t.support_requests_manager_comment }}</span><textarea class="jh-input" name="manager_note" maxlength="500" placeholder="{{ employer_t.support_requests_comment_hint }}"></textarea></label>
         <div class="jh-actions">
-          <button class="jh-btn" name="action" value="request_clarify" type="submit">{{ employer_t.support_requests_request_clarification }}</button>
           <button class="jh-btn primary" name="action" value="request_approve" type="submit">{{ employer_t.support_requests_approve }}</button>
+          <button class="jh-btn" name="action" value="request_open_chat" type="submit">{{ employer_t.support_applications_open_chat }}</button>
           <button class="jh-btn danger" name="action" value="request_decline" type="submit">{{ employer_t.support_requests_decline }}</button>
         </div>
       </form>

@@ -3889,7 +3889,7 @@ def _worker_request_operation(request, *, snapshot):
     selected_filter = request.POST.get("filter") or snapshot["status_filter"]
     try:
         if action not in {
-            "request_clarify",
+            "request_open_chat",
             "request_approve",
             "request_decline",
             "request_extra_date_decline",
@@ -3911,6 +3911,17 @@ def _worker_request_operation(request, *, snapshot):
             connection__in=allowed_connections,
             public_id=request.POST.get("request_id"),
         )
+        if action == "request_open_chat":
+            conversation, _ = open_manager_conversation_for_staff(
+                actor=request.user,
+                connection=item.connection,
+            )
+            return redirect(
+                reverse(
+                    "support:conversation-detail",
+                    kwargs={"conversation_public_id": conversation.public_id},
+                )
+            )
         if action == "request_extra_date_decline":
             request_date = get_object_or_404(
                 WorkerRequestDate,
@@ -3926,7 +3937,6 @@ def _worker_request_operation(request, *, snapshot):
             message_key = "support_requests_extra_date_declined"
         else:
             service_action = {
-                "request_clarify": "clarify",
                 "request_approve": "approve",
                 "request_decline": "decline",
             }[action]
@@ -3937,7 +3947,6 @@ def _worker_request_operation(request, *, snapshot):
                 manager_note=data["manager_note"],
             )
             message_key = {
-                "clarify": "support_requests_clarification_sent",
                 "approve": "support_requests_approved",
                 "decline": "support_requests_declined",
             }[service_action]
