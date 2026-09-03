@@ -1,5 +1,6 @@
 from calendar import monthrange
 from datetime import date, timedelta
+import logging
 import uuid
 
 from django.contrib.auth import get_user_model
@@ -9,9 +10,17 @@ from django.utils.dateparse import parse_date
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import permissions, status
-from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.exceptions import (
+    APIException,
+    NotFound,
+    PermissionDenied,
+    ValidationError,
+)
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+
+logger = logging.getLogger(__name__)
 
 from jobs.avatar_utils import avatar_public_url
 
@@ -6223,11 +6232,31 @@ class MyWorkerRequestListCreateAPIView(SupportFeatureAPIView):
         )
         serializer = WorkerRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        item = submit_worker_request(
-            worker=request.user,
-            connection=connection,
-            **serializer.validated_data,
-        )
+        try:
+            item = submit_worker_request(
+                worker=request.user,
+                connection=connection,
+                **serializer.validated_data,
+            )
+        except APIException:
+            raise
+        except Exception:
+            logger.exception(
+                "support_worker_request_submit_failed connection=%s type=%s",
+                connection.public_id,
+                serializer.validated_data.get("request_type", ""),
+            )
+            return Response(
+                {
+                    "code": "worker_request_submission_failed",
+                    "detail": (
+                        "Не удалось отправить запрос из-за временной ошибки сервера. "
+                        "Попробуйте ещё раз через несколько минут. Если запрос срочный, "
+                        "напишите менеджеру в чате."
+                    ),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         item = WorkerRequest.objects.select_related(
             "connection", "connection__vacancy", "reviewed_by"
         ).get(pk=item.pk)

@@ -213,6 +213,26 @@ class WorkerRequestTests(TestCase):
         )
         self.assertEqual(notice.status, NotificationOutbox.STATUS_PENDING)
 
+    def test_unexpected_submission_error_returns_safe_json_instead_of_html(self):
+        with patch(
+            "support.api_views.submit_worker_request",
+            side_effect=RuntimeError("database internals must stay private"),
+        ):
+            response = self.worker_client.post(
+                self._worker_request_url(),
+                {
+                    "request_type": "day_off",
+                    "starts_on": (timezone.localdate() + timedelta(days=1)).isoformat(),
+                    "ends_on": (timezone.localdate() + timedelta(days=1)).isoformat(),
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.data["code"], "worker_request_submission_failed")
+        self.assertNotIn("database internals", response.data["detail"])
+        self.assertNotIn("<html", response.data["detail"].lower())
+
     def test_scoped_manager_can_approve_exit_request_without_changing_worker_stage(self):
         created = self.worker_client.post(
             self._worker_request_url(),
