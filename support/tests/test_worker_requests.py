@@ -1,4 +1,5 @@
 from datetime import datetime, time, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -185,6 +186,32 @@ class WorkerRequestTests(TestCase):
         self.assertEqual(notice.target_kind, "worker_request")
         self.assertEqual(notice.safe_context, {})
         self.assertFalse(NotificationOutbox.objects.filter(recipient=self.worker).exists())
+
+    def test_urgent_request_succeeds_when_push_dispatch_fails_after_commit(self):
+        with patch(
+            "support.services.notifications.dispatch_outbox_entry",
+            side_effect=RuntimeError("push provider unavailable"),
+        ), self.captureOnCommitCallbacks(execute=True):
+            created = self.worker_client.post(
+                self._worker_request_url(),
+                {
+                    "request_type": "unable_today",
+                    "starts_on": timezone.localdate().isoformat(),
+                    "ends_on": timezone.localdate().isoformat(),
+                    "worker_note": "I cannot attend today.",
+                },
+                format="json",
+            )
+
+        self.assertEqual(created.status_code, 201, created.data)
+        item = WorkerRequest.objects.get(
+            public_id=created.data["worker_request"]["id"]
+        )
+        notice = NotificationOutbox.objects.get(
+            notification_code="worker_request.urgent_submitted",
+            target_public_id=item.public_id,
+        )
+        self.assertEqual(notice.status, NotificationOutbox.STATUS_PENDING)
 
     def test_scoped_manager_can_approve_exit_request_without_changing_worker_stage(self):
         created = self.worker_client.post(

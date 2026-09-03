@@ -199,7 +199,15 @@ def enqueue_support_notification(
     )
     if created:
         InAppNotification.objects.create(outbox=outbox, recipient=recipient)
-        transaction.on_commit(lambda: dispatch_outbox_entry(outbox_public_id=outbox.public_id))
+        # Push delivery is a secondary operation. The durable outbox and the
+        # in-app notification have already been stored in the business
+        # transaction, so a provider/runtime failure must not turn a successful
+        # user action into an HTTP 500 response. Django logs robust callback
+        # failures and the outbox remains available for the retry command.
+        transaction.on_commit(
+            lambda: dispatch_outbox_entry(outbox_public_id=outbox.public_id),
+            robust=True,
+        )
     return outbox, created
 
 
