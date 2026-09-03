@@ -82,10 +82,12 @@ def submit_worker_request(
     """Submit a request; it never makes an employment or schedule decision."""
 
     with transaction.atomic():
-        connection = (
-            SupportConnection.objects.select_for_update()
-            .select_related("organization", "assigned_manager__user")
-            .get(pk=connection.pk)
+        # Lock only the connection row. ``assigned_manager`` is nullable, and
+        # joining it here makes PostgreSQL reject ``FOR UPDATE`` because the
+        # nullable side of an outer join cannot be locked. Related objects are
+        # loaded lazily below while this transaction remains open.
+        connection = SupportConnection.objects.select_for_update().get(
+            pk=connection.pk
         )
         if connection.candidate_id != worker.id:
             raise PermissionDenied("support_worker_request_not_owned")

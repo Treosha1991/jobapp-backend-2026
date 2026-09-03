@@ -2,7 +2,9 @@ from datetime import datetime, time, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.db import connection as database_connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -186,6 +188,32 @@ class WorkerRequestTests(TestCase):
         self.assertEqual(notice.target_kind, "worker_request")
         self.assertEqual(notice.safe_context, {})
         self.assertFalse(NotificationOutbox.objects.filter(recipient=self.worker).exists())
+
+    def test_submission_lock_query_does_not_join_nullable_assigned_manager(self):
+        starts_on = timezone.localdate() + timedelta(days=1)
+
+        with CaptureQueriesContext(database_connection) as captured:
+            created = self.worker_client.post(
+                self._worker_request_url(),
+                {
+                    "request_type": "day_off",
+                    "starts_on": starts_on.isoformat(),
+                    "ends_on": starts_on.isoformat(),
+                },
+                format="json",
+            )
+
+        self.assertEqual(created.status_code, 201, created.data)
+        connection_reads = [
+            query["sql"]
+            for query in captured.captured_queries
+            if 'FROM "support_supportconnection"' in query["sql"]
+        ]
+        self.assertTrue(connection_reads)
+        self.assertNotIn(
+            'JOIN "support_organizationmembership"',
+            connection_reads[-1],
+        )
 
     def test_urgent_request_succeeds_when_push_dispatch_fails_after_commit(self):
         with patch(
