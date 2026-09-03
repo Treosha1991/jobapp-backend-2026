@@ -74,6 +74,7 @@ from support.permissions import (
     may_delegate_permission,
     worker_connection_queryset_for,
 )
+from support.services.worker_requests import refresh_extra_shift_requests
 from support.permission_groups import TEAM_PERMISSION_GROUPS
 from support.questionnaire import application_matches_filters
 
@@ -395,6 +396,15 @@ def worker_requests_snapshot(*, user, organization_public_id=None, status_filter
         organization=organization,
         connection__in=allowed_connections,
     )
+    # Refresh availability requests before applying the open/all filter so a
+    # newly published shift closes its date immediately in the manager queue.
+    refresh_extra_shift_requests(
+        list(
+            request_queryset.filter(request_type=WorkerRequest.TYPE_EXTRA_SHIFT)
+            .select_related("connection")
+            .order_by("id")
+        )
+    )
     supported_filters = {
         "open": (
             WorkerRequest.STATUS_SUBMITTED,
@@ -425,6 +435,7 @@ def worker_requests_snapshot(*, user, organization_public_id=None, status_filter
             "-id",
         )[:250]
     )
+    refresh_extra_shift_requests(requests)
     for item in requests:
         item.worker_display_name = _display_name(item.connection.candidate)
         item.is_open = item.status in {
@@ -449,10 +460,18 @@ def worker_requests_snapshot(*, user, organization_public_id=None, status_filter
         ).order_by("work_date", "starts_at", "id"):
             shifts_by_connection.setdefault(shift.connection_id, []).append(shift)
         for item in requests:
+            extra_dates = {
+                row.work_date
+                for row in getattr(item, "extra_shift_dates_for_payload", ())
+            }
             affected_shifts = [
                 shift
                 for shift in shifts_by_connection.get(item.connection_id, [])
-                if item.starts_on <= shift.work_date <= item.ends_on
+                if (
+                    shift.work_date in extra_dates
+                    if item.is_extra_shift
+                    else item.starts_on <= shift.work_date <= item.ends_on
+                )
             ]
             item.affected_shift_count = len(affected_shifts)
             # A reviewer who does not manage schedules still needs to know
@@ -465,6 +484,8 @@ def worker_requests_snapshot(*, user, organization_public_id=None, status_filter
         "permissions": permissions,
         "status_filter": normalized_filter,
         "requests": requests,
+        "regular_requests": [item for item in requests if not item.is_extra_shift],
+        "extra_shift_requests": [item for item in requests if item.is_extra_shift],
     }
 
 

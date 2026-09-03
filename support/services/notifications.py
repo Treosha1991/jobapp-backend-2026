@@ -113,6 +113,18 @@ _NOTIFICATION_COPY = {
         "pl": ("JobHub Support", "Pilny wniosek pracownika wymaga uwagi."),
         "uk": ("JobHub Support", "Терміновий запит працівника потребує уваги."),
     },
+    "worker_request.extra_shift_submitted": {
+        "ru": ("JobHub Support", "Работник готов взять дополнительные смены."),
+        "en": ("JobHub Support", "A worker is available for extra shifts."),
+        "pl": ("JobHub Support", "Pracownik jest dostępny na dodatkowe zmiany."),
+        "uk": ("JobHub Support", "Працівник готовий взяти додаткові зміни."),
+    },
+    "worker_request.extra_shift_changed": {
+        "ru": ("JobHub Support", "Статус доступности для дополнительной смены изменён."),
+        "en": ("JobHub Support", "Your extra-shift availability status changed."),
+        "pl": ("JobHub Support", "Status dostępności na dodatkową zmianę uległ zmianie."),
+        "uk": ("JobHub Support", "Статус готовності до додаткової зміни змінено."),
+    },
     "worker_task.published": {
         "ru": ("JobHub Support", "Вам назначена новая задача."),
         "en": ("JobHub Support", "A new task was assigned to you."),

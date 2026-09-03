@@ -220,14 +220,55 @@ class WorkTimeEntryStaffEditSerializer(StrictInputSerializer):
 
 class WorkerRequestCreateSerializer(StrictInputSerializer):
     request_type = serializers.ChoiceField(
-        choices=("day_off", "vacation", "unpaid_absence", "unable_today", "exit_request")
+        choices=(
+            "day_off",
+            "vacation",
+            "unpaid_absence",
+            "unable_today",
+            "extra_shift",
+            "exit_request",
+        )
     )
-    starts_on = serializers.DateField()
-    ends_on = serializers.DateField()
+    starts_on = serializers.DateField(required=False)
+    ends_on = serializers.DateField(required=False)
+    requested_dates = serializers.ListField(
+        child=serializers.DateField(),
+        required=False,
+        default=list,
+        min_length=1,
+        max_length=31,
+    )
     worker_note = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
 
     def validate_worker_note(self, value):
         return value.strip()
+
+    def validate_requested_dates(self, value):
+        if len(set(value)) != len(value):
+            raise serializers.ValidationError("extra_shift_dates_must_be_unique")
+        return sorted(value)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        request_type = attrs["request_type"]
+        requested_dates = attrs.get("requested_dates") or []
+        if request_type == "extra_shift":
+            if not requested_dates:
+                raise serializers.ValidationError(
+                    {"requested_dates": "extra_shift_dates_required"}
+                )
+            attrs["starts_on"] = requested_dates[0]
+            attrs["ends_on"] = requested_dates[-1]
+        else:
+            if requested_dates:
+                raise serializers.ValidationError(
+                    {"requested_dates": "extra_shift_dates_not_allowed"}
+                )
+            if "starts_on" not in attrs:
+                raise serializers.ValidationError({"starts_on": "required"})
+            if "ends_on" not in attrs:
+                raise serializers.ValidationError({"ends_on": "required"})
+        return attrs
 
 
 class WorkerRequestDecisionSerializer(StrictInputSerializer):

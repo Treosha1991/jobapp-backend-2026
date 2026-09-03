@@ -1,0 +1,67 @@
+<article class="request-card{% if item.is_urgent_open %} urgent{% endif %}{% if item.is_extra_shift %} extra-shift{% endif %}">
+  <div class="request-heading">
+    <div>
+      <h2>{% if item.is_urgent_open %}⚠ {% endif %}{{ item.type_label }}</h2>
+      <p><strong>{% if item.worker_url %}<a href="{{ item.worker_url }}">{{ item.worker_display_name }}</a>{% else %}{{ item.worker_display_name }}{% endif %}</strong> · {{ item.connection.vacancy.internal_title }}{% if not item.is_extra_shift %}<br>{{ employer_t.support_requests_period }}: {{ item.starts_on|date:'d.m.Y' }}{% if item.starts_on != item.ends_on %} — {{ item.ends_on|date:'d.m.Y' }}{% endif %}{% endif %}</p>
+    </div>
+    <span class="jh-status {% if item.status == 'approved' %}success{% elif item.status == 'declined' or item.status == 'cancelled' %}danger{% elif item.is_urgent_open %}warning{% else %}info{% endif %}">{{ item.status_label }}</span>
+  </div>
+
+  {% if item.is_extra_shift %}
+    <div class="request-form extra-shift-form">
+      <div class="request-dates">
+        {% for request_date in item.extra_shift_dates_for_payload %}
+          <div class="request-date">
+            <div><strong>{{ request_date.work_date|date:'d.m.Y' }}</strong><span class="jh-status {% if request_date.status == 'assigned' %}success{% elif request_date.status == 'declined' or request_date.status == 'expired' or request_date.status == 'cancelled' %}danger{% else %}info{% endif %}">{{ request_date.status_label }}</span></div>
+            {% if request_date.manager_note %}<small>{{ request_date.manager_note }}</small>{% endif %}
+            {% if request_date.status == 'requested' %}
+              <form class="request-date-action" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="request_id" value="{{ item.public_id }}">
+                <input type="hidden" name="request_date_id" value="{{ request_date.public_id }}">
+                <input type="hidden" name="filter" value="{{ status_filter }}">
+                <label class="jh-field"><span>{{ employer_t.support_requests_manager_comment }}</span><input class="jh-input" name="manager_note" maxlength="500" placeholder="{{ employer_t.support_requests_extra_comment_hint }}"></label>
+                <div class="jh-actions">
+                {% if request_date.assign_url %}<a class="jh-btn primary" href="{{ request_date.assign_url }}">{{ employer_t.support_requests_assign_shift }}</a>{% endif %}
+                  <button class="jh-btn danger" name="action" value="request_extra_date_decline" type="submit">{{ employer_t.support_requests_decline_date }}</button>
+                </div>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      {% if item.worker_note %}<div class="request-detail"><strong>{{ employer_t.support_requests_worker_comment }}:</strong><br>{{ item.worker_note|linebreaksbr }}</div>{% endif %}
+      {% if item.manager_note %}<div class="request-manager-note"><strong>{{ employer_t.support_requests_manager_comment }}:</strong><br>{{ item.manager_note|linebreaksbr }}</div>{% endif %}
+      {% if item.is_open %}
+        <form class="request-form" method="post">
+          {% csrf_token %}
+          <input type="hidden" name="request_id" value="{{ item.public_id }}">
+          <input type="hidden" name="filter" value="{{ status_filter }}">
+        <label class="jh-field"><span>{{ employer_t.support_requests_manager_comment }}</span><textarea class="jh-input" name="manager_note" maxlength="500" placeholder="{{ employer_t.support_requests_extra_comment_hint }}"></textarea></label>
+        <div class="jh-actions">
+          <button class="jh-btn danger" name="action" value="request_decline" type="submit">{{ employer_t.support_requests_decline_all_dates }}</button>
+        </div>
+        </form>
+      {% endif %}
+    </div>
+  {% else %}
+    {% if item.affected_shift_count %}
+      <div class="request-detail"><strong>{{ employer_t.support_requests_affected_shifts }}:</strong> {{ item.affected_shift_count }}{% if permissions.schedule %}<br>{% for shift in item.affected_shifts %}{{ shift.work_date|date:'d.m.Y' }} · {{ shift.starts_at|time:'H:i' }}—{{ shift.ends_at|time:'H:i' }}{% if not forloop.last %}<br>{% endif %}{% endfor %}{% endif %}</div>
+    {% endif %}
+    {% if item.worker_note %}<div class="request-detail"><strong>{{ employer_t.support_requests_worker_comment }}:</strong><br>{{ item.worker_note|linebreaksbr }}</div>{% endif %}
+    {% if item.manager_note %}<div class="request-manager-note"><strong>{{ employer_t.support_requests_manager_comment }}:</strong><br>{{ item.manager_note|linebreaksbr }}</div>{% endif %}
+    {% if item.is_open %}
+      <form class="request-form" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="request_id" value="{{ item.public_id }}">
+        <input type="hidden" name="filter" value="{{ status_filter }}">
+        <label class="jh-field"><span>{{ employer_t.support_requests_manager_comment }}</span><textarea class="jh-input" name="manager_note" maxlength="500" placeholder="{{ employer_t.support_requests_comment_hint }}"></textarea></label>
+        <div class="jh-actions">
+          <button class="jh-btn" name="action" value="request_clarify" type="submit">{{ employer_t.support_requests_request_clarification }}</button>
+          <button class="jh-btn primary" name="action" value="request_approve" type="submit">{{ employer_t.support_requests_approve }}</button>
+          <button class="jh-btn danger" name="action" value="request_decline" type="submit">{{ employer_t.support_requests_decline }}</button>
+        </div>
+      </form>
+    {% endif %}
+  {% endif %}
+</article>

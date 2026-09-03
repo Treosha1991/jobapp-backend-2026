@@ -75,7 +75,7 @@ from .timekeeping import (
     WorkTimeEntry,
     WorkTimeEntryRevision,
 )
-from .worker_requests import WorkerRequest, WorkerRequestEvent
+from .worker_requests import WorkerRequest, WorkerRequestDate, WorkerRequestEvent
 from .tasks import (
     Announcement,
     AnnouncementAcknowledgement,
@@ -160,6 +160,7 @@ __all__ = [
     "WorkTimeEntry",
     "WorkTimeEntryRevision",
     "WorkerRequest",
+    "WorkerRequestDate",
     "WorkerRequestEvent",
     "WorkerTask",
 ]

@@ -13,6 +13,16 @@
   .requests-list { display:grid; gap:12px; }
   .request-card { padding:16px; border:1px solid var(--line); border-radius:18px; background:rgba(5,22,36,.26); }
   .request-card.urgent { border-color:rgba(255,211,106,.65); background:linear-gradient(135deg,rgba(255,211,106,.12),rgba(5,22,36,.25)); }
+  .requests-section-title { margin:22px 0 10px; font-size:17px; }
+  .extra-shift-section { margin-top:22px; padding:16px; border:1px solid rgba(24,223,103,.32); border-radius:18px; background:rgba(24,223,103,.045); }
+  .extra-shift-section .requests-section-title { margin:0 0 5px; color:#bafbd2; }
+  .extra-shift-section > p { margin:0 0 13px; color:var(--muted); }
+  .request-card.extra-shift { border-color:rgba(24,223,103,.34); }
+  .request-dates { display:grid; gap:8px; margin-top:12px; }
+  .request-date { padding:11px 12px; border:1px solid rgba(183,224,255,.16); border-radius:13px; }
+  .request-date > div:first-child { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .request-date small { display:block; margin-top:6px; color:var(--muted); }
+  .request-date .jh-actions { margin-top:9px; }
   .request-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
   .request-heading h2 { margin:0; font-size:18px; }
   .request-heading p { margin:5px 0 0; color:var(--muted); line-height:1.4; }
@@ -40,38 +50,17 @@
       <a class="jh-btn requests-filter{% if status_filter == 'all' %} active{% endif %}" href="{{ filter_base_url }}&filter=all">{{ employer_t.support_requests_all }}</a>
     </nav>
 
-    <div class="requests-list">
-      {% for item in requests %}
-        <article class="request-card{% if item.is_urgent_open %} urgent{% endif %}">
-          <div class="request-heading">
-            <div>
-              <h2>{% if item.is_urgent_open %}⚠ {% endif %}{{ item.type_label }}</h2>
-              <p><strong>{% if item.worker_url %}<a href="{{ item.worker_url }}">{{ item.worker_display_name }}</a>{% else %}{{ item.worker_display_name }}{% endif %}</strong> · {{ item.connection.vacancy.internal_title }}<br>{{ employer_t.support_requests_period }}: {{ item.starts_on|date:'d.m.Y' }}{% if item.starts_on != item.ends_on %} — {{ item.ends_on|date:'d.m.Y' }}{% endif %}</p>
-            </div>
-            <span class="jh-status {% if item.status == 'approved' %}success{% elif item.status == 'declined' or item.status == 'cancelled' %}danger{% elif item.is_urgent_open %}warning{% else %}info{% endif %}">{{ item.status_label }}</span>
-          </div>
-          {% if item.affected_shift_count %}
-            <div class="request-detail"><strong>{{ employer_t.support_requests_affected_shifts }}:</strong> {{ item.affected_shift_count }}{% if permissions.schedule %}<br>{% for shift in item.affected_shifts %}{{ shift.work_date|date:'d.m.Y' }} · {{ shift.starts_at|time:'H:i' }}—{{ shift.ends_at|time:'H:i' }}{% if not forloop.last %}<br>{% endif %}{% endfor %}{% endif %}</div>
-          {% endif %}
-          {% if item.worker_note %}<div class="request-detail"><strong>{{ employer_t.support_requests_worker_comment }}:</strong><br>{{ item.worker_note|linebreaksbr }}</div>{% endif %}
-          {% if item.manager_note %}<div class="request-manager-note"><strong>{{ employer_t.support_requests_manager_comment }}:</strong><br>{{ item.manager_note|linebreaksbr }}</div>{% endif %}
-          {% if item.is_open %}
-            <form class="request-form" method="post">
-              {% csrf_token %}
-              <input type="hidden" name="request_id" value="{{ item.public_id }}">
-              <input type="hidden" name="filter" value="{{ status_filter }}">
-              <label class="jh-field"><span>{{ employer_t.support_requests_manager_comment }}</span><textarea class="jh-input" name="manager_note" maxlength="500" placeholder="{{ employer_t.support_requests_comment_hint }}"></textarea></label>
-              <div class="jh-actions">
-                <button class="jh-btn" name="action" value="request_clarify" type="submit">{{ employer_t.support_requests_request_clarification }}</button>
-                <button class="jh-btn primary" name="action" value="request_approve" type="submit">{{ employer_t.support_requests_approve }}</button>
-                <button class="jh-btn danger" name="action" value="request_decline" type="submit">{{ employer_t.support_requests_decline }}</button>
-              </div>
-            </form>
-          {% endif %}
-        </article>
-      {% empty %}
-        <div class="request-empty">{{ employer_t.support_requests_empty }}</div>
-      {% endfor %}
-    </div>
+    {% if regular_requests %}
+      <h2 class="requests-section-title">{{ employer_t.support_requests_regular_section }}</h2>
+      <div class="requests-list">{% for item in regular_requests %}{% include "support/_worker_request_card.html" %}{% endfor %}</div>
+    {% endif %}
+    {% if extra_shift_requests %}
+      <section class="extra-shift-section">
+        <h2 class="requests-section-title">{{ employer_t.support_requests_extra_section }}</h2>
+        <p>{{ employer_t.support_requests_extra_section_hint }}</p>
+        <div class="requests-list">{% for item in extra_shift_requests %}{% include "support/_worker_request_card.html" %}{% endfor %}</div>
+      </section>
+    {% endif %}
+    {% if not requests %}<div class="request-empty">{{ employer_t.support_requests_empty }}</div>{% endif %}
   </section>
 {% endblock %}

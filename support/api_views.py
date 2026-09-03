@@ -72,6 +72,7 @@ from .models import (
     WorkerProjectAssignment,
     WorkTimeEntry,
     WorkerRequest,
+    WorkerRequestDate,
     WorkerTask,
     WorkerScheduleDayOff,
     WorkProject,
@@ -245,7 +246,9 @@ from .services.timekeeping import (
 )
 from .services.worker_requests import (
     cancel_worker_request,
+    decline_extra_shift_date,
     decide_worker_request,
+    refresh_extra_shift_requests,
     submit_worker_request,
 )
 from .services.documents import (
@@ -5378,6 +5381,13 @@ def _time_entry_payload(entry, *, include_staff_fields=False):
 
 
 def _worker_request_payload(item, *, include_staff_fields=False):
+    extra_shift_dates = getattr(item, "extra_shift_dates_for_payload", None)
+    if extra_shift_dates is None and item.is_extra_shift:
+        extra_shift_dates = list(
+            item.extra_shift_dates.select_related("decided_by").order_by(
+                "work_date", "id"
+            )
+        )
     payload = {
         "id": str(item.public_id),
         "connection_id": str(item.connection.public_id),
@@ -5388,6 +5398,17 @@ def _worker_request_payload(item, *, include_staff_fields=False):
         "worker_note": item.worker_note,
         "manager_note": item.manager_note,
         "is_urgent": item.is_urgent,
+        "is_extra_shift": item.is_extra_shift,
+        "requested_dates": [
+            {
+                "id": str(date_item.public_id),
+                "date": date_item.work_date,
+                "status": date_item.status,
+                "manager_note": date_item.manager_note,
+                "decided_at": date_item.decided_at,
+            }
+            for date_item in (extra_shift_dates or ())
+        ],
         "submitted_at": item.submitted_at,
         "reviewed_at": item.reviewed_at,
         "cancelled_at": item.cancelled_at,
@@ -6222,6 +6243,7 @@ class MyWorkerRequestListCreateAPIView(SupportFeatureAPIView):
             .select_related("connection", "connection__vacancy", "reviewed_by")
             .order_by("-submitted_at", "-created_at", "-id")
         )
+        refresh_extra_shift_requests(results)
         return Response({"results": [_worker_request_payload(item) for item in results]})
 
     def post(self, request, connection_public_id):
@@ -6906,6 +6928,7 @@ class OrganizationWorkerRequestListAPIView(SupportFeatureAPIView, OrganizationAc
                 "reviewed_by",
             ).order_by("-submitted_at", "-created_at", "-id")[:250]
         )
+        refresh_extra_shift_requests(items)
         return Response(
             {"results": [_worker_request_payload(item, include_staff_fields=True) for item in items]}
         )
@@ -6936,6 +6959,7 @@ class WorkerRequestDecisionAPIView(SupportFeatureAPIView):
             "connection__vacancy",
             "reviewed_by",
         ).get(pk=item.pk)
+        refresh_extra_shift_requests([item])
         return Response({"worker_request": _worker_request_payload(item, include_staff_fields=True)})
 
 
@@ -6949,6 +6973,42 @@ class WorkerRequestApproveAPIView(WorkerRequestDecisionAPIView):
 
 class WorkerRequestDeclineAPIView(WorkerRequestDecisionAPIView):
     action = "decline"
+
+
+class WorkerRequestExtraDateDeclineAPIView(SupportFeatureAPIView):
+    def post(self, request, request_public_id, request_date_public_id):
+        serializer = WorkerRequestDecisionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        manager_note = serializer.validated_data["manager_note"]
+        if not manager_note:
+            raise ValidationError(
+                {"manager_note": "manager_note_required_for_request_decision"}
+            )
+        item = _staff_worker_request_or_not_found(
+            user=request.user,
+            request_public_id=request_public_id,
+        )
+        request_date = get_object_or_404(
+            WorkerRequestDate,
+            public_id=request_date_public_id,
+            request=item,
+        )
+        item = decline_extra_shift_date(
+            actor=request.user,
+            request=item,
+            request_date=request_date,
+            manager_note=manager_note,
+        )
+        item = WorkerRequest.objects.select_related(
+            "connection__candidate",
+            "connection__candidate__profile",
+            "connection__vacancy",
+            "reviewed_by",
+        ).get(pk=item.pk)
+        refresh_extra_shift_requests([item])
+        return Response(
+            {"worker_request": _worker_request_payload(item, include_staff_fields=True)}
+        )
 
 
 class OrganizationTimeEntryListAPIView(SupportFeatureAPIView, OrganizationAccessMixin):

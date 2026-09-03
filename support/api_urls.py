@@ -127,6 +127,7 @@ from .api_views import (
     WorkerRequestApproveAPIView,
     WorkerRequestClarificationAPIView,
     WorkerRequestDeclineAPIView,
+    WorkerRequestExtraDateDeclineAPIView,
     WorkerAccessScopeCreateAPIView,
     WorkerAccessScopeRevokeAPIView,
     WorkerTaskCancelAPIView,
@@ -713,6 +714,12 @@ urlpatterns = [
         "worker-requests/<uuid:request_public_id>/decline/",
         WorkerRequestDeclineAPIView.as_view(),
         name="support-worker-request-decline",
+    ),
+    path(
+        "worker-requests/<uuid:request_public_id>/dates/"
+        "<uuid:request_date_public_id>/decline/",
+        WorkerRequestExtraDateDeclineAPIView.as_view(),
+        name="support-worker-request-extra-date-decline",
     ),
     path(
         "time-entries/<uuid:entry_public_id>/acknowledge-manager-adjustment/",

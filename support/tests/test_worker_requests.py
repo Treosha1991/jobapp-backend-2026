@@ -17,6 +17,7 @@ from support.models import (
     SupportVacancy,
     ScheduledWorkShift,
     WorkerRequest,
+    WorkerRequestDate,
     WorkerRequestEvent,
 )
 from support.permission_codes import REQUEST_DECIDE, SCHEDULE_MANAGE
@@ -213,6 +214,184 @@ class WorkerRequestTests(TestCase):
         self.assertNotIn(
             'JOIN "support_organizationmembership"',
             connection_reads[-1],
+        )
+
+    def test_worker_can_offer_non_contiguous_extra_shift_dates(self):
+        dates = [
+            timezone.localdate() + timedelta(days=2),
+            timezone.localdate() + timedelta(days=9),
+            timezone.localdate() + timedelta(days=40),
+        ]
+
+        created = self.worker_client.post(
+            self._worker_request_url(),
+            {
+                "request_type": "extra_shift",
+                "requested_dates": [item.isoformat() for item in dates],
+                "worker_note": "I can work on these Saturdays.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(created.status_code, 201, created.data)
+        payload = created.data["worker_request"]
+        self.assertTrue(payload["is_extra_shift"])
+        self.assertEqual(payload["starts_on"], dates[0])
+        self.assertEqual(payload["ends_on"], dates[-1])
+        self.assertEqual(
+            [item["date"] for item in payload["requested_dates"]],
+            dates,
+        )
+        self.assertTrue(
+            all(item["status"] == "requested" for item in payload["requested_dates"])
+        )
+        notice = NotificationOutbox.objects.get(
+            notification_code="worker_request.extra_shift_submitted"
+        )
+        self.assertEqual(notice.recipient, self.manager)
+
+    def test_extra_shift_rejects_scheduled_and_duplicate_open_dates(self):
+        work_date = timezone.localdate() + timedelta(days=3)
+        starts_at = timezone.make_aware(datetime.combine(work_date, time(8, 0)))
+        ends_at = timezone.make_aware(datetime.combine(work_date, time(16, 0)))
+        ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=30,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+
+        scheduled = self.worker_client.post(
+            self._worker_request_url(),
+            {
+                "request_type": "extra_shift",
+                "requested_dates": [work_date.isoformat()],
+            },
+            format="json",
+        )
+        self.assertEqual(scheduled.status_code, 400, scheduled.data)
+
+        available_date = work_date + timedelta(days=1)
+        first = self.worker_client.post(
+            self._worker_request_url(),
+            {
+                "request_type": "extra_shift",
+                "requested_dates": [available_date.isoformat()],
+            },
+            format="json",
+        )
+        self.assertEqual(first.status_code, 201, first.data)
+        duplicate = self.worker_client.post(
+            self._worker_request_url(),
+            {
+                "request_type": "extra_shift",
+                "requested_dates": [available_date.isoformat()],
+            },
+            format="json",
+        )
+        self.assertEqual(duplicate.status_code, 400, duplicate.data)
+
+    def test_manager_declines_one_extra_shift_date_without_closing_others(self):
+        dates = [
+            timezone.localdate() + timedelta(days=5),
+            timezone.localdate() + timedelta(days=12),
+        ]
+        created = self.worker_client.post(
+            self._worker_request_url(),
+            {
+                "request_type": "extra_shift",
+                "requested_dates": [item.isoformat() for item in dates],
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        request_id = created.data["worker_request"]["id"]
+        date_id = created.data["worker_request"]["requested_dates"][0]["id"]
+
+        declined = self.manager_client.post(
+            f"/api/v2/support/worker-requests/{request_id}/dates/{date_id}/decline/",
+            {"manager_note": "No work is planned on this date."},
+            format="json",
+        )
+
+        self.assertEqual(declined.status_code, 200, declined.data)
+        payload = declined.data["worker_request"]
+        self.assertEqual(payload["status"], WorkerRequest.STATUS_SUBMITTED)
+        self.assertEqual(
+            [item["status"] for item in payload["requested_dates"]],
+            [WorkerRequestDate.STATUS_DECLINED, WorkerRequestDate.STATUS_REQUESTED],
+        )
+        self.assertTrue(
+            NotificationOutbox.objects.filter(
+                recipient=self.worker,
+                notification_code="worker_request.extra_shift_changed",
+            ).exists()
+        )
+
+    def test_published_shift_completes_matching_extra_shift_date(self):
+        work_date = timezone.localdate() + timedelta(days=6)
+        created = self.worker_client.post(
+            self._worker_request_url(),
+            {
+                "request_type": "extra_shift",
+                "requested_dates": [work_date.isoformat()],
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        starts_at = timezone.make_aware(datetime.combine(work_date, time(8, 0)))
+        ends_at = timezone.make_aware(datetime.combine(work_date, time(16, 0)))
+        ScheduledWorkShift.objects.create(
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=30,
+            state=ScheduledWorkShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+
+        listed = self.worker_client.get(self._worker_request_url())
+
+        self.assertEqual(listed.status_code, 200, listed.data)
+        payload = listed.data["results"][0]
+        self.assertEqual(payload["status"], WorkerRequest.STATUS_APPROVED)
+        self.assertEqual(
+            payload["requested_dates"][0]["status"],
+            WorkerRequestDate.STATUS_ASSIGNED,
+        )
+
+    def test_unassigned_extra_shift_date_expires_after_it_passes(self):
+        work_date = timezone.localdate() - timedelta(days=1)
+        item = WorkerRequest.objects.create(
+            organization=self.organization,
+            connection=self.connection,
+            request_type=WorkerRequest.TYPE_EXTRA_SHIFT,
+            status=WorkerRequest.STATUS_SUBMITTED,
+            starts_on=work_date,
+            ends_on=work_date,
+            submitted_at=timezone.now() - timedelta(days=2),
+            last_changed_by=self.worker,
+        )
+        WorkerRequestDate.objects.create(request=item, work_date=work_date)
+
+        listed = self.worker_client.get(self._worker_request_url())
+
+        self.assertEqual(listed.status_code, 200, listed.data)
+        payload = listed.data["results"][0]
+        self.assertEqual(payload["status"], WorkerRequest.STATUS_DECLINED)
+        self.assertEqual(
+            payload["requested_dates"][0]["status"],
+            WorkerRequestDate.STATUS_EXPIRED,
         )
 
     def test_urgent_request_succeeds_when_push_dispatch_fails_after_commit(self):

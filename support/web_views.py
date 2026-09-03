@@ -61,6 +61,7 @@ from .models import (
     WorkerAccessScope,
     WorkTimeEntry,
     WorkerRequest,
+    WorkerRequestDate,
     WorkProject,
     Worksite,
 )
@@ -144,7 +145,7 @@ from .services.timekeeping import (
     replace_scheduled_shift,
     request_work_time_correction,
 )
-from .services.worker_requests import decide_worker_request
+from .services.worker_requests import decline_extra_shift_date, decide_worker_request
 from .services.pipeline import (
     approve_application,
     decline_application,
@@ -2517,9 +2518,11 @@ def worker_card(request, connection_public_id):
     crew_url_by_key = {
         crew.key: crew.transport_url for crew in snapshot["transport_crews"]
     }
+    requested_work_date = parse_date(request.GET.get("work_date") or "")
     for day in snapshot["calendar_days"]:
         if day is None:
             continue
+        day["is_prefilled"] = day["date"] == requested_work_date
         crew_url = crew_url_by_key.get(day.get("transport_crew_key"))
         day["transport_url"] = (
             f"{crew_url}&crew_date={day['date'].isoformat()}" if crew_url else None
@@ -3885,12 +3888,17 @@ def _worker_request_operation(request, *, snapshot):
     action = (request.POST.get("action") or "").strip()
     selected_filter = request.POST.get("filter") or snapshot["status_filter"]
     try:
-        if action not in {"request_clarify", "request_approve", "request_decline"}:
+        if action not in {
+            "request_clarify",
+            "request_approve",
+            "request_decline",
+            "request_extra_date_decline",
+        }:
             raise ValueError("worker_request_operation_unknown")
         data = _validated_post(
             WorkerRequestDecisionSerializer,
             request,
-            ignored_fields=("request_id", "filter"),
+            ignored_fields=("request_id", "request_date_id", "filter"),
         )
         allowed_connections = worker_connection_queryset_for(
             user=request.user,
@@ -3903,22 +3911,36 @@ def _worker_request_operation(request, *, snapshot):
             connection__in=allowed_connections,
             public_id=request.POST.get("request_id"),
         )
-        service_action = {
-            "request_clarify": "clarify",
-            "request_approve": "approve",
-            "request_decline": "decline",
-        }[action]
-        decide_worker_request(
-            actor=request.user,
-            request=item,
-            action=service_action,
-            manager_note=data["manager_note"],
-        )
-        message_key = {
-            "clarify": "support_requests_clarification_sent",
-            "approve": "support_requests_approved",
-            "decline": "support_requests_declined",
-        }[service_action]
+        if action == "request_extra_date_decline":
+            request_date = get_object_or_404(
+                WorkerRequestDate,
+                request=item,
+                public_id=request.POST.get("request_date_id"),
+            )
+            decline_extra_shift_date(
+                actor=request.user,
+                request=item,
+                request_date=request_date,
+                manager_note=data["manager_note"],
+            )
+            message_key = "support_requests_extra_date_declined"
+        else:
+            service_action = {
+                "request_clarify": "clarify",
+                "request_approve": "approve",
+                "request_decline": "decline",
+            }[action]
+            decide_worker_request(
+                actor=request.user,
+                request=item,
+                action=service_action,
+                manager_note=data["manager_note"],
+            )
+            message_key = {
+                "clarify": "support_requests_clarification_sent",
+                "approve": "support_requests_approved",
+                "decline": "support_requests_declined",
+            }[service_action]
     except (APIException, ValueError):
         messages.error(request, tr(request, "support_requests_operation_error"))
     else:
@@ -3945,9 +3967,28 @@ def worker_requests_workspace(request):
                 "support:worker-card",
                 kwargs={"connection_public_id": item.connection.public_id},
             )
-            if snapshot["permissions"]["workers"]
+            if (
+                snapshot["permissions"]["workers"]
+                or snapshot["permissions"]["schedule"]
+            )
             else None
         )
+        for request_date in getattr(item, "extra_shift_dates_for_payload", ()):
+            request_date.status_label = tr(
+                request,
+                f"support_request_date_status_{request_date.status}",
+            )
+            request_date.assign_url = (
+                f"{item.worker_url}?tab=work_transport"
+                f"&month={request_date.work_date.strftime('%Y-%m')}"
+                f"&work_date={request_date.work_date.isoformat()}"
+                if (
+                    item.worker_url
+                    and snapshot["permissions"]["schedule"]
+                    and request_date.status == WorkerRequestDate.STATUS_REQUESTED
+                )
+                else None
+            )
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
