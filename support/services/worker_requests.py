@@ -6,7 +6,8 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from support.models import (
     OrganizationMembership,
-    ScheduledWorkShift,
+    ProjectCrewShift,
+    ProjectCrewShiftMember,
     SupportConnection,
     WorkerRequest,
     WorkerRequestDate,
@@ -99,11 +100,11 @@ def refresh_extra_shift_requests(requests):
     published_pairs = set()
     if connection_ids and work_dates:
         published_pairs = set(
-            ScheduledWorkShift.objects.filter(
+            ProjectCrewShiftMember.objects.filter(
                 connection_id__in=connection_ids,
-                work_date__in=work_dates,
-                state=ScheduledWorkShift.STATE_PUBLISHED,
-            ).values_list("connection_id", "work_date")
+                shift__work_date__in=work_dates,
+                shift__state=ProjectCrewShift.STATE_PUBLISHED,
+            ).values_list("connection_id", "shift__work_date")
         )
 
     today = timezone.localdate()
@@ -215,13 +216,13 @@ def submit_worker_request(
                     {"requested_dates": "extra_shift_dates_cannot_be_in_past"}
                 )
             published_dates = list(
-                ScheduledWorkShift.objects.filter(
+                ProjectCrewShiftMember.objects.filter(
                     connection=connection,
-                    work_date__in=requested_dates,
-                    state=ScheduledWorkShift.STATE_PUBLISHED,
+                    shift__work_date__in=requested_dates,
+                    shift__state=ProjectCrewShift.STATE_PUBLISHED,
                 )
-                .order_by("work_date")
-                .values_list("work_date", flat=True)
+                .order_by("shift__work_date")
+                .values_list("shift__work_date", flat=True)
             )
             if published_dates:
                 raise ValidationError(

@@ -11,11 +11,16 @@ from rest_framework.test import APIClient
 from support.models import (
     NotificationOutbox,
     OrganizationMembership,
+    ProjectCrew,
+    ProjectCrewShift,
+    ProjectCrewShiftMember,
     SupportAccessGrant,
     SupportApplication,
     SupportConnection,
     SupportVacancy,
     ScheduledWorkShift,
+    WorkProject,
+    Worksite,
     WorkerRequest,
     WorkerRequestDate,
     WorkerRequestEvent,
@@ -87,6 +92,30 @@ class WorkerRequestTests(TestCase):
         self.other_connection = self._connection_for(self.other_worker, "other")
         self.connection.assigned_manager = self.manager_membership
         self.connection.save(update_fields=["assigned_manager", "updated_at"])
+        self.worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="Request test worksite",
+            country_code="PL",
+            city="Warsaw",
+            street="Testowa",
+            building="1",
+            created_by=self.owner,
+        )
+        self.project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=self.worksite,
+            internal_name="Request test project",
+            worker_visible_name="Request test project",
+            worker_capacity=10,
+            starts_on=timezone.localdate(),
+            created_by=self.owner,
+        )
+        self.project_crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=self.project,
+            internal_name="Request test crew",
+            created_by=self.owner,
+        )
         for worker in (self.worker, self.other_worker):
             SupportAccessGrant.objects.create(
                 user=worker,
@@ -134,6 +163,27 @@ class WorkerRequestTests(TestCase):
     def _worker_request_url(self, connection=None):
         connection = connection or self.connection
         return f"/api/v2/support/connections/{connection.public_id}/worker-requests/mine/"
+
+    def _publish_project_first_shift(self, *, connection, work_date):
+        starts_at = timezone.make_aware(datetime.combine(work_date, time(8, 0)))
+        ends_at = timezone.make_aware(datetime.combine(work_date, time(16, 0)))
+        shift = ProjectCrewShift.objects.create(
+            crew=self.project_crew,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=30,
+            state=ProjectCrewShift.STATE_PUBLISHED,
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=shift,
+            connection=connection,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+            created_by=self.owner,
+        )
+        return shift
 
     def test_worker_can_submit_list_and_cancel_an_unresolved_vacation_request(self):
         starts_on = timezone.localdate() + timedelta(days=4)
@@ -252,19 +302,9 @@ class WorkerRequestTests(TestCase):
 
     def test_extra_shift_rejects_scheduled_and_duplicate_open_dates(self):
         work_date = timezone.localdate() + timedelta(days=3)
-        starts_at = timezone.make_aware(datetime.combine(work_date, time(8, 0)))
-        ends_at = timezone.make_aware(datetime.combine(work_date, time(16, 0)))
-        ScheduledWorkShift.objects.create(
-            organization=self.organization,
+        self._publish_project_first_shift(
             connection=self.connection,
             work_date=work_date,
-            starts_at=starts_at,
-            ends_at=ends_at,
-            break_minutes=30,
-            state=ScheduledWorkShift.STATE_PUBLISHED,
-            created_by=self.owner,
-            published_by=self.owner,
-            published_at=timezone.now(),
         )
 
         scheduled = self.worker_client.post(
@@ -345,19 +385,9 @@ class WorkerRequestTests(TestCase):
             format="json",
         )
         self.assertEqual(created.status_code, 201, created.data)
-        starts_at = timezone.make_aware(datetime.combine(work_date, time(8, 0)))
-        ends_at = timezone.make_aware(datetime.combine(work_date, time(16, 0)))
-        ScheduledWorkShift.objects.create(
-            organization=self.organization,
+        self._publish_project_first_shift(
             connection=self.connection,
             work_date=work_date,
-            starts_at=starts_at,
-            ends_at=ends_at,
-            break_minutes=30,
-            state=ScheduledWorkShift.STATE_PUBLISHED,
-            created_by=self.owner,
-            published_by=self.owner,
-            published_at=timezone.now(),
         )
 
         listed = self.worker_client.get(self._worker_request_url())

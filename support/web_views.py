@@ -3979,12 +3979,10 @@ def worker_requests_workspace(request):
                 f"support_request_date_status_{request_date.status}",
             )
             request_date.assign_url = (
-                f"{item.worker_url}?tab=work_transport"
-                f"&month={request_date.work_date.strftime('%Y-%m')}"
-                f"&work_date={request_date.work_date.isoformat()}"
+                f"{reverse('support:project-first')}?"
+                f"{urlencode({'organization': snapshot['organization'].public_id, 'month': request_date.work_date.strftime('%Y-%m'), 'work_date': request_date.work_date.isoformat(), 'worker': item.connection.public_id})}"
                 if (
-                    item.worker_url
-                    and snapshot["permissions"]["schedule"]
+                    snapshot["permissions"]["schedule"]
                     and request_date.status == WorkerRequestDate.STATUS_REQUESTED
                 )
                 else None
