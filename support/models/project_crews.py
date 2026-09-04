@@ -46,6 +46,8 @@ class ProjectCrew(models.Model):
         related_name="project_crews",
     )
     internal_name = models.CharField(max_length=160, blank=True, default="")
+    driver_comment = models.TextField(blank=True, default="")
+    driver_comment_updated_at = models.DateTimeField(null=True, blank=True)
     state = models.CharField(max_length=16, choices=STATE_CHOICES, default=STATE_ACTIVE)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

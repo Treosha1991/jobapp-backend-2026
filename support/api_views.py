@@ -143,6 +143,7 @@ from .serializers import (
     PermissionCodeSerializer,
     ProjectCreateSerializer,
     ProjectCrewCreateSerializer,
+    ProjectCrewDriverCommentSerializer,
     ProjectCrewDriverAbsenceSerializer,
     ProjectCrewDriverReplaceSerializer,
     ProjectCrewVehicleSwapSerializer,
@@ -308,6 +309,7 @@ from .services.project_crews import (
     remove_project_crew_passenger,
     replace_project_crew_driver,
     swap_project_crew_vehicle,
+    update_project_crew_driver_comment,
     update_project_crew,
 )
 from .services.pipeline import (
@@ -831,6 +833,7 @@ _PROJECT_FIRST_ERROR_MESSAGES = {
         "crew_name_required": "Укажите название экипажа.",
         "crew_patch_empty": "Укажите хотя бы одно изменение экипажа.",
         "crew_not_available": "Экипаж недоступен для изменения.",
+        "driver_comment_not_allowed": "Комментарий может изменять только назначенный водитель этого экипажа.",
         "shift_idempotency_key_required": "Для изменения смен нужен заголовок Idempotency-Key.",
         "shift_idempotency_key_invalid": "Idempotency-Key смен должен быть UUID.",
         "shift_idempotency_key_reused": "Этот Idempotency-Key уже использован с другими данными смен.",
@@ -900,6 +903,7 @@ _PROJECT_FIRST_ERROR_MESSAGES = {
         "crew_name_required": "Enter the crew name.",
         "crew_patch_empty": "Provide at least one crew change.",
         "crew_not_available": "The crew is not available for changes.",
+        "driver_comment_not_allowed": "Only this crew's assigned driver can change the comment.",
         "shift_idempotency_key_required": "The Idempotency-Key header is required to change shifts.",
         "shift_idempotency_key_invalid": "The shift Idempotency-Key must be a UUID.",
         "shift_idempotency_key_reused": "This Idempotency-Key was already used with different shift data.",
@@ -969,6 +973,7 @@ _PROJECT_FIRST_ERROR_MESSAGES = {
         "crew_name_required": "Podaj nazwę ekipy.",
         "crew_patch_empty": "Podaj co najmniej jedną zmianę ekipy.",
         "crew_not_available": "Ekipa nie jest dostępna do edycji.",
+        "driver_comment_not_allowed": "Komentarz może zmieniać tylko przypisany kierowca tej ekipy.",
         "shift_idempotency_key_required": "Do zmiany zmian wymagany jest nagłówek Idempotency-Key.",
         "shift_idempotency_key_invalid": "Idempotency-Key zmian musi być identyfikatorem UUID.",
         "shift_idempotency_key_reused": "Ten Idempotency-Key został już użyty z innymi danymi zmian.",
@@ -1038,6 +1043,7 @@ _PROJECT_FIRST_ERROR_MESSAGES = {
         "crew_name_required": "Укажіть назву екіпажу.",
         "crew_patch_empty": "Укажіть хоча б одну зміну екіпажу.",
         "crew_not_available": "Екіпаж недоступний для змін.",
+        "driver_comment_not_allowed": "Коментар може змінювати лише призначений водій цього екіпажу.",
         "shift_idempotency_key_required": "Для зміни змін потрібен заголовок Idempotency-Key.",
         "shift_idempotency_key_invalid": "Idempotency-Key змін має бути UUID.",
         "shift_idempotency_key_reused": "Цей Idempotency-Key уже використано з іншими даними змін.",
@@ -6226,6 +6232,57 @@ class MySupportWorkspaceWeekAPIView(SupportFeatureAPIView):
                 connection=connection,
                 selected_date=selected_date,
             )
+        )
+
+
+class MyProjectCrewDriverCommentAPIView(SupportFeatureAPIView):
+    """Edit the stable crew note only as its assigned primary driver."""
+
+    def patch(self, request, connection_public_id, crew_public_id):
+        _require_active_support_access(request.user)
+        if not is_project_first_workspace_enabled():
+            raise NotFound("project_first_workspace_not_available")
+        connection = get_object_or_404(
+            SupportConnection.objects.select_related("organization", "candidate")
+            .exclude(stage=SupportConnection.STAGE_CLOSED),
+            public_id=connection_public_id,
+            candidate=request.user,
+            is_archived=False,
+        )
+        crew = get_object_or_404(
+            ProjectCrew.objects.select_related("organization"),
+            public_id=crew_public_id,
+            organization=connection.organization,
+            state=ProjectCrew.STATE_ACTIVE,
+        )
+        serializer = ProjectCrewDriverCommentSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _project_first_serializer_error(request, serializer.errors)
+        try:
+            crew = update_project_crew_driver_comment(
+                actor=request.user,
+                connection=connection,
+                crew=crew,
+                comment=serializer.validated_data["comment"],
+            )
+        except PermissionDenied:
+            code = "driver_comment_not_allowed"
+            return Response(
+                {
+                    "code": code,
+                    "message": _project_first_error_message(request, code),
+                    "field_errors": {},
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return Response(
+            {
+                "crew": {
+                    "id": str(crew.public_id),
+                    "driver_comment": crew.driver_comment,
+                    "driver_comment_updated_at": crew.driver_comment_updated_at,
+                }
+            }
         )
 
 

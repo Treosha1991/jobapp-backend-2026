@@ -11,6 +11,7 @@ from jobs.models import UserProfile
 from support.models import (
     Announcement,
     AnnouncementAcknowledgement,
+    AuditEvent,
     DocumentRequestPackage,
     HousingAssignment,
     HousingPlace,
@@ -638,6 +639,151 @@ class WorkerWorkspaceAPITests(TestCase):
                 str(self.driver_connection.public_id),
                 {item["connection_id"] for item in next_members},
             )
+
+    def test_primary_driver_edits_one_crew_comment_visible_to_passengers(self):
+        url = (
+            f"/api/v2/support/connections/{self.driver_connection.public_id}/"
+            f"project-first/crews/{self.current_crew.public_id}/driver-comment/"
+        )
+
+        response = self.other_client.patch(
+            url,
+            {"comment": "  Посадка в 07:15 у главного входа.  "},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.current_crew.refresh_from_db()
+        self.assertEqual(
+            self.current_crew.driver_comment,
+            "Посадка в 07:15 у главного входа.",
+        )
+        self.assertIsNotNone(self.current_crew.driver_comment_updated_at)
+        self.assertEqual(
+            response.data["crew"]["driver_comment"],
+            self.current_crew.driver_comment,
+        )
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                actor=self.other_worker,
+                action="project_crew.driver_comment_updated",
+                target_public_id=self.current_crew.public_id,
+            ).exists()
+        )
+
+        passenger_week = self.client.get(
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "workspace/mine/week/",
+            {"selected_date": self.today.isoformat()},
+        )
+        self.assertEqual(passenger_week.status_code, 200, passenger_week.data)
+        passenger_today = next(
+            item for item in passenger_week.data["days"] if item["is_today"]
+        )
+        self.assertEqual(
+            passenger_today["shift"]["driver_comment"],
+            self.current_crew.driver_comment,
+        )
+        self.assertFalse(
+            passenger_today["shift"]["can_edit_driver_comment"]
+        )
+
+        driver_week = self.other_client.get(
+            f"/api/v2/support/connections/{self.driver_connection.public_id}/"
+            "workspace/mine/week/",
+            {"selected_date": self.today.isoformat()},
+        )
+        self.assertEqual(driver_week.status_code, 200, driver_week.data)
+        driver_today = next(
+            item for item in driver_week.data["days"] if item["is_today"]
+        )
+        self.assertTrue(driver_today["shift"]["can_edit_driver_comment"])
+
+    def test_passenger_cannot_edit_driver_comment(self):
+        response = self.client.patch(
+            (
+                f"/api/v2/support/connections/{self.connection.public_id}/"
+                f"project-first/crews/{self.current_crew.public_id}/"
+                "driver-comment/"
+            ),
+            {"comment": "Passenger overwrite"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(response.data["code"], "driver_comment_not_allowed")
+        self.current_crew.refresh_from_db()
+        self.assertEqual(self.current_crew.driver_comment, "")
+
+    def test_former_primary_driver_cannot_edit_driver_comment(self):
+        assignment = ProjectCrewResourceAssignment.objects.get(
+            crew=self.current_crew,
+            driver_connection=self.driver_connection,
+        )
+        assignment.ends_on = self.today - timedelta(days=1)
+        assignment.save(update_fields=["ends_on", "updated_at"])
+
+        response = self.other_client.patch(
+            (
+                f"/api/v2/support/connections/{self.driver_connection.public_id}/"
+                f"project-first/crews/{self.current_crew.public_id}/"
+                "driver-comment/"
+            ),
+            {"comment": "Former driver overwrite"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.current_crew.refresh_from_db()
+        self.assertEqual(self.current_crew.driver_comment, "")
+
+    def test_driver_comment_conceals_crew_from_another_organization(self):
+        other_owner = User.objects.create_user(
+            username="worker-workspace-other-owner",
+            email="worker-workspace-other-owner@example.com",
+            password="password",
+        )
+        other_organization, _ = create_organization(
+            jobhub_operator=self.operator,
+            legal_name="Other Workspace Agency sp. z o.o.",
+            display_name="Other Workspace Agency",
+            owner_email=other_owner.email,
+        )
+        other_worksite = Worksite.objects.create(
+            organization=other_organization,
+            internal_name="Other site",
+            country_code="NL",
+            city="Almere",
+            street="Otherstraat",
+            building="5",
+            created_by=other_owner,
+        )
+        other_project = WorkProject.objects.create(
+            organization=other_organization,
+            worksite=other_worksite,
+            internal_name="Other project",
+            worker_visible_name="Other project",
+            worker_capacity=4,
+            starts_on=self.month_start,
+            created_by=other_owner,
+        )
+        other_crew = ProjectCrew.objects.create(
+            organization=other_organization,
+            project=other_project,
+            internal_name="Other crew",
+            created_by=other_owner,
+        )
+
+        response = self.other_client.patch(
+            (
+                f"/api/v2/support/connections/{self.driver_connection.public_id}/"
+                f"project-first/crews/{other_crew.public_id}/driver-comment/"
+            ),
+            {"comment": "Cross-tenant overwrite"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 404, response.data)
 
     def test_week_time_entry_access_opens_after_latest_shift_starts(self):
         self.time_entry.delete()

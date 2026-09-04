@@ -11,7 +11,7 @@ import json
 from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from support.models import (
     AuditEvent,
@@ -42,6 +42,64 @@ from .audit import record_audit_event
 PASSENGER_SCOPE_FUTURE = "future"
 PASSENGER_SCOPE_SELECTED = "selected"
 PASSENGER_SCOPES = frozenset({PASSENGER_SCOPE_FUTURE, PASSENGER_SCOPE_SELECTED})
+
+
+def _driver_comment_assignment_queryset(*, connection, crew, on_date):
+    return ProjectCrewResourceAssignment.objects.filter(
+        crew=crew,
+        driver_connection=connection,
+    ).filter(Q(ends_on__isnull=True) | Q(ends_on__gte=on_date))
+
+
+@transaction.atomic
+def update_project_crew_driver_comment(*, actor, connection, crew, comment):
+    """Replace one crew-wide note as its assigned primary driver.
+
+    The text is intentionally stored on the stable crew rather than a shift:
+    passengers therefore see the same current instructions on every published
+    day, while former and substitute drivers cannot overwrite them.
+    """
+
+    locked_crew = ProjectCrew.objects.select_for_update().get(pk=crew.pk)
+    if (
+        locked_crew.organization_id != connection.organization_id
+        or locked_crew.state != ProjectCrew.STATE_ACTIVE
+        or connection.is_archived
+        or connection.stage == SupportConnection.STAGE_CLOSED
+    ):
+        raise PermissionDenied("driver_comment_not_allowed")
+    assignment_exists = _driver_comment_assignment_queryset(
+        connection=connection,
+        crew=locked_crew,
+        on_date=timezone.localdate(),
+    ).select_for_update().exists()
+    if not assignment_exists:
+        raise PermissionDenied("driver_comment_not_allowed")
+
+    normalized = (comment or "").strip()
+    if locked_crew.driver_comment == normalized:
+        return locked_crew
+
+    locked_crew.driver_comment = normalized
+    locked_crew.driver_comment_updated_at = timezone.now()
+    locked_crew.save(
+        update_fields=(
+            "driver_comment",
+            "driver_comment_updated_at",
+            "updated_at",
+        )
+    )
+    record_audit_event(
+        organization=locked_crew.organization,
+        actor=actor,
+        action="project_crew.driver_comment_updated",
+        target=locked_crew,
+        details={
+            "cleared": not bool(normalized),
+            "character_count": len(normalized),
+        },
+    )
+    return locked_crew
 
 
 def _operation_error(code, message, **details):

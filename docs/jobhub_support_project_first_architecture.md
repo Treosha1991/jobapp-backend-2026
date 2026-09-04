@@ -475,3 +475,13 @@ permission may still see the vehicle, project and crew needed for fleet work,
 but the current driver's UUID, name and avatar are redacted unless that worker
 is present in the member's canonical `WorkerAccessScope` (or the member has
 unrestricted worker access).
+
+## Stage 22: crew-wide driver comment
+
+`ProjectCrew` stores one current driver-authored operational comment for the
+stable crew. Worker month/week snapshots expose the same text on each shift,
+plus a server-authored edit capability. A worker-owned PATCH endpoint locks the
+crew and accepts the write only from its current or upcoming assigned primary
+driver; passengers, former drivers, substitutes and cross-tenant callers cannot
+change it. The audit event records only whether the comment was cleared and its
+character count, never the text itself.

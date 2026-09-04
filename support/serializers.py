@@ -889,6 +889,14 @@ class ProjectCrewUpdateSerializer(StrictInputSerializer):
         return attrs
 
 
+class ProjectCrewDriverCommentSerializer(StrictInputSerializer):
+    comment = serializers.CharField(
+        max_length=1000,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+
+
 class ProjectCrewShiftReplaceSerializer(StrictInputSerializer):
     work_dates = serializers.ListField(
         child=serializers.DateField(),

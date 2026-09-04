@@ -115,6 +115,18 @@ def _crew_payload(crew):
     }
 
 
+def _editable_driver_comment_crew_ids(*, connection, today):
+    return set(
+        ProjectCrewResourceAssignment.objects.filter(
+            driver_connection=connection,
+            crew__organization=connection.organization,
+            crew__state=ProjectCrew.STATE_ACTIVE,
+        )
+        .filter(Q(ends_on__isnull=True) | Q(ends_on__gte=today))
+        .values_list("crew_id", flat=True)
+    )
+
+
 def _vehicle_payload(vehicle):
     if vehicle is None:
         return None
@@ -189,6 +201,7 @@ def _shift_payload(
     connection,
     roster_resources=(),
     roster_passengers=(),
+    editable_driver_comment_crew_ids=(),
 ):
     members = list(shift.members.all())
     own_member = next(
@@ -222,6 +235,11 @@ def _shift_payload(
         "break_minutes": shift.break_minutes,
         "project": _project_payload(shift.crew.project),
         "crew": _crew_payload(shift.crew),
+        "driver_comment": shift.crew.driver_comment,
+        "driver_comment_updated_at": shift.crew.driver_comment_updated_at,
+        "can_edit_driver_comment": (
+            shift.crew_id in editable_driver_comment_crew_ids
+        ),
         "own_role": own_role,
         "effective_vehicle": _vehicle_payload(
             driver_member.vehicle if driver_member is not None else None
@@ -257,8 +275,13 @@ def _week_shift_payload(
     connection,
     chat_access_by_user,
     housing_by_connection,
+    editable_driver_comment_crew_ids,
 ):
-    payload = _shift_payload(shift, connection=connection)
+    payload = _shift_payload(
+        shift,
+        connection=connection,
+        editable_driver_comment_crew_ids=editable_driver_comment_crew_ids,
+    )
     viewer_is_driver = payload["own_role"] == ProjectCrewShiftMember.ROLE_DRIVER
     payload["crew_members"] = [
         {
@@ -293,8 +316,18 @@ def _week_shift_payload(
     return payload
 
 
-def _current_assignment_from_shift(shift, *, connection, basis):
-    payload = _shift_payload(shift, connection=connection)
+def _current_assignment_from_shift(
+    shift,
+    *,
+    connection,
+    basis,
+    editable_driver_comment_crew_ids=(),
+):
+    payload = _shift_payload(
+        shift,
+        connection=connection,
+        editable_driver_comment_crew_ids=editable_driver_comment_crew_ids,
+    )
     driver_member = next(
         (
             item
@@ -654,6 +687,10 @@ def worker_workspace_week_snapshot(*, connection, selected_date):
     week_start = selected_date - timedelta(days=selected_date.weekday())
     week_end = week_start + timedelta(days=6)
     iso_year, iso_week, _ = selected_date.isocalendar()
+    editable_driver_comment_crew_ids = _editable_driver_comment_crew_ids(
+        connection=connection,
+        today=today,
+    )
 
     week_shifts = list(
         _worker_shift_queryset(connection).filter(
@@ -764,6 +801,9 @@ def worker_workspace_week_snapshot(*, connection, selected_date):
                         connection=connection,
                         chat_access_by_user=chat_access_by_user,
                         housing_by_connection=housing_by_connection,
+                        editable_driver_comment_crew_ids=(
+                            editable_driver_comment_crew_ids
+                        ),
                     )
                     if shifts
                     else None
@@ -774,6 +814,9 @@ def worker_workspace_week_snapshot(*, connection, selected_date):
                         connection=connection,
                         chat_access_by_user=chat_access_by_user,
                         housing_by_connection=housing_by_connection,
+                        editable_driver_comment_crew_ids=(
+                            editable_driver_comment_crew_ids
+                        ),
                     )
                     for shift in shifts
                 ],
@@ -817,6 +860,10 @@ def worker_workspace_snapshot(*, connection, selected_month):
 
     now = timezone.now()
     today = timezone.localdate()
+    editable_driver_comment_crew_ids = _editable_driver_comment_crew_ids(
+        connection=connection,
+        today=today,
+    )
     month_start = selected_month.replace(day=1)
     month_end = month_start.replace(
         day=monthrange(month_start.year, month_start.month)[1]
@@ -919,6 +966,9 @@ def worker_workspace_snapshot(*, connection, selected_month):
                         connection=connection,
                         roster_resources=roster_resources,
                         roster_passengers=roster_passengers,
+                        editable_driver_comment_crew_ids=(
+                            editable_driver_comment_crew_ids
+                        ),
                     )
                     if shift is not None
                     else None
@@ -942,12 +992,14 @@ def worker_workspace_snapshot(*, connection, selected_month):
             today_shift,
             connection=connection,
             basis="today_shift",
+            editable_driver_comment_crew_ids=editable_driver_comment_crew_ids,
         )
     elif next_shift is not None:
         current_assignment = _current_assignment_from_shift(
             next_shift,
             connection=connection,
             basis="next_shift",
+            editable_driver_comment_crew_ids=editable_driver_comment_crew_ids,
         )
     else:
         current_assignment = _permanent_assignment(connection, today=today)
@@ -1012,12 +1064,24 @@ def worker_workspace_snapshot(*, connection, selected_month):
         },
         "calendar_days": calendar_days,
         "today_shift": (
-            _shift_payload(today_shift, connection=connection)
+            _shift_payload(
+                today_shift,
+                connection=connection,
+                editable_driver_comment_crew_ids=(
+                    editable_driver_comment_crew_ids
+                ),
+            )
             if today_shift is not None
             else None
         ),
         "next_shift": (
-            _shift_payload(next_shift, connection=connection)
+            _shift_payload(
+                next_shift,
+                connection=connection,
+                editable_driver_comment_crew_ids=(
+                    editable_driver_comment_crew_ids
+                ),
+            )
             if next_shift is not None
             else None
         ),
