@@ -89,6 +89,7 @@ from .api_views import (
     SupportConnectionOpenManagerConversationAPIView,
     SupportConnectionTransitionAPIView,
     SupportConversationMessageCreateAPIView,
+    SupportConversationImageMessageCreateAPIView,
     SupportConversationContactMessageCreateAPIView,
     SupportConversationContactOptionsAPIView,
     SupportConversationGroupPushPreferenceAPIView,
@@ -766,6 +767,11 @@ urlpatterns = [
         "conversations/<uuid:conversation_public_id>/messages/send/",
         SupportConversationMessageCreateAPIView.as_view(),
         name="support-conversation-message-send",
+    ),
+    path(
+        "conversations/<uuid:conversation_public_id>/messages/send-images/",
+        SupportConversationImageMessageCreateAPIView.as_view(),
+        name="support-conversation-image-message-send",
     ),
     path(
         "conversations/<uuid:conversation_public_id>/contact-options/",

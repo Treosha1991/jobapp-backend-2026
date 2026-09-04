@@ -15,6 +15,7 @@ from support.models import (
     SupportConversation,
     SupportConversationMember,
     SupportMessage,
+    SupportMessageImage,
 )
 from support.permission_codes import CHAT_MANAGE
 from support.permissions import (
@@ -433,6 +434,7 @@ def send_text_message(
     shared_contact_user=None,
     shared_contact_connection=None,
     shared_contact_membership=None,
+    image_assets=(),
 ):
     with transaction.atomic():
         conversation = SupportConversation.objects.select_for_update().get(pk=conversation.pk)
@@ -452,6 +454,11 @@ def send_text_message(
             raise PermissionDenied("support_conversation_blocked")
         if reply_to is not None and reply_to.conversation_id != conversation.id:
             raise ValidationError({"reply_to": "support_reply_message_not_available"})
+        image_assets = tuple(image_assets or ())
+        if not body.strip() and not image_assets and kind == SupportMessage.KIND_TEXT:
+            raise ValidationError({"body": "message_body_or_image_required"})
+        if any(image.organization_id != conversation.organization_id for image in image_assets):
+            raise PermissionDenied("support_chat_image_not_available")
         message, created = SupportMessage.objects.get_or_create(
             conversation=conversation,
             client_message_id=client_message_id,
@@ -470,6 +477,16 @@ def send_text_message(
         if not created and message.sender_id != sender.id:
             raise PermissionDenied("support_message_id_not_available")
         if created:
+            SupportMessageImage.objects.bulk_create(
+                [
+                    SupportMessageImage(
+                        message=message,
+                        image=image,
+                        position=position,
+                    )
+                    for position, image in enumerate(image_assets)
+                ]
+            )
             conversation.updated_at = timezone.now()
             conversation.save(update_fields=["updated_at"])
             recipients = list(
@@ -975,6 +992,7 @@ def forward_text_message(*, sender, source_message, recipient, client_message_id
             original_language=source_message.original_language,
             client_message_id=client_message_id,
             forwarded_from=source_message,
+            image_assets=[link.image for link in source_message.image_links.all()],
         )
     return target_conversation, message, created
 
@@ -1005,6 +1023,7 @@ def forward_text_message_to_existing_conversation(
         original_language=source_message.original_language,
         client_message_id=client_message_id,
         forwarded_from=source_message,
+        image_assets=[link.image for link in source_message.image_links.all()],
     )
 
 

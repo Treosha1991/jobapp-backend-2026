@@ -1,10 +1,14 @@
 from importlib import import_module
 from datetime import timedelta
+from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
 from django.apps import apps
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -21,6 +25,7 @@ from support.models import (
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
+    SupportChatImage,
     SupportMessage,
     SupportVacancy,
     Vehicle,
@@ -268,6 +273,112 @@ class StaffChatDirectoryTests(TestCase):
             format="json",
         )
         self.assertEqual(invalid.status_code, 400, invalid.data)
+
+    @override_settings(
+        CHAT_MEDIA_R2_BUCKET="private-chat-test",
+        CHAT_MEDIA_R2_ENDPOINT_URL="https://r2.example.test",
+        CHAT_MEDIA_R2_ACCESS_KEY_ID="test-key",
+        CHAT_MEDIA_R2_SECRET_ACCESS_KEY="test-secret",
+    )
+    @patch("support.api_views.signed_chat_image_url")
+    @patch("support.api_views.upload_chat_image")
+    def test_private_image_message_and_forward_share_one_asset(
+        self,
+        upload_chat_image_mock,
+        signed_url_mock,
+    ):
+        from PIL import Image
+
+        signed_url_mock.return_value = "https://signed.example.test/private-image"
+        worker_chat = self.client.post(
+            f"{self.organization_url}/chat-directory/open/",
+            {"target_type": "worker", "target_id": str(self.connection.public_id)},
+            format="json",
+        )
+        staff_chat = self.client.post(
+            f"{self.organization_url}/chat-directory/open/",
+            {
+                "target_type": "staff",
+                "target_id": str(self.manager_membership.public_id),
+            },
+            format="json",
+        )
+        image_bytes = BytesIO()
+        Image.new("RGB", (40, 30), "blue").save(image_bytes, format="JPEG")
+        upload = SimpleUploadedFile(
+            "photo.jpg",
+            image_bytes.getvalue(),
+            content_type="image/jpeg",
+        )
+
+        sent = self.client.post(
+            f"/api/v2/support/conversations/"
+            f"{worker_chat.data['conversation']['id']}/messages/send-images/",
+            {
+                "body": "Маршрут на сегодня",
+                "original_language": "ru",
+                "images": [upload],
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(sent.status_code, 201, sent.data)
+        self.assertEqual(len(sent.data["message"]["images"]), 1)
+        self.assertEqual(
+            sent.data["message"]["images"][0]["download_url"],
+            "https://signed.example.test/private-image",
+        )
+        self.assertEqual(SupportChatImage.objects.count(), 1)
+        upload_chat_image_mock.assert_called_once()
+
+        forwarded = self.client.post(
+            f"/api/v2/support/conversations/"
+            f"{worker_chat.data['conversation']['id']}/messages/"
+            f"{sent.data['message']['id']}/forward/",
+            {"target_conversation_id": staff_chat.data["conversation"]["id"]},
+            format="json",
+        )
+        self.assertEqual(forwarded.status_code, 201, forwarded.data)
+        self.assertEqual(len(forwarded.data["message"]["images"]), 1)
+        self.assertEqual(SupportChatImage.objects.count(), 1)
+        asset = SupportChatImage.objects.get()
+        self.assertEqual(asset.message_links.count(), 2)
+
+        source_message = SupportMessage.objects.get(
+            public_id=sent.data["message"]["id"]
+        )
+        forwarded_message = SupportMessage.objects.get(
+            public_id=forwarded.data["message"]["id"]
+        )
+        old_deleted_at = timezone.now() - timedelta(days=31)
+        source_message.deleted_at = old_deleted_at
+        source_message.save(update_fields=["deleted_at"])
+        with patch(
+            "support.management.commands.purge_deleted_support_chat_images.delete_chat_image"
+        ) as delete_mock:
+            call_command("purge_deleted_support_chat_images")
+            delete_mock.assert_not_called()
+        forwarded_message.deleted_at = old_deleted_at
+        forwarded_message.save(update_fields=["deleted_at"])
+        with patch(
+            "support.management.commands.purge_deleted_support_chat_images.delete_chat_image"
+        ) as delete_mock:
+            call_command("purge_deleted_support_chat_images")
+            delete_mock.assert_called_once_with(asset.object_key)
+        asset.refresh_from_db()
+        self.assertIsNotNone(asset.purged_at)
+
+        outsider = User.objects.create_user(
+            username="chat-image-outsider",
+            password="password",
+        )
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(outsider)
+        denied = outsider_client.get(
+            f"/api/v2/support/conversations/"
+            f"{worker_chat.data['conversation']['id']}/messages/"
+        )
+        self.assertEqual(denied.status_code, 404)
 
     def test_conversations_are_sorted_only_by_latest_message(self):
         staff_chat = self.client.post(

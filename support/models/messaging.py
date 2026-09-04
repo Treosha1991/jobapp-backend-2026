@@ -9,12 +9,7 @@ from .pipeline import SupportConnection
 
 
 class SupportConversation(models.Model):
-    """A Support-only text conversation.
-
-    There are no attachment, file, image, or document fields in this model.
-    Keeping it independent from the legacy JobHub chat prevents a public chat
-    from accidentally becoming a Support channel.
-    """
+    """A Support-only conversation isolated from the legacy JobHub chat."""
 
     KIND_MANAGER = "manager"
     KIND_COORDINATOR = "coordinator"
@@ -200,7 +195,7 @@ class SupportMessage(models.Model):
         blank=True,
         related_name="shared_in_support_messages",
     )
-    body = models.TextField(max_length=1500)
+    body = models.TextField(max_length=1500, blank=True, default="")
     original_language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES)
     client_message_id = models.UUIDField(default=uuid.uuid4)
     edited_at = models.DateTimeField(null=True, blank=True)
@@ -216,6 +211,69 @@ class SupportMessage(models.Model):
             ),
         ]
         indexes = [models.Index(fields=("conversation", "created_at"))]
+
+
+class SupportChatImage(models.Model):
+    """Private R2 object metadata shared by one or more forwarded messages."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    organization = models.ForeignKey(
+        SupportOrganization,
+        on_delete=models.CASCADE,
+        related_name="support_chat_images",
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="uploaded_support_chat_images",
+    )
+    object_key = models.CharField(max_length=500, unique=True)
+    content_type = models.CharField(max_length=40)
+    byte_size = models.PositiveIntegerField()
+    width = models.PositiveIntegerField()
+    height = models.PositiveIntegerField()
+    sha256 = models.CharField(max_length=64)
+    purge_after = models.DateTimeField(null=True, blank=True)
+    purged_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        indexes = [
+            models.Index(fields=("organization", "created_at")),
+            models.Index(fields=("purge_after", "purged_at")),
+        ]
+
+
+class SupportMessageImage(models.Model):
+    """Ordered link from a message to a private image asset."""
+
+    message = models.ForeignKey(
+        SupportMessage,
+        on_delete=models.CASCADE,
+        related_name="image_links",
+    )
+    image = models.ForeignKey(
+        SupportChatImage,
+        on_delete=models.CASCADE,
+        related_name="message_links",
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("position", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("message", "image"),
+                name="support_unique_message_chat_image",
+            ),
+            models.UniqueConstraint(
+                fields=("message", "position"),
+                name="support_unique_message_image_position",
+            ),
+        ]
 
 
 class SupportConversationReport(models.Model):

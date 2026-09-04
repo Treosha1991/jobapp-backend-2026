@@ -3,6 +3,7 @@ from datetime import date, timedelta
 import logging
 import uuid
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
@@ -60,6 +61,7 @@ from .models import (
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
+    SupportChatImage,
     SupportMessage,
     SupportOrganization,
     SupportWorkerDocumentReference,
@@ -153,6 +155,7 @@ from .serializers import (
     SupportApplicationCreateSerializer,
     SupportMessageCreateSerializer,
     SupportMessageForwardSerializer,
+    SupportMessageImageCreateSerializer,
     SupportContactMessageCreateSerializer,
     SupportOrganizationCreateSerializer,
     SupportVacancyCreateSerializer,
@@ -193,6 +196,14 @@ from .services.conversations import (
     send_contact_message,
     send_text_message,
     forward_text_message_to_existing_conversation,
+)
+from .services.chat_media import (
+    build_chat_image_object_key,
+    delete_chat_image,
+    is_chat_media_storage_configured,
+    process_chat_image,
+    signed_chat_image_url,
+    upload_chat_image,
 )
 from .services.entitlements import support_access_snapshot_for
 from .services.notifications import enqueue_support_notification
@@ -608,6 +619,13 @@ def _conversation_payload(conversation, *, viewer):
                 permission_code=CHAT_MANAGE,
             )
         ),
+        "can_send_images": bool(
+            viewer_member is not None
+            and viewer_member.can_send
+            and conversation.state == SupportConversation.STATE_ACTIVE
+            and conversation.kind
+            in {SupportConversation.KIND_MANAGER, SupportConversation.KIND_JOBHUB}
+        ),
     }
 
 
@@ -649,7 +667,35 @@ def _message_payload(message, *, viewer):
             ),
             "is_mine": message.reply_to.sender_id == viewer.id,
             "deleted_at": message.reply_to.deleted_at,
+            "has_images": (
+                False
+                if message.reply_to.deleted_at
+                else message.reply_to.image_links.exists()
+            ),
         }
+    images = []
+    if message.deleted_at is None:
+        for link in message.image_links.all():
+            image = link.image
+            if image.purged_at is not None:
+                continue
+            try:
+                download_url = signed_chat_image_url(image.object_key)
+            except Exception:
+                logger.exception(
+                    "Could not sign private chat image %s", image.public_id
+                )
+                download_url = ""
+            images.append(
+                {
+                    "id": str(image.public_id),
+                    "download_url": download_url,
+                    "content_type": image.content_type,
+                    "byte_size": image.byte_size,
+                    "width": image.width,
+                    "height": image.height,
+                }
+            )
     return {
         "id": str(message.public_id),
         "kind": message.kind,
@@ -678,6 +724,7 @@ def _message_payload(message, *, viewer):
         ),
         "reply_to": reply_to,
         "shared_contact": shared_contact,
+        "images": images,
     }
 
 
@@ -4701,6 +4748,9 @@ class SupportConversationMessageListAPIView(SupportFeatureAPIView):
             "shared_contact_user__profile",
             "shared_contact_connection__vacancy",
             "shared_contact_membership",
+        ).prefetch_related(
+            "image_links__image",
+            "reply_to__image_links",
         ).all()
         return Response(
             {
@@ -4748,6 +4798,155 @@ class SupportConversationMessageCreateAPIView(SupportFeatureAPIView):
         )
 
 
+class SupportConversationImageMessageCreateAPIView(SupportFeatureAPIView):
+    """Accept ordinary chat photos, normalize them and store them privately."""
+
+    allowed_conversation_kinds = {
+        SupportConversation.KIND_MANAGER,
+        SupportConversation.KIND_JOBHUB,
+    }
+
+    def post(self, request, conversation_public_id):
+        conversation = get_object_or_404(
+            SupportConversation.objects.filter(
+                members__user=request.user,
+                members__left_at__isnull=True,
+                state=SupportConversation.STATE_ACTIVE,
+                kind__in=self.allowed_conversation_kinds,
+            )
+            .select_related("organization")
+            .distinct(),
+            public_id=conversation_public_id,
+        )
+        require_conversation_access(user=request.user, conversation=conversation)
+        metadata = {
+            key: request.data.get(key)
+            for key in (
+                "body",
+                "original_language",
+                "reply_to_message_id",
+                "client_message_id",
+            )
+            if request.data.get(key) not in (None, "")
+        }
+        serializer = SupportMessageImageCreateSerializer(data=metadata)
+        serializer.is_valid(raise_exception=True)
+        uploads = request.FILES.getlist("images")
+        max_images = int(getattr(settings, "CHAT_MEDIA_MAX_IMAGES_PER_MESSAGE", 4))
+        if not uploads:
+            return Response(
+                {"code": "chat_image_required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(uploads) > max_images:
+            return Response(
+                {"code": "chat_image_count_exceeded"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not is_chat_media_storage_configured():
+            return Response(
+                {"code": "chat_media_storage_not_configured"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        client_message_id = serializer.validated_data["client_message_id"]
+        existing = SupportMessage.objects.filter(
+            conversation=conversation,
+            client_message_id=client_message_id,
+            sender=request.user,
+        ).first()
+        if existing is not None:
+            existing = SupportMessage.objects.select_related(
+                "sender", "sender__profile", "forwarded_from__sender"
+            ).prefetch_related("image_links__image").get(pk=existing.pk)
+            return Response(
+                {"created": False, "message": _message_payload(existing, viewer=request.user)}
+            )
+
+        reply_to = None
+        reply_to_id = serializer.validated_data.get("reply_to_message_id")
+        if reply_to_id:
+            reply_to = get_object_or_404(
+                SupportMessage,
+                conversation=conversation,
+                public_id=reply_to_id,
+                deleted_at__isnull=True,
+            )
+
+        uploaded_keys = []
+        processed_images = []
+        try:
+            for upload in uploads:
+                processed = process_chat_image(upload)
+                object_key = build_chat_image_object_key(
+                    organization_id=conversation.organization_id,
+                    extension=processed.extension,
+                )
+                upload_chat_image(object_key=object_key, image=processed)
+                uploaded_keys.append(object_key)
+                processed_images.append((object_key, processed))
+
+            with transaction.atomic():
+                image_assets = [
+                    SupportChatImage.objects.create(
+                        organization=conversation.organization,
+                        uploaded_by=request.user,
+                        object_key=object_key,
+                        content_type=processed.content_type,
+                        byte_size=len(processed.payload),
+                        width=processed.width,
+                        height=processed.height,
+                        sha256=processed.sha256,
+                    )
+                    for object_key, processed in processed_images
+                ]
+                message, created = send_text_message(
+                    sender=request.user,
+                    conversation=conversation,
+                    body=serializer.validated_data.get("body", ""),
+                    original_language=serializer.validated_data["original_language"],
+                    client_message_id=client_message_id,
+                    reply_to=reply_to,
+                    image_assets=image_assets,
+                )
+        except ValueError as exc:
+            for key in uploaded_keys:
+                try:
+                    delete_chat_image(key)
+                except Exception:
+                    logger.exception("Could not clean rejected chat image %s", key)
+            return Response(
+                {"code": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except APIException:
+            for key in uploaded_keys:
+                try:
+                    delete_chat_image(key)
+                except Exception:
+                    logger.exception("Could not clean denied chat image %s", key)
+            raise
+        except Exception:
+            for key in uploaded_keys:
+                try:
+                    delete_chat_image(key)
+                except Exception:
+                    logger.exception("Could not clean failed chat image %s", key)
+            logger.exception("Could not create private chat image message")
+            return Response(
+                {"code": "chat_image_upload_failed"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        message = SupportMessage.objects.select_related(
+            "sender", "sender__profile", "forwarded_from__sender"
+        ).prefetch_related("image_links__image").get(pk=message.pk)
+        return Response(
+            {"created": created, "message": _message_payload(message, viewer=request.user)},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
 class SupportMessageForwardAPIView(SupportFeatureAPIView):
     def post(self, request, conversation_public_id, message_public_id):
         source_conversation = get_object_or_404(
@@ -4761,7 +4960,9 @@ class SupportMessageForwardAPIView(SupportFeatureAPIView):
             state=SupportConversation.STATE_ACTIVE,
         )
         source_message = get_object_or_404(
-            SupportMessage.objects.select_related("conversation", "sender"),
+            SupportMessage.objects.select_related(
+                "conversation", "sender"
+            ).prefetch_related("image_links__image"),
             conversation=source_conversation,
             public_id=message_public_id,
             kind=SupportMessage.KIND_TEXT,
@@ -4790,7 +4991,7 @@ class SupportMessageForwardAPIView(SupportFeatureAPIView):
             "sender__profile",
             "forwarded_from__sender",
             "forwarded_from__sender__profile",
-        ).get(pk=message.pk)
+        ).prefetch_related("image_links__image").get(pk=message.pk)
         return Response(
             {
                 "created": created,

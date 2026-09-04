@@ -1,6 +1,9 @@
 from datetime import timedelta
+from io import BytesIO
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -11,6 +14,7 @@ from support.models import (
     DocumentRequestPackage,
     SupportAccessGrant,
     SupportApplication,
+    SupportChatImage,
     SupportConnection,
     SupportConversation,
     SupportConversationReport,
@@ -359,6 +363,75 @@ class CandidateApplicationsWorkspaceTests(TestCase):
                 kwargs={"connection_public_id": connection.public_id},
             ),
             worker_detail.context["counterpart_profile_url"],
+        )
+
+    @override_settings(
+        CHAT_MEDIA_R2_BUCKET="private-web-chat-test",
+        CHAT_MEDIA_R2_ENDPOINT_URL="https://r2.example.test",
+        CHAT_MEDIA_R2_ACCESS_KEY_ID="test-key",
+        CHAT_MEDIA_R2_SECRET_ACCESS_KEY="test-secret",
+    )
+    @patch("support.web_views.signed_chat_image_url")
+    @patch("support.web_views.upload_chat_image")
+    def test_web_private_chat_sends_and_renders_photo(
+        self,
+        upload_chat_image_mock,
+        signed_url_mock,
+    ):
+        from PIL import Image
+
+        self.post_action(
+            {
+                "action": "application_approve",
+                "application_id": self.application.public_id,
+            },
+            status_filter="approved",
+        )
+        conversation, _ = open_manager_conversation(
+            candidate=self.candidate,
+            connection=self.application.support_connection,
+        )
+        detail_url = (
+            reverse(
+                "support:conversation-detail",
+                kwargs={"conversation_public_id": conversation.public_id},
+            )
+            + f"?organization={self.organization.public_id}"
+        )
+        image_bytes = BytesIO()
+        Image.new("RGB", (60, 40), "green").save(image_bytes, format="JPEG")
+        upload = SimpleUploadedFile(
+            "work.jpg",
+            image_bytes.getvalue(),
+            content_type="image/jpeg",
+        )
+
+        sent = self.client.post(
+            detail_url,
+            {"action": "send", "body": "Фото объекта", "images": [upload]},
+        )
+
+        self.assertRedirects(sent, detail_url)
+        self.assertEqual(SupportChatImage.objects.count(), 1)
+        upload_chat_image_mock.assert_called_once()
+        signed_url_mock.return_value = "https://signed.example.test/web-photo"
+        rendered = self.client.get(detail_url)
+        self.assertContains(rendered, "Выбрать фотографии")
+        self.assertContains(rendered, "https://signed.example.test/web-photo")
+        self.assertContains(rendered, "Фото объекта")
+
+        photo_message = SupportMessage.objects.get(conversation=conversation)
+        deleted = self.client.post(
+            detail_url,
+            {"action": "delete", "message_id": photo_message.id},
+        )
+        self.assertRedirects(deleted, detail_url)
+        image_asset = SupportChatImage.objects.get()
+        self.assertIsNotNone(image_asset.purge_after)
+        self.assertAlmostEqual(
+            (image_asset.purge_after - photo_message.created_at).total_seconds(),
+            30 * 24 * 60 * 60,
+            delta=5,
         )
 
     def test_chat_share_forwards_message_to_an_internal_worker(self):

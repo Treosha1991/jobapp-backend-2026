@@ -15,10 +15,12 @@ from .organization import (
     SupportOrganization,
 )
 from .messaging import (
+    SupportChatImage,
     SupportConversation,
     SupportConversationReport,
     SupportConversationMember,
     SupportMessage,
+    SupportMessageImage,
     SupportMessageTranslation,
 )
 from .notifications import InAppNotification, NotificationOutbox, PushDelivery
@@ -136,10 +138,12 @@ __all__ = [
     "SupportApplicantReference",
     "SupportApplication",
     "SupportConnection",
+    "SupportChatImage",
     "SupportConversation",
     "SupportConversationReport",
     "SupportConversationMember",
     "SupportMessage",
+    "SupportMessageImage",
     "SupportMessageTranslation",
     "SupportOrganization",
     "SupportVacancy",

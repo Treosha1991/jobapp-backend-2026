@@ -95,8 +95,17 @@ python manage.py runserver
 | `SUPPORT_PROJECT_FIRST_ENABLED` | включает актуальную project-first механику |
 | `SUPPORT_PROJECT_FIRST_RESET_ALLOWED` | разрешает тестовую очистку данных |
 | `SUPPORT_TRANSLATION_PROVIDER` | провайдер перевода; по умолчанию отключён |
+| `CHAT_MEDIA_R2_BUCKET` | отдельный закрытый bucket изображений Support-чата |
+| `CHAT_MEDIA_R2_ENDPOINT_URL` | S3 endpoint закрытого R2; по умолчанию берётся `R2_ENDPOINT_URL` |
+| `CHAT_MEDIA_R2_ACCESS_KEY_ID` | ключ доступа к закрытому bucket; может использовать общий R2 credential |
+| `CHAT_MEDIA_R2_SECRET_ACCESS_KEY` | секрет закрытого bucket; может использовать общий R2 credential |
+| `CHAT_MEDIA_MAX_BYTES` | максимальный входящий размер одного изображения; по умолчанию 10 МБ |
 
 Не добавляйте реальные секреты и файлы `.env` в Git.
+
+`CHAT_MEDIA_R2_BUCKET` обязан быть приватным и отдельным от публичного bucket
+аватаров. Для окончательного удаления изображений через 30 дней запускайте
+ежедневно `python manage.py purge_deleted_support_chat_images`.
 
 ## Проверка изменений
 

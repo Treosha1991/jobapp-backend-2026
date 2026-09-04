@@ -19,6 +19,11 @@
     .jh-chat-message.deleted { opacity:.7; font-style:italic; }
     .jh-chat-message-body { overflow-wrap:anywhere; white-space:pre-wrap; line-height:1.35; }
     .jh-chat-message-body a { color:var(--blue); text-decoration:underline; }
+    .jh-chat-images { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px; width:min(420px,70vw); margin:0 0 6px; }
+    .jh-chat-images.one { grid-template-columns:1fr; }
+    .jh-chat-image { display:block; overflow:hidden; border-radius:10px; background:rgba(5,22,36,.26); }
+    .jh-chat-image img { display:block; width:100%; height:160px; object-fit:cover; }
+    .jh-chat-images.one .jh-chat-image img { height:auto; max-height:340px; object-fit:contain; }
     .jh-chat-message.mine .jh-chat-message-body a { color:#063d28; font-weight:800; }
     .jh-chat-message-footer { display:flex; align-items:center; justify-content:flex-end; gap:5px; min-height:18px; margin-top:2px; }
     .jh-chat-message-meta { display:flex; justify-content:flex-end; gap:7px; color:rgba(223,244,255,.7); font-size:10px; }
@@ -82,6 +87,7 @@
         <article class="jh-chat-message{% if message.sender_id == request.user.id %} mine{% endif %}{% if message.deleted_at %} deleted{% endif %}" tabindex="0" data-message-id="{{ message.id }}" data-message-body="{{ message.body|escapejs }}">
           {% if message.reply_to %}<div class="jh-chat-reply-preview">{% if message.reply_to.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ message.reply_to.body|truncatechars:180 }}{% endif %}</div>{% endif %}
           {% if message.forwarded_from %}<div class="jh-chat-forwarded">↪ {{ employer_t.chat_forwarded_from }}: {% if message.forwarded_from.sender %}{{ message.forwarded_from.sender.get_full_name|default:message.forwarded_from.sender.username }}{% else %}JobHub{% endif %}</div>{% endif %}
+          {% if not message.deleted_at and message.chat_images %}<div class="jh-chat-images{% if message.chat_images|length == 1 %} one{% endif %}">{% for image in message.chat_images %}<a class="jh-chat-image" href="{{ image.url }}" target="_blank" rel="noopener noreferrer"><img src="{{ image.url }}" alt="{{ employer_t.support_chat_photo }}" loading="lazy"></a>{% endfor %}</div>{% endif %}
           <div class="jh-chat-message-body">{% if message.deleted_at %}{{ employer_t.chat_message_deleted }}{% else %}{{ message.body|urlize }}{% endif %}</div>
           <div class="jh-chat-message-footer">
             <div class="jh-chat-message-meta"><time>{{ message.created_at|date:"H:i" }}</time>{% if message.edited_at %}<span>{{ employer_t.chat_edited }}</span>{% endif %}</div>
@@ -90,7 +96,7 @@
         </article>
       {% empty %}<div class="jh-empty">{{ employer_t.chats_empty_text }}</div>{% endfor %}
     </div>
-    {% if blocked_by_me or blocked_by_other %}<div class="jh-chat-blocked">{% if blocked_by_me %}{{ employer_t.chat_blocked_by_me }}{% else %}{{ employer_t.chat_blocked_by_other }}{% endif %}</div>{% else %}<form method="post" class="jh-chat-compose" autocomplete="off">{% csrf_token %}<input type="hidden" name="action" value="send"><input type="hidden" name="reply_to_id" value=""><textarea class="jh-input" name="body" maxlength="1500" placeholder="{{ employer_t.chat_message_placeholder }}" autofocus required></textarea><button class="jh-btn primary" type="submit">{{ employer_t.chat_send }}</button></form>{% endif %}
+    {% if blocked_by_me or blocked_by_other %}<div class="jh-chat-blocked">{% if blocked_by_me %}{{ employer_t.chat_blocked_by_me }}{% else %}{{ employer_t.chat_blocked_by_other }}{% endif %}</div>{% else %}<form method="post" enctype="multipart/form-data" class="jh-chat-compose" autocomplete="off">{% csrf_token %}<input type="hidden" name="action" value="send"><input type="hidden" name="reply_to_id" value=""><div><textarea class="jh-input" name="body" maxlength="1500" placeholder="{{ employer_t.chat_message_placeholder }}" autofocus></textarea>{% if conversation.kind == 'manager' or conversation.kind == 'jobhub' %}<label class="jh-btn" style="margin-top:6px;cursor:pointer">{{ employer_t.support_chat_choose_photos }}<input type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple hidden></label><small class="jh-muted" style="display:block;margin-top:5px">{{ employer_t.support_chat_images_warning }}</small>{% endif %}</div><button class="jh-btn primary" type="submit">{{ employer_t.chat_send }}</button></form>{% endif %}
   </section>
   <div class="jh-chat-share-dialog" id="shareMessageDialog" role="dialog" aria-modal="true" aria-labelledby="shareMessageTitle"{% if not share_message_id %} hidden{% endif %}>
     <form method="post" class="jh-chat-share-form" id="shareMessageForm">
@@ -110,7 +116,7 @@
   <script>
     const thread=document.getElementById('chatThread'); const scrollThreadToBottom=()=>{if(thread)thread.scrollTop=thread.scrollHeight}; requestAnimationFrame(scrollThreadToBottom);
     const composeForm=document.querySelector('.jh-chat-compose'); const replyInput=composeForm?.querySelector('[name="reply_to_id"]'); const composer=composeForm?.querySelector('textarea'); const csrfToken=document.querySelector('[name=csrfmiddlewaretoken]')?.value||''; requestAnimationFrame(()=>composer?.focus({preventScroll:true}));
-    composer?.addEventListener('keydown',(event)=>{if(event.key!=='Enter')return;if(event.ctrlKey){event.preventDefault();composer.setRangeText('\n',composer.selectionStart,composer.selectionEnd,'end');composer.dispatchEvent(new Event('input',{bubbles:true}));return;}event.preventDefault();if(composer.value.trim())composeForm.requestSubmit();});
+    composer?.addEventListener('keydown',(event)=>{if(event.key!=='Enter')return;if(event.ctrlKey){event.preventDefault();composer.setRangeText('\n',composer.selectionStart,composer.selectionEnd,'end');composer.dispatchEvent(new Event('input',{bubbles:true}));return;}event.preventDefault();if(composer.value.trim()||composeForm.querySelector('[name="images"]')?.files?.length)composeForm.requestSubmit();});
     const postAction=(action,messageId,body='')=>{const form=document.createElement('form');form.method='post';form.innerHTML=`<input type="hidden" name="csrfmiddlewaretoken" value="${csrfToken}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="message_id" value="${messageId}"><input type="hidden" name="body" value="">`;form.querySelector('[name=body]').value=body;document.body.appendChild(form);form.submit();};
     const shareDialog=document.getElementById('shareMessageDialog');const shareForm=document.getElementById('shareMessageForm');const shareSearch=document.getElementById('shareRecipientSearch');
     const openShareDialog=(messageId)=>{if(!shareDialog||!shareForm)return;shareForm.reset();shareForm.querySelector('[name="message_id"]').value=messageId;if(shareSearch){shareSearch.value='';document.querySelectorAll('[data-share-recipient]').forEach((item)=>item.hidden=false);}shareDialog.hidden=false;requestAnimationFrame(()=>shareSearch?.focus());};

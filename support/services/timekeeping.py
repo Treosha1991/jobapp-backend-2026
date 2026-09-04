@@ -102,7 +102,7 @@ def worker_time_entry_access(*, scheduled_shift, entry, now=None):
     """Return the server-owned worker capabilities for one factual-time day."""
 
     current_time = now or timezone.now()
-    available_at = scheduled_shift.ends_at if scheduled_shift is not None else None
+    available_at = scheduled_shift.starts_at if scheduled_shift is not None else None
     if entry is not None:
         if entry.status == WorkTimeEntry.STATUS_SUBMITTED:
             return {
@@ -135,20 +135,20 @@ def worker_time_entry_access(*, scheduled_shift, entry, now=None):
             "code": "no_published_shift",
             "available_at": None,
         }
-    if scheduled_shift.ends_at > current_time:
+    if scheduled_shift.starts_at > current_time:
         return {
             "can_create": False,
             "can_edit": False,
             "can_submit": False,
-            "code": "shift_not_finished",
-            "available_at": scheduled_shift.ends_at,
+            "code": "shift_not_started",
+            "available_at": scheduled_shift.starts_at,
         }
     return {
         "can_create": True,
         "can_edit": False,
         "can_submit": True,
         "code": "ready",
-        "available_at": scheduled_shift.ends_at,
+        "available_at": scheduled_shift.starts_at,
     }
 
 
@@ -1092,7 +1092,7 @@ def submit_work_time_entry(
     ended_at,
     break_minutes,
 ):
-    """Create or update factual time after the published shift has ended."""
+    """Create or update factual time after the published shift has started."""
 
     with transaction.atomic():
         connection = (
@@ -1129,8 +1129,8 @@ def submit_work_time_entry(
         )
         if entry is None and access["code"] == "no_published_shift":
             raise ValidationError({"work_date": "published_shift_required"})
-        if entry is None and access["code"] == "shift_not_finished":
-            raise ValidationError({"work_date": "shift_must_finish_before_time_entry"})
+        if entry is None and access["code"] == "shift_not_started":
+            raise ValidationError({"work_date": "shift_must_start_before_time_entry"})
         if entry is not None and not access["can_edit"]:
             raise ValidationError({"entry": "time_entry_is_not_open_for_worker_change"})
         if entry is None:

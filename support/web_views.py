@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from urllib.parse import urlencode, urlsplit
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ObjectDoesNotExist
@@ -48,6 +49,7 @@ from .models import (
     RouteStop,
     ScheduledWorkShift,
     SupportApplication,
+    SupportChatImage,
     SupportConnection,
     SupportConversation,
     SupportConversationMember,
@@ -188,6 +190,15 @@ from .services.conversations import (
     open_manager_conversation_for_staff,
     require_conversation_access,
     send_text_message,
+)
+from .services.chat_media import (
+    build_chat_image_object_key,
+    delete_chat_image,
+    is_chat_media_storage_configured,
+    process_chat_image,
+    schedule_chat_images_after_message_deleted,
+    signed_chat_image_url,
+    upload_chat_image,
 )
 from .permission_groups import TEAM_PERMISSION_GROUPS, permission_codes_for_group_ids
 
@@ -866,6 +877,7 @@ def conversation_detail(request, conversation_public_id):
             "messages__sender",
             "messages__reply_to",
             "messages__forwarded_from__sender",
+            "messages__image_links__image",
         )
         .distinct(),
         public_id=conversation_public_id,
@@ -916,6 +928,7 @@ def conversation_detail(request, conversation_public_id):
             messages.success(request, tr(request, "chat_unblocked_success"))
         elif action == "send":
             body = (request.POST.get("body") or "").strip()
+            image_uploads = request.FILES.getlist("images")
             reply_to = None
             reply_to_id = (request.POST.get("reply_to_id") or "").strip()
             if reply_to_id:
@@ -928,25 +941,86 @@ def conversation_detail(request, conversation_public_id):
                     return redirect(detail_url)
             if blocked_by_me or blocked_by_other:
                 messages.error(request, tr(request, "chat_unavailable"))
-            elif not body or len(body) > 1500 or "\x00" in body:
+            elif (
+                (not body and not image_uploads)
+                or len(body) > 1500
+                or "\x00" in body
+            ):
                 messages.error(request, tr(request, "support_chat_message_invalid"))
+            elif image_uploads and conversation.kind not in {
+                SupportConversation.KIND_MANAGER,
+                SupportConversation.KIND_JOBHUB,
+            }:
+                messages.error(request, tr(request, "support_chat_images_not_available"))
+            elif len(image_uploads) > int(
+                getattr(settings, "CHAT_MEDIA_MAX_IMAGES_PER_MESSAGE", 4)
+            ):
+                messages.error(request, tr(request, "support_chat_images_too_many"))
+            elif image_uploads and not is_chat_media_storage_configured():
+                messages.error(request, tr(request, "support_chat_images_storage_error"))
             elif SupportMessage.objects.filter(
                 sender=request.user,
                 created_at__gte=timezone.now() - timedelta(minutes=1),
             ).count() >= 20:
                 messages.error(request, tr(request, "chat_rate_limited"))
             else:
+                uploaded_keys = []
                 try:
-                    send_text_message(
-                        sender=request.user,
-                        conversation=conversation,
-                        body=body,
-                        original_language=get_lang(request),
-                        client_message_id=uuid.uuid4(),
-                        reply_to=reply_to,
-                    )
+                    processed_images = []
+                    for image_upload in image_uploads:
+                        processed = process_chat_image(image_upload)
+                        object_key = build_chat_image_object_key(
+                            organization_id=conversation.organization_id,
+                            extension=processed.extension,
+                        )
+                        upload_chat_image(object_key=object_key, image=processed)
+                        uploaded_keys.append(object_key)
+                        processed_images.append((object_key, processed))
+                    with transaction.atomic():
+                        image_assets = [
+                            SupportChatImage.objects.create(
+                                organization=conversation.organization,
+                                uploaded_by=request.user,
+                                object_key=object_key,
+                                content_type=processed.content_type,
+                                byte_size=len(processed.payload),
+                                width=processed.width,
+                                height=processed.height,
+                                sha256=processed.sha256,
+                            )
+                            for object_key, processed in processed_images
+                        ]
+                        send_text_message(
+                            sender=request.user,
+                            conversation=conversation,
+                            body=body,
+                            original_language=get_lang(request),
+                            client_message_id=uuid.uuid4(),
+                            reply_to=reply_to,
+                            image_assets=image_assets,
+                        )
+                except ValueError:
+                    for key in uploaded_keys:
+                        try:
+                            delete_chat_image(key)
+                        except Exception:
+                            logger.exception("Could not clean rejected web chat image")
+                    messages.error(request, tr(request, "support_chat_images_invalid"))
                 except APIException:
+                    for key in uploaded_keys:
+                        try:
+                            delete_chat_image(key)
+                        except Exception:
+                            logger.exception("Could not clean denied web chat image")
                     messages.error(request, tr(request, "support_chat_send_error"))
+                except Exception:
+                    for key in uploaded_keys:
+                        try:
+                            delete_chat_image(key)
+                        except Exception:
+                            logger.exception("Could not clean failed web chat image")
+                    logger.exception("Could not send a web chat image")
+                    messages.error(request, tr(request, "support_chat_images_storage_error"))
         elif action in {"edit", "delete"}:
             try:
                 message_id = int(request.POST.get("message_id"))
@@ -976,6 +1050,10 @@ def conversation_detail(request, conversation_public_id):
                 item.body = ""
                 item.deleted_at = timezone.now()
                 item.save(update_fields=["body", "deleted_at"])
+                schedule_chat_images_after_message_deleted(
+                    item,
+                    deleted_at=item.deleted_at,
+                )
             else:
                 body = (request.POST.get("body") or "").strip()
                 if not body or len(body) > 1500 or "\x00" in body:
@@ -993,7 +1071,7 @@ def conversation_detail(request, conversation_public_id):
             source_message = SupportMessage.objects.select_related(
                 "conversation__organization",
                 "sender",
-            ).filter(
+            ).prefetch_related("image_links__image").filter(
                 id=message_id,
                 conversation=conversation,
                 deleted_at__isnull=True,
@@ -1073,7 +1151,7 @@ def conversation_detail(request, conversation_public_id):
                     "reply_to__sender",
                     "forwarded_from",
                     "forwarded_from__sender",
-                ).order_by("created_at", "id")[:500]
+                ).prefetch_related("image_links__image").order_by("created_at", "id")[:500]
             ),
             "share_recipients": share_recipients,
             "share_message_id": share_message_id,
@@ -1082,6 +1160,24 @@ def conversation_detail(request, conversation_public_id):
             "report_reasons": SupportConversationReport.REASON_CHOICES,
         }
     )
+    for chat_message in snapshot["chat_messages"]:
+        chat_message.chat_images = []
+        for image_link in chat_message.image_links.all():
+            if image_link.image.purged_at is not None:
+                continue
+            try:
+                image_url = signed_chat_image_url(image_link.image.object_key)
+            except Exception:
+                logger.exception("Could not sign a private web chat image")
+                image_url = ""
+            if image_url:
+                chat_message.chat_images.append(
+                    {
+                        "url": image_url,
+                        "width": image_link.image.width,
+                        "height": image_link.image.height,
+                    }
+                )
     return render(request, "support/conversation_detail.html", snapshot)
 
 

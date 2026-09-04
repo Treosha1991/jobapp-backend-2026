@@ -728,6 +728,21 @@ class SupportMessageForwardSerializer(StrictInputSerializer):
     client_message_id = serializers.UUIDField(required=False, default=uuid.uuid4)
 
 
+class SupportMessageImageCreateSerializer(StrictInputSerializer):
+    original_language = serializers.ChoiceField(choices=("ru", "en", "pl", "uk"))
+    body = serializers.CharField(
+        max_length=1500,
+        required=False,
+        allow_blank=True,
+        default="",
+    )
+    reply_to_message_id = serializers.UUIDField(required=False, allow_null=True)
+    client_message_id = serializers.UUIDField(required=False, default=uuid.uuid4)
+
+    def validate_body(self, value):
+        return value.strip()
+
+
 class SupportContactMessageCreateSerializer(StrictInputSerializer):
     target_type = serializers.ChoiceField(choices=("worker", "staff"))
     target_id = serializers.UUIDField()

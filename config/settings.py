@@ -187,6 +187,33 @@ AVATAR_PUBLIC_BASE_URL = (
     or os.environ.get("R2_PUBLIC_BASE_URL", "").strip()
 )
 
+# Private Support chat images. This must be a separate, non-public bucket.
+# Credentials may reuse the R2 account credentials, but the bucket itself must
+# never be exposed through AVATAR_PUBLIC_BASE_URL/R2_PUBLIC_BASE_URL.
+CHAT_MEDIA_R2_BUCKET = os.environ.get("CHAT_MEDIA_R2_BUCKET", "").strip()
+CHAT_MEDIA_R2_ENDPOINT_URL = (
+    os.environ.get("CHAT_MEDIA_R2_ENDPOINT_URL", "").strip() or R2_ENDPOINT_URL
+)
+CHAT_MEDIA_R2_REGION = (
+    os.environ.get("CHAT_MEDIA_R2_REGION", "").strip() or R2_REGION
+)
+CHAT_MEDIA_R2_ACCESS_KEY_ID = (
+    os.environ.get("CHAT_MEDIA_R2_ACCESS_KEY_ID", "").strip() or R2_ACCESS_KEY_ID
+)
+CHAT_MEDIA_R2_SECRET_ACCESS_KEY = (
+    os.environ.get("CHAT_MEDIA_R2_SECRET_ACCESS_KEY", "").strip()
+    or R2_SECRET_ACCESS_KEY
+)
+CHAT_MEDIA_MAX_BYTES = int(
+    os.environ.get("CHAT_MEDIA_MAX_BYTES", str(10 * 1024 * 1024))
+)
+CHAT_MEDIA_MAX_IMAGES_PER_MESSAGE = int(
+    os.environ.get("CHAT_MEDIA_MAX_IMAGES_PER_MESSAGE", "4")
+)
+CHAT_MEDIA_SIGNED_URL_TTL_SECONDS = int(
+    os.environ.get("CHAT_MEDIA_SIGNED_URL_TTL_SECONDS", "900")
+)
+
 # Push notifications
 # PUSH_PROVIDER:
 # - "" / missing: disabled

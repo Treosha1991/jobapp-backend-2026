@@ -466,7 +466,7 @@ class TimekeepingTests(TestCase):
         )
         self.assertEqual(blocked.status_code, 400, blocked.data)
 
-    def test_multi_shift_day_waits_for_latest_end_and_links_entry_to_latest_shift(self):
+    def test_multi_shift_day_allows_entry_after_latest_shift_starts_and_links_it(self):
         now = timezone.now().replace(second=0, microsecond=0)
         work_date = timezone.localdate()
         early = create_scheduled_shift(
@@ -540,7 +540,7 @@ class TimekeepingTests(TestCase):
         )
 
         day = self.worker_client.get(day_url)
-        blocked = self.worker_client.post(
+        submitted = self.worker_client.post(
             submit_url,
             {
                 "work_date": work_date.isoformat(),
@@ -553,29 +553,13 @@ class TimekeepingTests(TestCase):
 
         self.assertEqual(day.status_code, 200, day.data)
         self.assertEqual(day.data["scheduled_shift"]["id"], str(late.public_id))
-        self.assertEqual(day.data["time_entry_access"]["code"], "shift_not_finished")
-        self.assertEqual(day.data["time_entry_access"]["available_at"], late.ends_at)
-        self.assertEqual(blocked.status_code, 400, blocked.data)
-        self.assertEqual(blocked.data["work_date"], "shift_must_finish_before_time_entry")
-
-        late.ends_at = now - timedelta(minutes=5)
-        late.save(update_fields=("ends_at", "updated_at"))
-        submitted = self.worker_client.post(
-            submit_url,
-            {
-                "work_date": work_date.isoformat(),
-                "started_at": self._iso(early.starts_at),
-                "ended_at": self._iso(early.ends_at),
-                "break_minutes": 0,
-            },
-            format="json",
-        )
-
+        self.assertEqual(day.data["time_entry_access"]["code"], "ready")
+        self.assertEqual(day.data["time_entry_access"]["available_at"], late.starts_at)
         self.assertEqual(submitted.status_code, 201, submitted.data)
         entry = WorkTimeEntry.objects.get(public_id=submitted.data["time_entry"]["id"])
         self.assertEqual(entry.scheduled_shift, late)
 
-    def test_worker_cannot_create_time_before_shift_end_or_without_shift(self):
+    def test_worker_can_create_time_after_shift_start_but_not_with_future_end(self):
         now = timezone.now().replace(second=0, microsecond=0)
         starts_at = now - timedelta(minutes=30)
         ends_at = now + timedelta(hours=7, minutes=30)
@@ -596,6 +580,22 @@ class TimekeepingTests(TestCase):
             "time-entries/mine/submit/"
         )
 
+        future_end = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(starts_at),
+                "ended_at": self._iso(now + timedelta(minutes=2)),
+                "break_minutes": 0,
+            },
+            format="json",
+        )
+        self.assertEqual(future_end.status_code, 400, future_end.data)
+        self.assertEqual(
+            future_end.data["ended_at"],
+            "actual_end_cannot_be_in_future",
+        )
+
         in_progress = self.worker_client.post(
             submit_url,
             {
@@ -606,10 +606,43 @@ class TimekeepingTests(TestCase):
             },
             format="json",
         )
-        self.assertEqual(in_progress.status_code, 400, in_progress.data)
+        self.assertEqual(in_progress.status_code, 201, in_progress.data)
+
+    def test_worker_cannot_create_time_before_shift_start_or_without_shift(self):
+        now = timezone.now().replace(second=0, microsecond=0)
+        starts_at = now + timedelta(minutes=30)
+        ends_at = now + timedelta(hours=8, minutes=30)
+        work_date = timezone.localtime(starts_at).date()
+        shift = create_scheduled_shift(
+            actor=self.accountant,
+            organization=self.organization,
+            connection=self.connection,
+            work_date=work_date,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            break_minutes=30,
+            worker_label="Future shift",
+        )
+        publish_scheduled_shift(actor=self.accountant, shift=shift)
+        submit_url = (
+            f"/api/v2/support/connections/{self.connection.public_id}/"
+            "time-entries/mine/submit/"
+        )
+
+        before_start = self.worker_client.post(
+            submit_url,
+            {
+                "work_date": work_date.isoformat(),
+                "started_at": self._iso(now - timedelta(minutes=30)),
+                "ended_at": self._iso(now),
+                "break_minutes": 0,
+            },
+            format="json",
+        )
+        self.assertEqual(before_start.status_code, 400, before_start.data)
         self.assertEqual(
-            in_progress.data["work_date"],
-            "shift_must_finish_before_time_entry",
+            before_start.data["work_date"],
+            "shift_must_start_before_time_entry",
         )
 
         date_without_shift = work_date - timedelta(days=1)
@@ -617,7 +650,7 @@ class TimekeepingTests(TestCase):
             submit_url,
             {
                 "work_date": date_without_shift.isoformat(),
-                "started_at": self._iso(starts_at - timedelta(days=1)),
+                "started_at": self._iso(now - timedelta(days=1, hours=1)),
                 "ended_at": self._iso(now - timedelta(days=1)),
                 "break_minutes": 0,
             },

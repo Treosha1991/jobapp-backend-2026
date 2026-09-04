@@ -639,7 +639,7 @@ class WorkerWorkspaceAPITests(TestCase):
                 {item["connection_id"] for item in next_members},
             )
 
-    def test_week_time_entry_access_waits_for_latest_shift_end_on_multi_shift_day(self):
+    def test_week_time_entry_access_opens_after_latest_shift_starts(self):
         self.time_entry.delete()
         self.today_shift.delete()
         now = timezone.now().replace(second=0, microsecond=0)
@@ -696,8 +696,8 @@ class WorkerWorkspaceAPITests(TestCase):
         today = next(item for item in response.data["days"] if item["is_today"])
         self.assertEqual(len(today["shifts"]), 2)
         self.assertEqual(today["shift"]["id"], str(early.public_id))
-        self.assertEqual(today["time_entry_access"]["code"], "shift_not_finished")
-        self.assertEqual(today["time_entry_access"]["available_at"], late.ends_at)
+        self.assertEqual(today["time_entry_access"]["code"], "ready")
+        self.assertEqual(today["time_entry_access"]["available_at"], late.starts_at)
 
     def test_shift_peer_chat_is_idempotent_and_rejects_non_members(self):
         url = (
@@ -832,8 +832,9 @@ class WorkerWorkspaceAPITests(TestCase):
 
     def test_ended_shift_without_facts_stays_in_attention_and_event_center(self):
         missing_date = self.today - timedelta(days=1)
+        missing_crew = self._crew("Missing facts crew", self.current_project)
         missing_shift = self._shift(
-            crew=self.current_crew,
+            crew=missing_crew,
             work_date=missing_date,
             driver=self.driver_connection,
             passenger=self.connection,
