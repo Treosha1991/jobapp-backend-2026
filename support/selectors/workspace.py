@@ -25,6 +25,7 @@ from support.models import (
     HousingSite,
     MembershipInvitation,
     OrganizationMembership,
+    PermissionGrant,
     ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
@@ -3179,7 +3180,16 @@ def team_management_snapshot(*, user, organization_public_id=None, membership_pu
             state=OrganizationMembership.STATE_ACTIVE,
         )
         .select_related("user")
-        .prefetch_related("worker_access_scopes")
+        .prefetch_related(
+            "worker_access_scopes",
+            Prefetch(
+                "permission_grants",
+                queryset=PermissionGrant.objects.filter(
+                    is_active=True,
+                    scope_kind=PermissionGrant.SCOPE_ORGANIZATION,
+                ).order_by("permission_code"),
+            ),
+        )
         .order_by("is_owner", "user__first_name", "user__last_name", "user__username")
     )
     selected_membership = None
@@ -3255,12 +3265,15 @@ def team_management_snapshot(*, user, organization_public_id=None, membership_pu
             permission_code=MEMBER_DELEGATE_PERMISSIONS,
         )
     )
-    invitation_permission_groups = []
-    if can_invite_staff:
+    permission_group_codes = {
+        group_id: set(group_codes)
+        for group_id, _label_key, group_codes in TEAM_PERMISSION_GROUPS
+    }
+    delegable_permission_groups = []
+    if can_delegate_permissions:
         for group_id, label_key, group_codes in TEAM_PERMISSION_GROUPS:
             if viewer_membership.is_owner or (
-                can_delegate_permissions
-                and all(
+                all(
                     may_delegate_permission(
                         user=user,
                         organization=organization,
@@ -3269,12 +3282,51 @@ def team_management_snapshot(*, user, organization_public_id=None, membership_pu
                     for code in group_codes
                 )
             ):
-                invitation_permission_groups.append(
+                delegable_permission_groups.append(
                     {
                         "id": group_id,
                         "label_key": label_key,
                     }
                 )
+    invitation_permission_groups = (
+        delegable_permission_groups if can_invite_staff else []
+    )
+
+    selected_permission_group_ids = set()
+    selected_active_permission_codes = set()
+    if selected_membership is not None and not selected_membership.is_owner:
+        selected_active_permission_codes = {
+            grant.permission_code for grant in selected_membership.permission_grants.all()
+        }
+        selected_permission_group_ids = {
+            group_id
+            for group_id, group_codes in permission_group_codes.items()
+            if group_codes.issubset(selected_active_permission_codes)
+        }
+    can_edit_selected_permissions = bool(
+        selected_membership is not None
+        and not selected_membership.is_owner
+        and can_delegate_permissions
+        and (
+            viewer_membership.is_owner
+            or all(
+                may_delegate_permission(
+                    user=user,
+                    organization=organization,
+                    permission_code=permission_code,
+                )
+                for permission_code in selected_active_permission_codes
+            )
+        )
+    )
+    selected_permission_groups = [
+        {
+            "id": item["id"],
+            "label_key": item["label_key"],
+            "selected": item["id"] in selected_permission_group_ids,
+        }
+        for item in delegable_permission_groups
+    ]
 
     pending_invitations = list(
         MembershipInvitation.objects.filter(
@@ -3284,10 +3336,7 @@ def team_management_snapshot(*, user, organization_public_id=None, membership_pu
         .prefetch_related("permission_grants")
         .order_by("-created_at", "-id")
     )
-    group_codes_by_id = {
-        group_id: set(group_codes)
-        for group_id, _label_key, group_codes in TEAM_PERMISSION_GROUPS
-    }
+    group_codes_by_id = permission_group_codes
     for invitation in pending_invitations:
         invitation_codes = {
             grant.permission_code for grant in invitation.permission_grants.all()
@@ -3318,6 +3367,8 @@ def team_management_snapshot(*, user, organization_public_id=None, membership_pu
         ],
         "can_invite_staff": can_invite_staff,
         "invitation_permission_groups": invitation_permission_groups,
+        "can_edit_selected_permissions": can_edit_selected_permissions,
+        "selected_permission_groups": selected_permission_groups,
         "pending_invitations": pending_invitations,
     }
 

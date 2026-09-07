@@ -176,6 +176,7 @@ from .services.registries import (
 from .services.organizations import (
     create_membership_invitation,
     grant_worker_access_scope,
+    replace_membership_permissions,
     revoke_worker_access_scope,
 )
 from .services.project_crews import (
@@ -3636,6 +3637,26 @@ def _team_operation(request, *, snapshot):
                 if created
                 else "support_team_scope_already_granted"
             )
+        elif action == "member_permissions_replace":
+            selected_groups = request.POST.getlist("permission_groups")
+            allowed_group_ids = {
+                item["id"] for item in snapshot["selected_permission_groups"]
+            }
+            if (
+                not snapshot["can_edit_selected_permissions"]
+                or any(group_id not in allowed_group_ids for group_id in selected_groups)
+            ):
+                raise ValueError("support_member_permissions_not_allowed")
+            replace_membership_permissions(
+                actor=request.user,
+                organization=organization,
+                membership=membership,
+                permission_codes=permission_codes_for_group_ids(selected_groups),
+                managed_permission_codes=permission_codes_for_group_ids(
+                    allowed_group_ids
+                ),
+            )
+            message_key = "support_team_permissions_updated"
         elif action == "scope_revoke":
             scope = get_object_or_404(
                 WorkerAccessScope.objects.select_related("membership"),
@@ -3675,6 +3696,8 @@ def team_management(request):
         for group_id, label_key, _group_codes in TEAM_PERMISSION_GROUPS
     }
     for item in snapshot["invitation_permission_groups"]:
+        item["label"] = permission_group_labels[item["id"]]
+    for item in snapshot["selected_permission_groups"]:
         item["label"] = permission_group_labels[item["id"]]
     for invitation in snapshot["pending_invitations"]:
         invitation.permission_group_labels = [

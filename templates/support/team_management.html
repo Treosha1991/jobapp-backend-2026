@@ -130,6 +130,21 @@
           {% if selected_has_full_access %}
             <div class="team-full-access">{{ employer_t.support_team_full_access_text }}</div>
           {% else %}
+            {% if can_edit_selected_permissions %}
+              <form class="team-form" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="member_permissions_replace">
+                <input type="hidden" name="membership_id" value="{{ selected_membership.public_id }}">
+                <h3>{{ employer_t.support_team_member_permissions_title }}</h3>
+                <p>{{ employer_t.support_team_member_permissions_text }}</p>
+                <div class="team-permission-grid">
+                  {% for item in selected_permission_groups %}
+                    <label class="team-permission-option"><input type="checkbox" name="permission_groups" value="{{ item.id }}"{% if item.selected %} checked{% endif %}><span>{{ item.label }}</span></label>
+                  {% endfor %}
+                </div>
+                <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_team_member_permissions_save }}</button></div>
+              </form>
+            {% endif %}
             <h3>{{ employer_t.support_team_scoped_workers }}</h3>
             <p class="jh-muted">{{ employer_t.support_team_scoped_workers_text }}</p>
             <div class="team-scope-list">

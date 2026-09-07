@@ -265,6 +265,124 @@ def grant_permission(*, actor, organization, membership, permission_code):
     return grant, created
 
 
+def replace_membership_permissions(
+    *,
+    actor,
+    organization,
+    membership,
+    permission_codes,
+    managed_permission_codes=None,
+):
+    """Atomically replace the managed part of an active staff member's rights.
+
+    Permission rows are revoked rather than deleted so the audit trail remains
+    useful when an owner corrects a coordinator's access later.
+    """
+
+    normalized_codes = sorted(
+        {validate_permission_code(permission_code) for permission_code in permission_codes}
+    )
+    normalized_managed_codes = (
+        None
+        if managed_permission_codes is None
+        else {
+            validate_permission_code(permission_code)
+            for permission_code in managed_permission_codes
+        }
+    )
+    if normalized_managed_codes is not None and not set(normalized_codes).issubset(
+        normalized_managed_codes
+    ):
+        raise ValidationError({"permission_codes": "permission_not_managed_by_this_form"})
+    actor_membership = require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=MEMBER_DELEGATE_PERMISSIONS,
+    )
+    with transaction.atomic():
+        locked_membership = (
+            OrganizationMembership.objects.select_for_update()
+            .select_related("organization")
+            .filter(pk=membership.pk, organization=organization)
+            .first()
+        )
+        if locked_membership is None or not locked_membership.is_active:
+            raise ValidationError({"membership": "membership_not_active_in_organization"})
+        if locked_membership.is_owner:
+            raise ValidationError({"membership": "owner_permissions_cannot_be_changed"})
+
+        active_grants = list(
+            PermissionGrant.objects.select_for_update().filter(
+                membership=locked_membership,
+                scope_kind=PermissionGrant.SCOPE_ORGANIZATION,
+                is_active=True,
+            )
+        )
+        existing_codes = {grant.permission_code for grant in active_grants}
+        requested_codes = set(normalized_codes)
+        managed_codes = (
+            existing_codes | requested_codes
+            if normalized_managed_codes is None
+            else normalized_managed_codes
+        )
+        existing_managed_codes = existing_codes & managed_codes
+        changed_codes = existing_managed_codes.symmetric_difference(requested_codes)
+        if not actor_membership.is_owner:
+            denied_codes = [
+                code
+                for code in changed_codes
+                if not may_delegate_permission(
+                    user=actor,
+                    organization=organization,
+                    permission_code=code,
+                )
+            ]
+            if denied_codes:
+                raise PermissionDenied("support_permission_delegation_denied")
+
+        revoked_codes = sorted(existing_managed_codes - requested_codes)
+        added_codes = sorted(requested_codes - existing_codes)
+        if revoked_codes:
+            revoked_at = timezone.now()
+            PermissionGrant.objects.filter(
+                pk__in=[
+                    grant.pk
+                    for grant in active_grants
+                    if grant.permission_code in revoked_codes
+                ]
+            ).update(
+                is_active=False,
+                revoked_by=actor,
+                revoked_at=revoked_at,
+                updated_at=revoked_at,
+            )
+        if added_codes:
+            PermissionGrant.objects.bulk_create(
+                [
+                    PermissionGrant(
+                        membership=locked_membership,
+                        permission_code=permission_code,
+                        scope_kind=PermissionGrant.SCOPE_ORGANIZATION,
+                        granted_by=actor,
+                    )
+                    for permission_code in added_codes
+                ]
+            )
+        if changed_codes:
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="permission.replaced",
+                target=locked_membership,
+                details={
+                    "membership": str(locked_membership.public_id),
+                    "added_permission_codes": added_codes,
+                    "revoked_permission_codes": revoked_codes,
+                },
+            )
+    return {"added_codes": added_codes, "revoked_codes": revoked_codes}
+
+
 def grant_delegable_permission(*, actor, organization, membership, permission_code):
     normalized_code = validate_permission_code(permission_code)
     actor_membership = active_membership_for(user=actor, organization=organization)

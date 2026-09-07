@@ -17,6 +17,7 @@ from support.models import (
     DriverVehicleAssignment,
     NotificationOutbox,
     OrganizationMembership,
+    PermissionGrant,
     ProjectCrew,
     ProjectCrewResourceAssignment,
     ProjectScheduleTemplate,
@@ -167,6 +168,53 @@ class SupportWorkspaceWebTests(TestCase):
         pending_page = self.client.get(team_url)
         self.assertContains(pending_page, invited_staff.email)
         self.assertContains(pending_page, "Waiting for confirmation")
+
+    def test_owner_can_replace_an_active_staff_members_permissions_from_team_screen(self):
+        membership = OrganizationMembership.objects.get(
+            organization=self.organization,
+            user=self.limited_member,
+        )
+        PermissionGrant.objects.create(
+            membership=membership,
+            permission_code="chat.manage",
+            granted_by=self.owner,
+        )
+        team_url = (
+            f"/employer/support/team/?organization={self.organization.public_id}"
+            f"&member={membership.public_id}"
+        )
+        self.client.force_login(self.owner)
+
+        page = self.client.get(team_url)
+
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Work permissions")
+        self.assertContains(page, "Assigned work chats")
+
+        response = self.client.post(
+            team_url,
+            {
+                "action": "member_permissions_replace",
+                "membership_id": membership.public_id,
+                "permission_groups": ["housing"],
+            },
+        )
+
+        self.assertRedirects(response, f"/employer/support/team/?organization={self.organization.public_id}&member={membership.public_id}")
+        self.assertFalse(
+            PermissionGrant.objects.filter(
+                membership=membership,
+                permission_code="chat.manage",
+                is_active=True,
+            ).exists()
+        )
+        self.assertTrue(
+            PermissionGrant.objects.filter(
+                membership=membership,
+                permission_code="housing.manage",
+                is_active=True,
+            ).exists()
+        )
 
     def test_owner_sees_only_approved_workspace_information_and_navigation_link(self):
         self.client.force_login(self.owner)

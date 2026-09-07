@@ -2,7 +2,7 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.test import APIClient
 
 from support.models import (
@@ -15,10 +15,12 @@ from support.permission_codes import (
     CHAT_MANAGE,
     HOUSING_MANAGE,
     MEMBER_DELEGATE_PERMISSIONS,
+    TASK_MANAGE,
 )
 from support.services.organizations import (
     create_organization,
     grant_permission,
+    replace_membership_permissions,
 )
 
 
@@ -145,6 +147,113 @@ class SupportOrganizationAccessTests(TestCase):
                 organization=self.organization,
                 membership=target_membership,
                 permission_code=HOUSING_MANAGE,
+            )
+
+    def test_owner_can_replace_active_staff_permissions_without_losing_history(self):
+        membership = OrganizationMembership.objects.create(
+            organization=self.organization,
+            user=self.staff_member,
+            display_role="Coordinator",
+            accepted_at=timezone.now(),
+        )
+        original_grant = PermissionGrant.objects.create(
+            membership=membership,
+            permission_code=CHAT_MANAGE,
+            granted_by=self.owner,
+        )
+        PermissionGrant.objects.create(
+            membership=membership,
+            permission_code=TASK_MANAGE,
+            granted_by=self.owner,
+        )
+
+        result = replace_membership_permissions(
+            actor=self.owner,
+            organization=self.organization,
+            membership=membership,
+            permission_codes=[HOUSING_MANAGE],
+            managed_permission_codes=[CHAT_MANAGE, HOUSING_MANAGE],
+        )
+
+        self.assertEqual(result["added_codes"], [HOUSING_MANAGE])
+        self.assertEqual(result["revoked_codes"], [CHAT_MANAGE])
+        original_grant.refresh_from_db()
+        self.assertFalse(original_grant.is_active)
+        self.assertEqual(original_grant.revoked_by, self.owner)
+        self.assertTrue(
+            PermissionGrant.objects.filter(
+                membership=membership,
+                permission_code=HOUSING_MANAGE,
+                is_active=True,
+            ).exists()
+        )
+        self.assertTrue(
+            PermissionGrant.objects.filter(
+                membership=membership,
+                permission_code=TASK_MANAGE,
+                is_active=True,
+            ).exists()
+        )
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                organization=self.organization,
+                action="permission.replaced",
+                actor=self.owner,
+            ).exists()
+        )
+
+    def test_deputy_cannot_replace_a_permission_outside_its_delegable_set(self):
+        deputy_membership = OrganizationMembership.objects.create(
+            organization=self.organization,
+            user=self.deputy,
+            display_role="Deputy",
+            accepted_at=timezone.now(),
+        )
+        target_membership = OrganizationMembership.objects.create(
+            organization=self.organization,
+            user=self.staff_member,
+            display_role="Coordinator",
+            accepted_at=timezone.now(),
+        )
+        PermissionGrant.objects.create(
+            membership=deputy_membership,
+            permission_code=MEMBER_DELEGATE_PERMISSIONS,
+            granted_by=self.owner,
+        )
+        DelegablePermissionGrant.objects.create(
+            membership=deputy_membership,
+            permission_code=CHAT_MANAGE,
+            granted_by=self.owner,
+        )
+        PermissionGrant.objects.create(
+            membership=target_membership,
+            permission_code=CHAT_MANAGE,
+            granted_by=self.owner,
+        )
+
+        with self.assertRaises(PermissionDenied):
+            replace_membership_permissions(
+                actor=self.deputy,
+                organization=self.organization,
+                membership=target_membership,
+                permission_codes=[HOUSING_MANAGE],
+            )
+
+        self.assertTrue(
+            PermissionGrant.objects.filter(
+                membership=target_membership,
+                permission_code=CHAT_MANAGE,
+                is_active=True,
+            ).exists()
+        )
+
+    def test_owner_permission_set_cannot_be_replaced(self):
+        with self.assertRaises(ValidationError):
+            replace_membership_permissions(
+                actor=self.owner,
+                organization=self.organization,
+                membership=self.owner_membership,
+                permission_codes=[CHAT_MANAGE],
             )
 
     def test_only_jobhub_operator_can_create_organization_over_api(self):
