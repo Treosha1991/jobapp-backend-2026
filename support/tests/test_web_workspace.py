@@ -478,6 +478,24 @@ class SupportWorkspaceWebTests(TestCase):
             ).exists()
         )
 
+        manager_direct_grant = self.client.post(
+            extensions_url,
+            {
+                "action": "support_extension_direct_grant",
+                "connection_id": self.worker_connection.public_id,
+                "duration_days": "7",
+                "reason": SupportAccessExtensionRequest.REASON_CONNECTION,
+            },
+        )
+        self.assertRedirects(manager_direct_grant, extensions_url)
+        self.assertEqual(
+            SupportAccessGrant.objects.filter(
+                user=self.worker_connection.candidate,
+                organization=self.organization,
+            ).count(),
+            1,
+        )
+
         manager_decision = self.client.post(
             extensions_url,
             {
@@ -504,6 +522,35 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertEqual(owner_page.status_code, 200)
         self.assertContains(owner_page, "All company requests")
         self.assertNotContains(owner_page, "Request an extension")
+        self.assertContains(owner_page, "Extend Support now")
+
+        direct_grant_response = self.client.post(
+            extensions_url,
+            {
+                "action": "support_extension_direct_grant",
+                "connection_id": out_of_scope_connection.public_id,
+                "duration_days": "7",
+                "reason": SupportAccessExtensionRequest.REASON_CONNECTION,
+            },
+        )
+        self.assertRedirects(direct_grant_response, extensions_url)
+        direct_grant = SupportAccessGrant.objects.get(
+            user=out_of_scope_connection.candidate,
+            organization=self.organization,
+            granted_by=self.owner,
+        )
+        self.assertEqual(
+            direct_grant.ends_at - direct_grant.starts_at,
+            timedelta(days=7),
+        )
+        self.assertTrue(
+            self.organization.audit_events.filter(
+                action="support_extension.granted",
+                actor=self.owner,
+                target_type="SupportAccessGrant",
+                target_public_id=direct_grant.public_id,
+            ).exists()
+        )
 
         approved = self.client.post(
             extensions_url,

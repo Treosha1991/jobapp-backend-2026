@@ -38,6 +38,25 @@
     <p class="jh-subtitle">{{ employer_t.support_extensions_subtitle }}</p>
     <div class="extensions-note">{{ employer_t.support_extensions_notice }}</div>
 
+    {% if may_direct_grant %}
+      <form class="extensions-form" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="support_extension_direct_grant">
+        <h2>{{ employer_t.support_extensions_direct_title }}</h2>
+        <p>{{ employer_t.support_extensions_direct_text }}</p>
+        {% if request_connections %}
+          <div class="extensions-grid">
+            <label class="jh-field jh-required"><span>{{ employer_t.support_extensions_worker }}</span><select class="jh-input" name="connection_id" required><option value="">{{ employer_t.support_extensions_worker_placeholder }}</option>{% for connection in request_connections %}<option value="{{ connection.id }}">{{ connection.label }}</option>{% endfor %}</select></label>
+            <label class="jh-field jh-required"><span>{{ employer_t.support_extensions_duration_label }}</span><select class="jh-input" name="duration_days" required>{% for duration in duration_choices %}<option value="{{ duration.value }}">{{ duration.label }}</option>{% endfor %}</select></label>
+            <label class="jh-field jh-required"><span>{{ employer_t.support_extensions_reason_label }}</span><select class="jh-input" name="reason" required>{% for reason in reason_choices %}<option value="{{ reason.value }}">{{ reason.label }}</option>{% endfor %}</select></label>
+          </div>
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_extensions_direct_submit }}</button></div>
+        {% else %}
+          <div class="extension-empty">{{ employer_t.support_extensions_no_workers }}</div>
+        {% endif %}
+      </form>
+    {% endif %}
+
     {% if may_request %}
       <form class="extensions-form" method="post">
         {% csrf_token %}

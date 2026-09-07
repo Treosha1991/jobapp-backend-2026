@@ -162,6 +162,7 @@ from .services.pipeline import (
 )
 from .services.entitlements import (
     decide_support_access_extension,
+    grant_support_access_extension_as_owner,
     request_support_access_extension,
     support_access_snapshot_for,
 )
@@ -3723,21 +3724,31 @@ def _support_extension_operation(request, *, snapshot):
     organization = snapshot["organization"]
     action = (request.POST.get("action") or "").strip()
     try:
-        if action == "support_extension_request":
+        if action in {"support_extension_request", "support_extension_direct_grant"}:
             connection = get_object_or_404(
                 SupportConnection.objects.select_related("candidate", "organization"),
                 organization=organization,
                 is_archived=False,
                 public_id=request.POST.get("connection_id"),
             )
-            request_support_access_extension(
-                actor=request.user,
-                organization=organization,
-                connection=connection,
-                duration_days=request.POST.get("duration_days"),
-                reason=request.POST.get("reason"),
-            )
-            message_key = "support_extensions_requested"
+            if action == "support_extension_direct_grant":
+                grant_support_access_extension_as_owner(
+                    actor=request.user,
+                    organization=organization,
+                    connection=connection,
+                    duration_days=request.POST.get("duration_days"),
+                    reason=request.POST.get("reason"),
+                )
+                message_key = "support_extensions_direct_granted"
+            else:
+                request_support_access_extension(
+                    actor=request.user,
+                    organization=organization,
+                    connection=connection,
+                    duration_days=request.POST.get("duration_days"),
+                    reason=request.POST.get("reason"),
+                )
+                message_key = "support_extensions_requested"
         elif action in {"support_extension_approve", "support_extension_decline"}:
             extension_request = get_object_or_404(
                 SupportAccessExtensionRequest,

@@ -35,6 +35,87 @@ def _valid_extension_reason(value):
     return reason
 
 
+def _require_extendable_connection(*, actor, organization, connection):
+    if connection.organization_id != organization.id or connection.is_archived:
+        raise ValidationError({"connection": "support_extension_connection_not_available"})
+    if connection.stage == SupportConnection.STAGE_CLOSED:
+        raise ValidationError({"connection": "support_extension_connection_not_available"})
+    require_worker_connection_access(
+        user=actor,
+        organization=organization,
+        connection=connection,
+    )
+    return connection
+
+
+def _create_extension_grant(*, actor, organization, user, duration_days, reason, now):
+    """Add a consecutive access period without shortening active access."""
+
+    active_grants = list(
+        SupportAccessGrant.objects.select_for_update()
+        .filter(
+            user=user,
+            status=SupportAccessGrant.STATUS_ACTIVE,
+            ends_at__gt=now,
+        )
+        .only("ends_at")
+    )
+    starts_at = max([now, *(grant.ends_at for grant in active_grants)])
+    return SupportAccessGrant.objects.create(
+        user=user,
+        organization=organization,
+        granted_by=actor,
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(days=duration_days),
+        reason=reason,
+    )
+
+
+def grant_support_access_extension_as_owner(
+    *,
+    actor,
+    organization,
+    connection,
+    duration_days,
+    reason,
+):
+    """Let the organization owner extend a worker's Support access directly."""
+
+    owner_membership = active_membership_for(user=actor, organization=organization)
+    if owner_membership is None or not owner_membership.is_owner:
+        raise PermissionDenied("support_extension_owner_required")
+    _require_extendable_connection(
+        actor=actor,
+        organization=organization,
+        connection=connection,
+    )
+    normalized_duration_days = _valid_extension_duration(duration_days)
+    normalized_reason = _valid_extension_reason(reason)
+    with transaction.atomic():
+        now = timezone.now()
+        grant = _create_extension_grant(
+            actor=actor,
+            organization=organization,
+            user=connection.candidate,
+            duration_days=normalized_duration_days,
+            reason=normalized_reason,
+            now=now,
+        )
+        record_audit_event(
+            organization=organization,
+            actor=actor,
+            action="support_extension.granted",
+            target=grant,
+            details={
+                "connection": str(connection.public_id),
+                "duration_days": normalized_duration_days,
+                "reason": normalized_reason,
+                "owner_direct": True,
+            },
+        )
+    return grant
+
+
 def request_support_access_extension(
     *,
     actor,
@@ -56,12 +137,8 @@ def request_support_access_extension(
     )
     if membership.is_owner:
         raise PermissionDenied("support_extension_owner_decides")
-    if connection.organization_id != organization.id or connection.is_archived:
-        raise ValidationError({"connection": "support_extension_connection_not_available"})
-    if connection.stage == SupportConnection.STAGE_CLOSED:
-        raise ValidationError({"connection": "support_extension_connection_not_available"})
-    require_worker_connection_access(
-        user=actor,
+    _require_extendable_connection(
+        actor=actor,
         organization=organization,
         connection=connection,
     )
@@ -138,23 +215,13 @@ def decide_support_access_extension(*, actor, extension_request, decision, decis
         locked_request.decided_at = now
         locked_request.decision_note = note
         if normalized_decision == "approve":
-            active_grants = list(
-                SupportAccessGrant.objects.select_for_update()
-                .filter(
-                    user=locked_request.user,
-                    status=SupportAccessGrant.STATUS_ACTIVE,
-                    ends_at__gt=now,
-                )
-                .only("ends_at")
-            )
-            starts_at = max([now, *(grant.ends_at for grant in active_grants)])
-            grant = SupportAccessGrant.objects.create(
-                user=locked_request.user,
+            grant = _create_extension_grant(
+                actor=actor,
                 organization=locked_request.organization,
-                granted_by=actor,
-                starts_at=starts_at,
-                ends_at=starts_at + timedelta(days=locked_request.duration_days),
+                user=locked_request.user,
+                duration_days=locked_request.duration_days,
                 reason=locked_request.reason,
+                now=now,
             )
             locked_request.status = SupportAccessExtensionRequest.STATUS_APPROVED
             audit_action = "support_extension.approved"

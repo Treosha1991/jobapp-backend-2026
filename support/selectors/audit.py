@@ -17,6 +17,7 @@ from support.models import (
     ProjectCrewShiftMember,
     SupportApplication,
     SupportAccessExtensionRequest,
+    SupportAccessGrant,
     SupportConnection,
     SupportVacancy,
     TaskAssignment,
@@ -185,6 +186,13 @@ def _target_labels(events):
             "user__last_name",
             "user__username",
         ),
+        "SupportAccessGrant": SupportAccessGrant.objects.select_related("user").only(
+            "public_id",
+            "user_id",
+            "user__first_name",
+            "user__last_name",
+            "user__username",
+        ),
         "SupportConnection": SupportConnection.objects.select_related("candidate").only(
             "public_id", "candidate_id", "candidate__first_name", "candidate__last_name", "candidate__username"
         ),
@@ -266,6 +274,8 @@ def _target_labels(events):
         elif event.target_type == "ProjectCrewShiftMember":
             label = f"{_display_name(item.connection.candidate)} · {item.shift.crew.project.internal_name}"
         elif event.target_type == "SupportAccessExtensionRequest":
+            label = _display_name(item.user)
+        elif event.target_type == "SupportAccessGrant":
             label = _display_name(item.user)
         elif event.target_type in {"SupportApplication", "SupportConnection", "WorkerAccessScope", "WorkerRequest", "TaskAssignment", "WorkTimeEntry", "DocumentRequestPackage"}:
             label = _display_name(item.connection.candidate) if hasattr(item, "connection") else _display_name(item.candidate)

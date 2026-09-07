@@ -13,8 +13,8 @@ def support_extension_workspace_snapshot(*, user, organization_public_id=None):
     """Return only the request actions and records this member may see.
 
     A manager can request an extension only for workers in their assigned
-    worker scope. The owner sees every request in the organization and is the
-    only person who can decide it.
+    worker scope. The owner can extend a worker directly, sees every request
+    in the organization, and is the only person who can decide a request.
     """
 
     memberships, membership = _select_membership(
@@ -31,11 +31,12 @@ def support_extension_workspace_snapshot(*, user, organization_public_id=None):
         )
     )
     may_decide = membership.is_owner
+    may_direct_grant = membership.is_owner
     if not may_request and not may_decide:
         raise Http404("support_extension_not_found")
 
     request_connections = []
-    if may_request:
+    if may_request or may_direct_grant:
         connections = (
             worker_connection_queryset_for(
                 user=user,
@@ -86,6 +87,7 @@ def support_extension_workspace_snapshot(*, user, organization_public_id=None):
         "memberships": memberships,
         "may_request": may_request,
         "may_decide": may_decide,
+        "may_direct_grant": may_direct_grant,
         "request_connections": request_connections,
         "extension_requests": extension_requests,
         "duration_choices": SupportAccessExtensionRequest.DURATION_CHOICES,
