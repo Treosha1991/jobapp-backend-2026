@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from support.models import (
+    Announcement,
     HousingAssignment,
     HousingPlace,
     HousingRoom,
@@ -20,6 +21,8 @@ from support.models import (
     PermissionGrant,
     ProjectCrew,
     ProjectCrewResourceAssignment,
+    ProjectCrewShift,
+    ProjectCrewShiftMember,
     ProjectScheduleTemplate,
     RouteStop,
     ScheduledWorkShift,
@@ -215,6 +218,122 @@ class SupportWorkspaceWebTests(TestCase):
                 is_active=True,
             ).exists()
         )
+
+    def test_owner_can_create_publish_and_archive_an_announcement_for_a_group_or_worker(self):
+        housing_site = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="House North",
+            country_code="PL",
+            city="Warsaw",
+            street="North Street",
+            building="7",
+            created_by=self.owner,
+        )
+        room = HousingRoom.objects.create(site=housing_site, label="2A", capacity=2)
+        place = HousingPlace.objects.create(room=room, label="1")
+        HousingAssignment.objects.create(
+            organization=self.organization,
+            connection=self.worker_connection,
+            place=place,
+            check_in_at=timezone.now() - timedelta(hours=1),
+            state=HousingAssignment.STATE_PUBLISHED,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        worksite = Worksite.objects.create(
+            organization=self.organization,
+            internal_name="North site",
+            country_code="PL",
+            city="Warsaw",
+            street="North Street",
+            building="9",
+            created_by=self.owner,
+        )
+        project = WorkProject.objects.create(
+            organization=self.organization,
+            worksite=worksite,
+            internal_name="Project North",
+            created_by=self.owner,
+        )
+        crew = ProjectCrew.objects.create(
+            organization=self.organization,
+            project=project,
+            internal_name="Crew North",
+            created_by=self.owner,
+        )
+        now = timezone.now()
+        shift = ProjectCrewShift.objects.create(
+            crew=crew,
+            work_date=timezone.localdate(),
+            starts_at=now,
+            ends_at=now + timedelta(hours=8),
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        ProjectCrewShiftMember.objects.create(
+            shift=shift,
+            connection=self.worker_connection,
+            role=ProjectCrewShiftMember.ROLE_PASSENGER,
+        )
+        announcements_url = (
+            f"/employer/support/announcements/?organization={self.organization.public_id}"
+        )
+        self.client.force_login(self.owner)
+
+        page = self.client.get(announcements_url)
+
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Announcements")
+        self.assertContains(page, "Project North")
+        self.assertContains(page, "Crew North")
+        self.assertContains(page, "House North")
+        self.assertContains(page, str(self.worker_connection.public_id))
+
+        created = self.client.post(
+            announcements_url,
+            {
+                "action": "announcement_create",
+                "source_language": "ru",
+                "title_ru": "Изменение смены",
+                "body_ru": "Встречаемся у входа в семь.",
+                "title_en": "Shift update",
+                "body_en": "Meet at the entrance at seven.",
+                "title_pl": "Zmiana zmiany",
+                "body_pl": "Spotkanie przy wejściu o siódmej.",
+                "title_uk": "Зміна зміни",
+                "body_uk": "Зустріч біля входу о сьомій.",
+                "importance": "important",
+                "requires_acknowledgement": "on",
+                "connection_ids": [str(self.worker_connection.public_id)],
+            },
+        )
+
+        self.assertRedirects(created, announcements_url)
+        announcement = Announcement.objects.get(organization=self.organization)
+        self.assertEqual(announcement.state, Announcement.STATE_DRAFT)
+        self.assertEqual(announcement.acknowledgements.count(), 1)
+
+        published = self.client.post(
+            announcements_url,
+            {
+                "action": "announcement_publish",
+                "announcement_id": announcement.public_id,
+            },
+        )
+        self.assertRedirects(published, announcements_url)
+        announcement.refresh_from_db()
+        self.assertEqual(announcement.state, Announcement.STATE_PUBLISHED)
+
+        archived = self.client.post(
+            announcements_url,
+            {
+                "action": "announcement_archive",
+                "announcement_id": announcement.public_id,
+            },
+        )
+        self.assertRedirects(archived, announcements_url)
+        announcement.refresh_from_db()
+        self.assertEqual(announcement.state, Announcement.STATE_ARCHIVED)
 
     def test_owner_sees_only_approved_workspace_information_and_navigation_link(self):
         self.client.force_login(self.owner)

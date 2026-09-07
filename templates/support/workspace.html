@@ -47,7 +47,7 @@
     </div>
 
     <div class="support-note">{{ employer_t.support_workspace_read_only }}</div>
-    {% if transport_url or team_url or time_url or requests_url %}<div class="jh-actions" style="margin-top:-5px">{% if requests_url %}<a class="jh-btn primary" href="{{ requests_url }}">{{ employer_t.support_requests_workspace_link }}</a>{% endif %}{% if time_url %}<a class="jh-btn primary" href="{{ time_url }}">{{ employer_t.support_time_workspace_link }}</a>{% endif %}{% if team_url %}<a class="jh-btn" href="{{ team_url }}">{{ employer_t.support_team_workspace_link }}</a>{% endif %}{% if transport_url %}<a class="jh-btn" href="{{ transport_url }}">{{ employer_t.support_transport_builder }}</a>{% endif %}</div>{% endif %}
+    {% if transport_url or team_url or time_url or requests_url or announcements_url %}<div class="jh-actions" style="margin-top:-5px">{% if requests_url %}<a class="jh-btn primary" href="{{ requests_url }}">{{ employer_t.support_requests_workspace_link }}</a>{% endif %}{% if time_url %}<a class="jh-btn primary" href="{{ time_url }}">{{ employer_t.support_time_workspace_link }}</a>{% endif %}{% if announcements_url %}<a class="jh-btn primary" href="{{ announcements_url }}">{{ employer_t.support_announcements_workspace_link }}</a>{% endif %}{% if team_url %}<a class="jh-btn" href="{{ team_url }}">{{ employer_t.support_team_workspace_link }}</a>{% endif %}{% if transport_url %}<a class="jh-btn" href="{{ transport_url }}">{{ employer_t.support_transport_builder }}</a>{% endif %}</div>{% endif %}
 
     <div class="support-overview">
       {% if permissions.pipeline %}

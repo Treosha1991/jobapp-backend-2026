@@ -1,0 +1,161 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_announcements_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .announcements-back { margin-bottom:16px; }
+  .announcements-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .announcements-note { margin:18px 0 0; padding:13px 15px; border:1px solid rgba(110,199,255,.34); border-radius:16px; color:#caedff; background:rgba(110,199,255,.08); line-height:1.45; }
+  .announcement-form { margin-top:18px; padding:17px; border:1px solid rgba(24,223,103,.38); border-radius:18px; background:linear-gradient(135deg,rgba(24,223,103,.12),rgba(5,22,36,.28)); }
+  .announcement-form h2 { margin:0 0 5px; font-size:20px; }
+  .announcement-form > p { margin:0 0 15px; color:var(--muted); line-height:1.42; }
+  .announcement-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .announcement-texts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:14px; }
+  .announcement-language { padding:13px; border:1px solid var(--line); border-radius:14px; background:rgba(5,22,36,.25); }
+  .announcement-language h3 { margin:0 0 10px; font-size:14px; color:#e8f6ff; }
+  .announcement-language .jh-field + .jh-field { margin-top:9px; }
+  .announcement-textarea { min-height:100px; resize:vertical; }
+  .announcement-recipients { margin-top:16px; padding:14px; border:1px solid var(--line); border-radius:16px; background:rgba(5,22,36,.24); }
+  .announcement-recipients h3 { margin:0 0 5px; font-size:16px; }
+  .announcement-recipients > p { margin:0 0 12px; color:var(--muted); line-height:1.4; }
+  .announcement-recipient-tools { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px; align-items:end; }
+  .announcement-selected-count { margin:12px 0 8px; color:#bafbd2; font-size:13px; font-weight:800; }
+  .announcement-worker-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; max-height:300px; overflow:auto; padding-right:4px; }
+  .announcement-worker { display:flex; align-items:flex-start; gap:8px; padding:9px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.25); color:#e8f6ff; font-size:13px; line-height:1.35; cursor:pointer; }
+  .announcement-worker input { margin-top:2px; accent-color:var(--green); }
+  .announcement-options { display:flex; flex-wrap:wrap; gap:13px; margin-top:14px; }
+  .announcement-option { display:flex; align-items:center; gap:7px; color:#dff4ff; font-size:13px; }
+  .announcement-option input { accent-color:var(--green); }
+  .announcement-list { display:grid; gap:10px; margin-top:22px; }
+  .announcement-list-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .announcement-list-head h2 { margin:0; font-size:20px; }
+  .announcement-card { padding:15px; border:1px solid var(--line); border-radius:16px; background:rgba(5,22,36,.28); }
+  .announcement-card.is-draft { border-color:rgba(110,199,255,.35); }
+  .announcement-card.is-published { border-color:rgba(24,223,103,.35); }
+  .announcement-card.is-archived { opacity:.74; }
+  .announcement-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .announcement-card h3 { margin:0; font-size:17px; }
+  .announcement-card-body { margin:10px 0; color:#d9efff; line-height:1.45; white-space:normal; }
+  .announcement-meta { display:flex; flex-wrap:wrap; gap:7px 12px; color:var(--muted); font-size:12px; line-height:1.4; }
+  .announcement-meta strong { color:#bde9ff; }
+  .announcement-card-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
+  .announcement-empty { margin-top:18px; padding:19px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; }
+  @media (max-width:760px) { .announcement-grid, .announcement-texts, .announcement-worker-list, .announcement-recipient-tools { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions announcements-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a></div>
+  <section class="jh-card">
+    <p class="announcements-kicker">JobHub Support · {{ organization.display_name }}</p>
+    <h1 class="jh-title">{{ employer_t.support_announcements_title }}</h1>
+    <p class="jh-subtitle">{{ employer_t.support_announcements_subtitle }}</p>
+    <div class="announcements-note">{{ employer_t.support_announcements_notice }}</div>
+
+    <form class="announcement-form" method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="announcement_create">
+      <h2>{{ employer_t.support_announcements_create_title }}</h2>
+      <p>{{ employer_t.support_announcements_create_text }}</p>
+
+      <div class="announcement-grid">
+        <label class="jh-field"><span>{{ employer_t.support_announcements_source_language }}</span><select class="jh-input" name="source_language">{% for language in languages %}<option value="{{ language.code }}"{% if language.code == source_language %} selected{% endif %}>{{ language.label }}</option>{% endfor %}</select></label>
+        <label class="jh-field"><span>{{ employer_t.support_announcements_expires_at }}</span><input class="jh-input" type="datetime-local" name="expires_at"></label>
+      </div>
+
+      <div class="announcement-texts">
+        {% for language in languages %}
+          <section class="announcement-language">
+            <h3>{{ language.label }}</h3>
+            <label class="jh-field"><span>{{ employer_t.support_announcements_message_title }}</span><input class="jh-input" type="text" name="title_{{ language.code }}" maxlength="180" required></label>
+            <label class="jh-field"><span>{{ employer_t.support_announcements_message_body }}</span><textarea class="jh-input announcement-textarea" name="body_{{ language.code }}" maxlength="8000" required></textarea></label>
+          </section>
+        {% endfor %}
+      </div>
+
+      <section class="announcement-recipients">
+        <h3>{{ employer_t.support_announcements_recipients_title }}</h3>
+        <p>{{ employer_t.support_announcements_recipients_text }}</p>
+        {% if worker_rows %}
+          {% if project_recipient_groups or crew_recipient_groups or housing_recipient_groups %}
+            <div class="announcement-recipient-tools">
+              <label class="jh-field"><span>{{ employer_t.support_announcements_recipient_group }}</span><select class="jh-input" data-announcement-recipient-group>
+                <option value="">{{ employer_t.support_announcements_recipient_group_placeholder }}</option>
+                {% if project_recipient_groups %}<optgroup label="{{ employer_t.support_announcements_group_projects }}">{% for group in project_recipient_groups %}<option value="project-{{ forloop.counter }}" data-connection-ids="{{ group.connection_ids }}">{{ group.label }} · {{ group.recipient_count }}</option>{% endfor %}</optgroup>{% endif %}
+                {% if crew_recipient_groups %}<optgroup label="{{ employer_t.support_announcements_group_crews }}">{% for group in crew_recipient_groups %}<option value="crew-{{ forloop.counter }}" data-connection-ids="{{ group.connection_ids }}">{{ group.label }} · {{ group.recipient_count }}</option>{% endfor %}</optgroup>{% endif %}
+                {% if housing_recipient_groups %}<optgroup label="{{ employer_t.support_announcements_group_housing }}">{% for group in housing_recipient_groups %}<option value="housing-{{ forloop.counter }}" data-connection-ids="{{ group.connection_ids }}">{{ group.label }} · {{ group.recipient_count }}</option>{% endfor %}</optgroup>{% endif %}
+              </select></label>
+              <button class="jh-btn" type="button" data-announcement-apply-group>{{ employer_t.support_announcements_apply_group }}</button>
+            </div>
+          {% endif %}
+          <div class="announcement-selected-count"><span>{{ employer_t.support_announcements_selected_workers }}</span>: <strong data-announcement-selected-count>0</strong></div>
+          <div class="announcement-worker-list">
+            {% for worker in worker_rows %}
+              <label class="announcement-worker"><input type="checkbox" name="connection_ids" value="{{ worker.id }}" data-announcement-recipient><span>{{ worker.label }}</span></label>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="announcement-empty">{{ employer_t.support_announcements_no_workers }}</div>
+        {% endif %}
+      </section>
+
+      <div class="announcement-options">
+        <label class="announcement-option"><input type="radio" name="importance" value="normal" checked><span>{{ employer_t.support_announcements_importance_normal }}</span></label>
+        <label class="announcement-option"><input type="radio" name="importance" value="important"><span>{{ employer_t.support_announcements_importance_important }}</span></label>
+        <label class="announcement-option"><input type="checkbox" name="requires_acknowledgement"><span>{{ employer_t.support_announcements_requires_acknowledgement }}</span></label>
+      </div>
+      <div class="jh-actions" style="margin-top:16px"><button class="jh-btn primary" type="submit">{{ employer_t.support_announcements_save_draft }}</button></div>
+    </form>
+
+    <section class="announcement-list">
+      <div class="announcement-list-head"><h2>{{ employer_t.support_announcements_list_title }}</h2></div>
+      {% for announcement in announcements %}
+        <article class="announcement-card is-{{ announcement.state }}">
+          <div class="announcement-card-head">
+            <h3>{{ announcement.title }}</h3>
+            <div class="jh-actions"><span class="jh-status{% if announcement.state == 'published' %} success{% endif %}">{{ announcement.state_label }}</span>{% if announcement.importance == 'important' %}<span class="jh-status warning">{{ announcement.importance_label }}</span>{% endif %}</div>
+          </div>
+          <div class="announcement-card-body">{{ announcement.body|linebreaksbr }}</div>
+          <div class="announcement-meta">
+            <span><strong>{{ employer_t.support_announcements_recipient_count }}</strong>: {{ announcement.recipient_count }}</span>
+            {% if announcement.requires_acknowledgement %}<span><strong>{{ employer_t.support_announcements_acknowledged_count }}</strong>: {{ announcement.acknowledged_count }}/{{ announcement.recipient_count }}</span>{% endif %}
+            {% if announcement.published_at %}<span>{{ employer_t.support_announcements_published_at }} {{ announcement.published_at|date:"d.m.Y H:i" }}</span>{% endif %}
+            {% if announcement.expires_at %}<span>{% if announcement.is_expired %}{{ employer_t.support_announcements_expired_at }}{% else %}{{ employer_t.support_announcements_expires_at }}{% endif %} {{ announcement.expires_at|date:"d.m.Y H:i" }}</span>{% endif %}
+          </div>
+          {% if announcement.state == 'draft' or announcement.state == 'published' %}
+            <div class="announcement-card-actions">
+              {% if announcement.state == 'draft' %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="announcement_publish"><input type="hidden" name="announcement_id" value="{{ announcement.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_announcements_publish }}</button></form>{% endif %}
+              <form method="post">{% csrf_token %}<input type="hidden" name="action" value="announcement_archive"><input type="hidden" name="announcement_id" value="{{ announcement.public_id }}"><button class="jh-btn danger" type="submit">{{ employer_t.support_announcements_archive }}</button></form>
+            </div>
+          {% endif %}
+        </article>
+      {% empty %}
+        <div class="announcement-empty">{{ employer_t.support_announcements_empty }}</div>
+      {% endfor %}
+    </section>
+  </section>
+
+  <script>
+    (() => {
+      const recipients = Array.from(document.querySelectorAll('[data-announcement-recipient]'));
+      const count = document.querySelector('[data-announcement-selected-count]');
+      const group = document.querySelector('[data-announcement-recipient-group]');
+      const apply = document.querySelector('[data-announcement-apply-group]');
+      const updateCount = () => {
+        if (count) count.textContent = recipients.filter((item) => item.checked).length;
+      };
+      recipients.forEach((item) => item.addEventListener('change', updateCount));
+      if (group && apply) {
+        apply.addEventListener('click', () => {
+          const option = group.options[group.selectedIndex];
+          const ids = new Set((option.dataset.connectionIds || '').split(',').filter(Boolean));
+          if (!ids.size) return;
+          recipients.forEach((item) => { item.checked = ids.has(item.value); });
+          updateCount();
+        });
+      }
+      updateCount();
+    })();
+  </script>
+{% endblock %}

@@ -37,6 +37,7 @@ from .questionnaire import (
     questionnaire_tags,
 )
 from .models import (
+    Announcement,
     DocumentRequestPackage,
     DriverVehicleAssignment,
     HousingAssignment,
@@ -68,6 +69,7 @@ from .models import (
     Worksite,
 )
 from .selectors.workspace import (
+    announcements_workspace_snapshot,
     candidate_applications_snapshot,
     registry_snapshot,
     housing_workspace_snapshot,
@@ -82,6 +84,7 @@ from .selectors.workspace import (
     workspace_snapshot,
 )
 from .serializers import (
+    AnnouncementCreateSerializer,
     DocumentRequestPackageDecisionSerializer,
     HousingPlaceCreateSerializer,
     HousingRoomCreateSerializer,
@@ -179,6 +182,11 @@ from .services.organizations import (
     replace_membership_permissions,
     revoke_worker_access_scope,
 )
+from .services.tasks import (
+    archive_announcement,
+    create_announcement,
+    publish_announcement,
+)
 from .services.project_crews import (
     mark_worker_schedule_days_off,
     release_project_crew_member_days,
@@ -250,6 +258,8 @@ def workspace_home(request):
         )
     if snapshot["permissions"]["organization_manage"]:
         snapshot["team_url"] = reverse("support:team")
+    if snapshot["permissions"]["announcement_manage"]:
+        snapshot["announcements_url"] = reverse("support:announcements")
     return render(request, "support/workspace.html", snapshot)
 
 
@@ -3575,6 +3585,97 @@ def fleet_workspace(request):
         return redirect(f"{reverse('support:fleet')}?{query}")
     snapshot["workspace_url"] = f"{reverse('support:workspace')}?organization={organization.public_id}"
     return render(request, "support/fleet_workspace.html", snapshot)
+
+
+def _announcements_redirect(organization):
+    return redirect(
+        f"{reverse('support:announcements')}?organization={organization.public_id}"
+    )
+
+
+def _announcement_translations_from_post(request):
+    return {
+        language: {
+            "title": request.POST.get(f"title_{language}", ""),
+            "body": request.POST.get(f"body_{language}", ""),
+        }
+        for language in ("ru", "en", "pl", "uk")
+    }
+
+
+def _announcements_operation(request, *, snapshot):
+    organization = snapshot["organization"]
+    action = (request.POST.get("action") or "").strip()
+    try:
+        if action == "announcement_create":
+            serializer = AnnouncementCreateSerializer(
+                data={
+                    "source_language": request.POST.get("source_language"),
+                    "translations": _announcement_translations_from_post(request),
+                    "importance": request.POST.get("importance", "normal"),
+                    "requires_acknowledgement": (
+                        request.POST.get("requires_acknowledgement") == "on"
+                    ),
+                    "expires_at": request.POST.get("expires_at") or None,
+                    "connection_ids": request.POST.getlist("connection_ids"),
+                }
+            )
+            serializer.is_valid(raise_exception=True)
+            create_announcement(
+                actor=request.user,
+                organization=organization,
+                **serializer.validated_data,
+            )
+            message_key = "support_announcements_draft_created"
+        elif action in {"announcement_publish", "announcement_archive"}:
+            announcement = get_object_or_404(
+                Announcement,
+                organization=organization,
+                public_id=request.POST.get("announcement_id"),
+            )
+            if action == "announcement_publish":
+                publish_announcement(actor=request.user, announcement=announcement)
+                message_key = "support_announcements_published"
+            else:
+                archive_announcement(actor=request.user, announcement=announcement)
+                message_key = "support_announcements_archived"
+        else:
+            raise ValueError("support_announcements_unknown_operation")
+    except (APIException, ValueError):
+        messages.error(request, tr(request, "support_announcements_error"))
+    else:
+        messages.success(request, tr(request, message_key))
+    return _announcements_redirect(organization)
+
+
+@login_required(login_url="employer:login")
+def announcements_workspace(request):
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = announcements_workspace_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+    )
+    if request.method == "POST":
+        return _announcements_operation(request, snapshot=snapshot)
+    for announcement in snapshot["announcements"]:
+        announcement.state_label = tr(
+            request,
+            f"support_announcements_state_{announcement.state}",
+        )
+        announcement.importance_label = tr(
+            request,
+            f"support_announcements_importance_{announcement.importance}",
+        )
+    snapshot["languages"] = [
+        {"code": language, "label": tr(request, f"support_announcements_language_{language}")}
+        for language in ("ru", "en", "pl", "uk")
+    ]
+    snapshot["source_language"] = get_lang(request)
+    snapshot["workspace_url"] = (
+        f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
+    )
+    return render(request, "support/announcements_workspace.html", snapshot)
 
 
 def _team_redirect(organization, membership):

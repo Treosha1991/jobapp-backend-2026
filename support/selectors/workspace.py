@@ -17,6 +17,8 @@ from django.utils.dateparse import parse_date
 from jobs.avatar_utils import avatar_public_url
 
 from support.models import (
+    Announcement,
+    AnnouncementAcknowledgement,
     DocumentRequestPackage,
     DriverVehicleAssignment,
     HousingAssignment,
@@ -26,6 +28,7 @@ from support.models import (
     MembershipInvitation,
     OrganizationMembership,
     PermissionGrant,
+    ProjectCrew,
     ProjectCrewMemberAbsence,
     ProjectCrewPassenger,
     ProjectCrewResourceAssignment,
@@ -52,6 +55,7 @@ from support.models import (
     WorkerRequest,
 )
 from support.permission_codes import (
+    ANNOUNCEMENT_MANAGE,
     CHAT_MANAGE,
     DOCUMENT_REQUEST,
     HOUSING_MANAGE,
@@ -329,6 +333,11 @@ def _select_membership(*, user, organization_public_id):
 
 def _permissions_for(*, user, organization):
     return {
+        "announcement_manage": has_permission(
+            user=user,
+            organization=organization,
+            permission_code=ANNOUNCEMENT_MANAGE,
+        ),
         "chat_manage": has_permission(
             user=user, organization=organization, permission_code=CHAT_MANAGE
         ),
@@ -373,6 +382,164 @@ def _permissions_for(*, user, organization):
         "document_request": has_permission(
             user=user, organization=organization, permission_code=DOCUMENT_REQUEST
         ),
+    }
+
+
+def announcements_workspace_snapshot(*, user, organization_public_id=None):
+    """Return only announcement data and recipients visible to this staff user.
+
+    Recipient groups are a convenience for the employer UI, not an authority:
+    the create and publish services repeat the worker-scope checks before a
+    message can be saved or delivered.
+    """
+
+    memberships, membership = _select_membership(
+        user=user,
+        organization_public_id=organization_public_id,
+    )
+    organization = membership.organization
+    if not has_permission(
+        user=user,
+        organization=organization,
+        permission_code=ANNOUNCEMENT_MANAGE,
+    ):
+        raise Http404("support_announcements_not_found")
+
+    active_stages = (
+        SupportConnection.STAGE_COORDINATOR,
+        SupportConnection.STAGE_ACTIVE_WORKER,
+    )
+    allowed_connections = list(
+        worker_connection_queryset_for(
+            user=user,
+            organization=organization,
+            queryset=SupportConnection.objects.filter(
+                is_archived=False,
+                stage__in=active_stages,
+            ),
+        )
+        .select_related("candidate", "vacancy")
+        .order_by(
+            "candidate__first_name",
+            "candidate__last_name",
+            "candidate__username",
+            "id",
+        )[:250]
+    )
+    allowed_connection_ids = {item.id for item in allowed_connections}
+    worker_rows = []
+    for connection in allowed_connections:
+        worker_rows.append(
+            {
+                "id": str(connection.public_id),
+                "label": f"{_display_name(connection.candidate)} · "
+                f"{connection.vacancy.internal_title}",
+            }
+        )
+
+    today = timezone.localdate()
+    current_time = timezone.now()
+    project_groups = {}
+    crew_groups = {}
+    if allowed_connection_ids:
+        for member in (
+            ProjectCrewShiftMember.objects.filter(
+                connection_id__in=allowed_connection_ids,
+                shift__crew__organization=organization,
+                shift__crew__state=ProjectCrew.STATE_ACTIVE,
+                shift__state=ProjectCrewShift.STATE_PUBLISHED,
+                shift__work_date__gte=today,
+            )
+            .select_related("shift__crew__project")
+            .order_by("shift__crew__project__internal_name", "shift__crew__internal_name", "id")
+        ):
+            crew = member.shift.crew
+            project = crew.project
+            project_groups.setdefault(
+                project.id,
+                {"label": project.internal_name, "connection_ids": set()},
+            )["connection_ids"].add(member.connection_id)
+            crew_groups.setdefault(
+                crew.id,
+                {
+                    "label": f"{project.internal_name} · {crew.internal_name or '#' + str(crew.id)}",
+                    "connection_ids": set(),
+                },
+            )["connection_ids"].add(member.connection_id)
+
+    housing_groups = {}
+    if allowed_connection_ids:
+        for assignment in (
+            HousingAssignment.objects.filter(
+                organization=organization,
+                connection_id__in=allowed_connection_ids,
+                state=HousingAssignment.STATE_PUBLISHED,
+                check_in_at__lte=current_time,
+            )
+            .filter(Q(check_out_at__isnull=True) | Q(check_out_at__gt=current_time))
+            .select_related("place__room__site")
+            .order_by("place__room__site__internal_name", "id")
+        ):
+            site = assignment.place.room.site
+            housing_groups.setdefault(
+                site.id,
+                {
+                    "label": f"{site.internal_name} · {site.city}",
+                    "connection_ids": set(),
+                },
+            )["connection_ids"].add(assignment.connection_id)
+
+    def recipient_groups(items):
+        return [
+            {
+                "label": item["label"],
+                "connection_ids": ",".join(
+                    str(connection.public_id)
+                    for connection in allowed_connections
+                    if connection.id in item["connection_ids"]
+                ),
+                "recipient_count": len(item["connection_ids"]),
+            }
+            for item in sorted(items.values(), key=lambda item: item["label"].casefold())
+            if item["connection_ids"]
+        ]
+
+    announcements = list(
+        Announcement.objects.filter(
+            organization=organization,
+            acknowledgements__connection_id__in=allowed_connection_ids,
+        )
+        .distinct()
+        .prefetch_related(
+            Prefetch(
+                "acknowledgements",
+                queryset=AnnouncementAcknowledgement.objects.filter(
+                    connection_id__in=allowed_connection_ids
+                ).select_related("connection__candidate"),
+            )
+        )
+        .order_by("-published_at", "-created_at", "-id")[:250]
+    )
+    for announcement in announcements:
+        recipients = list(announcement.acknowledgements.all())
+        announcement.recipient_count = len(recipients)
+        announcement.acknowledged_count = sum(
+            item.acknowledged_at is not None for item in recipients
+        )
+        announcement.is_expired = (
+            announcement.expires_at is not None
+            and announcement.expires_at <= current_time
+        )
+
+    return {
+        "organization": organization,
+        "membership": membership,
+        "memberships": memberships,
+        "worker_rows": worker_rows,
+        "project_recipient_groups": recipient_groups(project_groups),
+        "crew_recipient_groups": recipient_groups(crew_groups),
+        "housing_recipient_groups": recipient_groups(housing_groups),
+        "announcements": announcements,
     }
 
 

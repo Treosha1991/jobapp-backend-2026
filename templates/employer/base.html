@@ -198,6 +198,7 @@
                 <a class="jh-btn{% if employer_support_header.active.general_chat %} primary{% endif %}" href="{% url 'employer:chat_list' %}">{{ employer_t.support_nav_general_chat }}{% if employer_chat_unread_count %}<span class="jh-chat-badge">{{ employer_chat_unread_count }}</span>{% endif %}</a>
                 {% if employer_support_header.time %}<a class="jh-btn" href="{% url 'support:time' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_time }}</a>{% endif %}
                 {% if employer_support_header.transport %}<a class="jh-btn" href="{% url 'support:transport' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_transport }}</a>{% endif %}
+                {% if employer_support_header.announcements %}<a class="jh-btn{% if employer_support_header.active.announcements %} primary{% endif %}" href="{% url 'support:announcements' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_announcements }}</a>{% endif %}
                 {% if employer_support_header.team %}<a class="jh-btn" href="{% url 'support:team' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_team }}</a>{% endif %}
                 <div class="jh-menu-separator"></div>
               {% endif %}

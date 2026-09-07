@@ -448,6 +448,42 @@ def publish_announcement(*, actor, announcement):
     return item
 
 
+def archive_announcement(*, actor, announcement):
+    """Stop showing an announcement without erasing its delivery history."""
+
+    require_permission(
+        user=actor,
+        organization=announcement.organization,
+        permission_code=ANNOUNCEMENT_MANAGE,
+    )
+    with transaction.atomic():
+        item = (
+            Announcement.objects.select_for_update()
+            .select_related("organization")
+            .prefetch_related("acknowledgements__connection")
+            .get(pk=announcement.pk)
+        )
+        if item.state == Announcement.STATE_ARCHIVED:
+            raise ValidationError({"announcement": "announcement_already_archived"})
+        recipients = list(item.acknowledgements.all())
+        _require_connection_scope(
+            actor=actor,
+            organization=item.organization,
+            connections=[recipient.connection for recipient in recipients],
+        )
+        item.state = Announcement.STATE_ARCHIVED
+        item.archived_at = timezone.now()
+        item.save(update_fields=["state", "archived_at", "updated_at"])
+        record_audit_event(
+            organization=item.organization,
+            actor=actor,
+            action="announcement.archived",
+            target=item,
+            details={"recipient_count": len(recipients)},
+        )
+    return item
+
+
 def acknowledge_announcement(*, worker, acknowledgement):
     with transaction.atomic():
         item = (
