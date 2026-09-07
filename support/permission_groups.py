@@ -7,6 +7,7 @@ employer never has to make a security decision based on a raw technical code.
 
 from .permission_codes import (
     ANNOUNCEMENT_MANAGE,
+    AUDIT_VIEW,
     CHAT_MANAGE,
     CONNECTION_TRANSITION,
     DOCUMENT_REQUEST,
@@ -45,6 +46,7 @@ TEAM_PERMISSION_GROUPS = (
     ("time_export", "support_team_permission_time_export", (TIME_VIEW, TIME_EXPORT)),
     ("worker_requests", "support_team_permission_worker_requests", (REQUEST_DECIDE,)),
     ("announcements", "support_team_permission_announcements", (ANNOUNCEMENT_MANAGE,)),
+    ("audit", "support_team_permission_audit", (AUDIT_VIEW,)),
     (
         "team_management",
         "support_team_permission_team_management",

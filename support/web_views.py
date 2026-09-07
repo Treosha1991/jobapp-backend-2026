@@ -83,6 +83,7 @@ from .selectors.workspace import (
     conversation_workspace_snapshot,
     workspace_snapshot,
 )
+from .selectors.audit import audit_history_snapshot
 from .serializers import (
     AnnouncementCreateSerializer,
     DocumentRequestPackageDecisionSerializer,
@@ -3676,6 +3677,34 @@ def announcements_workspace(request):
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
     return render(request, "support/announcements_workspace.html", snapshot)
+
+
+@login_required(login_url="employer:login")
+def audit_history_workspace(request):
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = audit_history_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+        category=request.GET.get("category", "all"),
+    )
+    for event in snapshot["events"]:
+        event.category_label = tr(
+            request,
+            f"support_audit_category_{event.category}",
+        )
+        event.verb_label = tr(request, f"support_audit_verb_{event.verb}")
+    snapshot["category_rows"] = [
+        {
+            "id": category,
+            "label": tr(request, f"support_audit_category_{category}"),
+        }
+        for category in snapshot["categories"]
+    ]
+    snapshot["workspace_url"] = (
+        f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
+    )
+    return render(request, "support/audit_history_workspace.html", snapshot)
 
 
 def _team_redirect(organization, membership):

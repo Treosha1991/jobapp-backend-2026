@@ -26,6 +26,7 @@ urlpatterns = [
     ),
     path("workers/", web_views.workers_workspace, name="workers"),
     path("announcements/", web_views.announcements_workspace, name="announcements"),
+    path("history/", web_views.audit_history_workspace, name="audit-history"),
     path("team/", web_views.team_management, name="team"),
     path("time/", web_views.timekeeping_workspace, name="time"),
     path("conversations/", web_views.conversations_workspace, name="conversations"),

@@ -1,0 +1,52 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_audit_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .audit-back { margin-bottom:16px; }
+  .audit-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .audit-note { margin:18px 0 0; padding:13px 15px; border:1px solid rgba(110,199,255,.34); border-radius:16px; color:#caedff; background:rgba(110,199,255,.08); line-height:1.45; }
+  .audit-filters { display:flex; gap:8px; flex-wrap:wrap; margin-top:18px; }
+  .audit-filters a { text-decoration:none; }
+  .audit-list { display:grid; gap:9px; margin-top:18px; }
+  .audit-event { display:grid; grid-template-columns:minmax(160px,.78fr) minmax(0,1.4fr) minmax(140px,.7fr) auto; gap:13px; align-items:center; padding:13px 14px; border:1px solid var(--line); border-radius:15px; background:rgba(5,22,36,.27); }
+  .audit-event-category { color:#bafbd2; font-size:12px; font-weight:900; }
+  .audit-event-main strong, .audit-event-main span { display:block; }
+  .audit-event-main strong { color:#f2fbff; }
+  .audit-event-main span { margin-top:3px; color:var(--muted); font-size:12px; }
+  .audit-event-actor { color:#c7eaff; font-size:13px; }
+  .audit-event time { color:var(--muted); font-size:12px; white-space:nowrap; }
+  .audit-empty { margin-top:18px; padding:19px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; }
+  @media (max-width:760px) { .audit-event { grid-template-columns:1fr; gap:6px; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions audit-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a></div>
+  <section class="jh-card">
+    <p class="audit-kicker">JobHub Support · {{ organization.display_name }}</p>
+    <h1 class="jh-title">{{ employer_t.support_audit_title }}</h1>
+    <p class="jh-subtitle">{{ employer_t.support_audit_subtitle }}</p>
+    <div class="audit-note">{% if can_view_organization_history %}{{ employer_t.support_audit_full_history_note }}{% else %}{{ employer_t.support_audit_own_history_note }}{% endif %}</div>
+
+    <nav class="audit-filters" aria-label="{{ employer_t.support_audit_filters }}">
+      {% for category in category_rows %}
+        <a class="jh-btn{% if category.id == selected_category %} primary{% endif %}" href="?organization={{ organization.public_id }}&category={{ category.id }}">{{ category.label }}</a>
+      {% endfor %}
+    </nav>
+
+    <div class="audit-list">
+      {% for event in events %}
+        <article class="audit-event">
+          <div class="audit-event-category">{{ event.category_label }}</div>
+          <div class="audit-event-main"><strong>{{ event.verb_label }}</strong>{% if event.target_label %}<span>{{ event.target_label }}</span>{% endif %}</div>
+          <div class="audit-event-actor">{{ event.actor_label }}</div>
+          <time datetime="{{ event.created_at|date:'c' }}">{{ event.created_at|date:"d.m.Y H:i" }}</time>
+        </article>
+      {% empty %}
+        <div class="audit-empty">{{ employer_t.support_audit_empty }}</div>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

@@ -41,6 +41,8 @@ from support.models import (
     WorkProject,
     Worksite,
 )
+from support.permission_codes import AUDIT_VIEW
+from support.services.audit import record_audit_event
 from support.services.notifications import enqueue_support_notification
 from support.services.organizations import activate_organization, create_organization
 
@@ -334,6 +336,63 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertRedirects(archived, announcements_url)
         announcement.refresh_from_db()
         self.assertEqual(announcement.state, Announcement.STATE_ARCHIVED)
+
+    def test_audit_history_is_full_for_owner_and_limited_to_the_manager_actions(self):
+        owner_site = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="Owner history house",
+            country_code="PL",
+            city="Warsaw",
+            street="History Street",
+            building="1",
+            created_by=self.owner,
+        )
+        manager_site = HousingSite.objects.create(
+            organization=self.organization,
+            internal_name="Manager history house",
+            country_code="PL",
+            city="Warsaw",
+            street="History Street",
+            building="2",
+            created_by=self.owner,
+        )
+        limited_membership = OrganizationMembership.objects.get(
+            organization=self.organization,
+            user=self.limited_member,
+        )
+        PermissionGrant.objects.create(
+            membership=limited_membership,
+            permission_code=AUDIT_VIEW,
+            granted_by=self.owner,
+        )
+        record_audit_event(
+            organization=self.organization,
+            actor=self.owner,
+            action="housing.site_updated",
+            target=owner_site,
+        )
+        record_audit_event(
+            organization=self.organization,
+            actor=self.limited_member,
+            action="housing.site_updated",
+            target=manager_site,
+        )
+        audit_url = f"/employer/support/history/?organization={self.organization.public_id}"
+
+        self.client.force_login(self.owner)
+        owner_page = self.client.get(f"{audit_url}&category=housing")
+
+        self.assertEqual(owner_page.status_code, 200)
+        self.assertContains(owner_page, "Owner history house")
+        self.assertContains(owner_page, "Manager history house")
+
+        self.client.force_login(self.limited_member)
+        manager_page = self.client.get(audit_url)
+
+        self.assertEqual(manager_page.status_code, 200)
+        self.assertContains(manager_page, "Manager history house")
+        self.assertNotContains(manager_page, "Owner history house")
+        self.assertContains(manager_page, "Only your JobHub Support actions are shown")
 
     def test_owner_sees_only_approved_workspace_information_and_navigation_link(self):
         self.client.force_login(self.owner)
