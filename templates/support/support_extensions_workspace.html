@@ -1,0 +1,99 @@
+{% extends "employer/base.html" %}
+
+{% block title %}{{ employer_t.support_extensions_title }} — JobHub Support{% endblock %}
+
+{% block extra_head %}
+<style>
+  .extensions-back { margin-bottom:16px; }
+  .extensions-kicker { margin:0 0 7px; color:var(--green); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
+  .extensions-note { margin:18px 0 0; padding:13px 15px; border:1px solid rgba(110,199,255,.34); border-radius:16px; color:#caedff; background:rgba(110,199,255,.08); line-height:1.45; }
+  .extensions-form { margin-top:18px; padding:17px; border:1px solid rgba(24,223,103,.38); border-radius:18px; background:linear-gradient(135deg,rgba(24,223,103,.12),rgba(5,22,36,.28)); }
+  .extensions-form h2, .extensions-list-head h2 { margin:0 0 6px; font-size:20px; }
+  .extensions-form > p { margin:0 0 14px; color:var(--muted); line-height:1.42; }
+  .extensions-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+  .extensions-list { display:grid; gap:10px; margin-top:22px; }
+  .extensions-list-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .extensions-list-head p { margin:0; color:var(--muted); line-height:1.4; }
+  .extension-card { padding:15px; border:1px solid var(--line); border-radius:16px; background:rgba(5,22,36,.28); }
+  .extension-card.is-pending { border-color:rgba(255,211,106,.42); }
+  .extension-card.is-approved { border-color:rgba(24,223,103,.38); }
+  .extension-card.is-declined { opacity:.84; }
+  .extension-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .extension-card h3 { margin:0; font-size:17px; }
+  .extension-meta { display:flex; flex-wrap:wrap; gap:7px 12px; margin-top:10px; color:var(--muted); font-size:12px; line-height:1.45; }
+  .extension-meta strong { color:#bde9ff; }
+  .extension-decision { margin-top:12px; padding-top:12px; border-top:1px solid rgba(183,224,255,.14); }
+  .extension-decision p { margin:0 0 10px; color:#d9efff; font-size:13px; line-height:1.4; }
+  .extension-decision-form { display:grid; grid-template-columns:minmax(220px,1fr) auto auto; gap:8px; align-items:end; }
+  .extension-empty { margin-top:18px; padding:19px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; }
+  @media (max-width:760px) { .extensions-grid, .extension-decision-form { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="jh-actions extensions-back"><a class="jh-btn" href="{{ workspace_url }}">← {{ employer_t.support_worker_back }}</a></div>
+  <section class="jh-card">
+    <p class="extensions-kicker">JobHub Support · {{ organization.display_name }}</p>
+    <h1 class="jh-title">{{ employer_t.support_extensions_title }}</h1>
+    <p class="jh-subtitle">{{ employer_t.support_extensions_subtitle }}</p>
+    <div class="extensions-note">{{ employer_t.support_extensions_notice }}</div>
+
+    {% if may_request %}
+      <form class="extensions-form" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="support_extension_request">
+        <h2>{{ employer_t.support_extensions_request_title }}</h2>
+        <p>{{ employer_t.support_extensions_request_text }}</p>
+        {% if request_connections %}
+          <div class="extensions-grid">
+            <label class="jh-field jh-required"><span>{{ employer_t.support_extensions_worker }}</span><select class="jh-input" name="connection_id" required><option value="">{{ employer_t.support_extensions_worker_placeholder }}</option>{% for connection in request_connections %}<option value="{{ connection.id }}">{{ connection.label }}</option>{% endfor %}</select></label>
+            <label class="jh-field jh-required"><span>{{ employer_t.support_extensions_duration_label }}</span><select class="jh-input" name="duration_days" required>{% for duration in duration_choices %}<option value="{{ duration.value }}">{{ duration.label }}</option>{% endfor %}</select></label>
+            <label class="jh-field jh-required"><span>{{ employer_t.support_extensions_reason_label }}</span><select class="jh-input" name="reason" required>{% for reason in reason_choices %}<option value="{{ reason.value }}">{{ reason.label }}</option>{% endfor %}</select></label>
+          </div>
+          <div class="jh-actions"><button class="jh-btn primary" type="submit">{{ employer_t.support_extensions_request_submit }}</button></div>
+        {% else %}
+          <div class="extension-empty">{{ employer_t.support_extensions_no_workers }}</div>
+        {% endif %}
+      </form>
+    {% endif %}
+
+    <section class="extensions-list">
+      <div class="extensions-list-head">
+        <div>
+          <h2>{% if may_decide %}{{ employer_t.support_extensions_all_requests }}{% else %}{{ employer_t.support_extensions_my_requests }}{% endif %}</h2>
+          <p>{% if may_decide %}{{ employer_t.support_extensions_owner_history }}{% else %}{{ employer_t.support_extensions_manager_history }}{% endif %}</p>
+        </div>
+      </div>
+      {% for extension_request in extension_requests %}
+        <article class="extension-card is-{{ extension_request.status }}">
+          <div class="extension-card-head">
+            <h3>{{ extension_request.user_label }}</h3>
+            <span class="jh-status{% if extension_request.status == 'approved' %} success{% elif extension_request.status == 'pending' %} warning{% elif extension_request.status == 'declined' %} danger{% else %} muted{% endif %}">{{ extension_request.status_label }}</span>
+          </div>
+          <div class="extension-meta">
+            <span><strong>{{ employer_t.support_extensions_requested_by }}</strong>: {{ extension_request.requested_by_label }}</span>
+            <span><strong>{{ employer_t.support_extensions_duration_label }}</strong>: {{ extension_request.duration_days }} {{ employer_t.support_extensions_days }}</span>
+            <span><strong>{{ employer_t.support_extensions_reason_label }}</strong>: {{ extension_request.reason_label }}</span>
+            <span><strong>{{ employer_t.support_extensions_requested_at }}</strong>: {{ extension_request.created_at|date:"d.m.Y H:i" }}</span>
+          </div>
+          {% if extension_request.status == 'pending' and may_decide %}
+            <form class="extension-decision extension-decision-form" method="post">
+              {% csrf_token %}
+              <input type="hidden" name="extension_request_id" value="{{ extension_request.public_id }}">
+              <label class="jh-field"><span>{{ employer_t.support_extensions_decision_note }}</span><input class="jh-input" type="text" name="decision_note" maxlength="255"></label>
+              <button class="jh-btn primary" name="action" value="support_extension_approve" type="submit">{{ employer_t.support_extensions_approve }}</button>
+              <button class="jh-btn danger" name="action" value="support_extension_decline" type="submit">{{ employer_t.support_extensions_decline }}</button>
+            </form>
+          {% elif extension_request.status != 'pending' %}
+            <div class="extension-decision">
+              <p><strong>{{ employer_t.support_extensions_decided_by }}</strong>: {{ extension_request.decided_by_label }} · {{ extension_request.decided_at|date:"d.m.Y H:i" }}</p>
+              {% if extension_request.decision_note %}<p><strong>{{ employer_t.support_extensions_decision_note }}</strong>: {{ extension_request.decision_note }}</p>{% endif %}
+            </div>
+          {% endif %}
+        </article>
+      {% empty %}
+        <div class="extension-empty">{{ employer_t.support_extensions_empty }}</div>
+      {% endfor %}
+    </section>
+  </section>
+{% endblock %}

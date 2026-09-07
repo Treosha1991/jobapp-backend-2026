@@ -1,9 +1,188 @@
-from django.db import transaction
+from datetime import timedelta
+
+from django.db import IntegrityError, transaction
 from django.utils import timezone
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from support.models import SupportAccessGrant
+from support.models import SupportAccessExtensionRequest, SupportAccessGrant, SupportConnection
+from support.permission_codes import SUPPORT_EXTENSION_REQUEST
+from support.permissions import (
+    active_membership_for,
+    require_permission,
+    require_worker_connection_access,
+)
 
+from .audit import record_audit_event
 from .notifications import enqueue_support_notification
+
+
+def _valid_extension_duration(value):
+    try:
+        duration_days = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"duration_days": "support_extension_duration_invalid"}) from exc
+    allowed_values = {choice[0] for choice in SupportAccessExtensionRequest.DURATION_CHOICES}
+    if duration_days not in allowed_values:
+        raise ValidationError({"duration_days": "support_extension_duration_invalid"})
+    return duration_days
+
+
+def _valid_extension_reason(value):
+    reason = (value or "").strip()
+    allowed_values = {choice[0] for choice in SupportAccessExtensionRequest.REASON_CHOICES}
+    if reason not in allowed_values:
+        raise ValidationError({"reason": "support_extension_reason_invalid"})
+    return reason
+
+
+def request_support_access_extension(
+    *,
+    actor,
+    organization,
+    connection,
+    duration_days,
+    reason,
+):
+    """Create one owner-reviewable Support extension request for a worker.
+
+    This is deliberately not a payment flow and does not change access on its
+    own. The organization owner is the sole final decision maker below.
+    """
+
+    membership = require_permission(
+        user=actor,
+        organization=organization,
+        permission_code=SUPPORT_EXTENSION_REQUEST,
+    )
+    if membership.is_owner:
+        raise PermissionDenied("support_extension_owner_decides")
+    if connection.organization_id != organization.id or connection.is_archived:
+        raise ValidationError({"connection": "support_extension_connection_not_available"})
+    if connection.stage == SupportConnection.STAGE_CLOSED:
+        raise ValidationError({"connection": "support_extension_connection_not_available"})
+    require_worker_connection_access(
+        user=actor,
+        organization=organization,
+        connection=connection,
+    )
+    normalized_duration_days = _valid_extension_duration(duration_days)
+    normalized_reason = _valid_extension_reason(reason)
+
+    try:
+        with transaction.atomic():
+            existing_request = (
+                SupportAccessExtensionRequest.objects.select_for_update()
+                .filter(
+                    user=connection.candidate,
+                    status=SupportAccessExtensionRequest.STATUS_PENDING,
+                )
+                .first()
+            )
+            if existing_request is not None:
+                raise ValidationError({"connection": "support_extension_already_pending"})
+            extension_request = SupportAccessExtensionRequest.objects.create(
+                organization=organization,
+                user=connection.candidate,
+                requested_by=membership,
+                duration_days=normalized_duration_days,
+                reason=normalized_reason,
+            )
+            record_audit_event(
+                organization=organization,
+                actor=actor,
+                action="support_extension.requested",
+                target=extension_request,
+                details={
+                    "connection": str(connection.public_id),
+                    "duration_days": normalized_duration_days,
+                    "reason": normalized_reason,
+                },
+            )
+    except IntegrityError as exc:
+        # The database constraint covers concurrent requests, including a
+        # pending request that may have been made in another organization.
+        raise ValidationError({"connection": "support_extension_already_pending"}) from exc
+    return extension_request
+
+
+def decide_support_access_extension(*, actor, extension_request, decision, decision_note=""):
+    """Approve or decline a pending request; only the firm owner may decide."""
+
+    normalized_decision = (decision or "").strip().lower()
+    if normalized_decision not in {"approve", "decline"}:
+        raise ValidationError({"decision": "support_extension_decision_invalid"})
+    note = (decision_note or "").strip()
+    if len(note) > 255:
+        raise ValidationError({"decision_note": "support_extension_note_too_long"})
+
+    with transaction.atomic():
+        locked_request = (
+            SupportAccessExtensionRequest.objects.select_for_update()
+            .select_related("organization", "user")
+            .filter(pk=extension_request.pk)
+            .first()
+        )
+        if locked_request is None:
+            raise ValidationError({"request": "support_extension_not_found"})
+        owner_membership = active_membership_for(
+            user=actor,
+            organization=locked_request.organization,
+        )
+        if owner_membership is None or not owner_membership.is_owner:
+            raise PermissionDenied("support_extension_owner_required")
+        if locked_request.status != SupportAccessExtensionRequest.STATUS_PENDING:
+            raise ValidationError({"request": "support_extension_not_pending"})
+
+        now = timezone.now()
+        locked_request.decided_by = actor
+        locked_request.decided_at = now
+        locked_request.decision_note = note
+        if normalized_decision == "approve":
+            active_grants = list(
+                SupportAccessGrant.objects.select_for_update()
+                .filter(
+                    user=locked_request.user,
+                    status=SupportAccessGrant.STATUS_ACTIVE,
+                    ends_at__gt=now,
+                )
+                .only("ends_at")
+            )
+            starts_at = max([now, *(grant.ends_at for grant in active_grants)])
+            grant = SupportAccessGrant.objects.create(
+                user=locked_request.user,
+                organization=locked_request.organization,
+                granted_by=actor,
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(days=locked_request.duration_days),
+                reason=locked_request.reason,
+            )
+            locked_request.status = SupportAccessExtensionRequest.STATUS_APPROVED
+            audit_action = "support_extension.approved"
+            audit_details = {
+                "duration_days": locked_request.duration_days,
+                "grant": str(grant.public_id),
+            }
+        else:
+            locked_request.status = SupportAccessExtensionRequest.STATUS_DECLINED
+            audit_action = "support_extension.declined"
+            audit_details = {}
+        locked_request.save(
+            update_fields=[
+                "status",
+                "decided_by",
+                "decided_at",
+                "decision_note",
+                "updated_at",
+            ]
+        )
+        record_audit_event(
+            organization=locked_request.organization,
+            actor=actor,
+            action=audit_action,
+            target=locked_request,
+            details=audit_details,
+        )
+    return locked_request
 
 
 def active_temporary_grant_for(user, *, at_time=None):

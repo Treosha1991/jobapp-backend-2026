@@ -27,6 +27,8 @@ from support.models import (
     RouteStop,
     ScheduledWorkShift,
     SupportApplication,
+    SupportAccessExtensionRequest,
+    SupportAccessGrant,
     TransportCrew,
     TransportCrewResourceOverride,
     SupportConnection,
@@ -38,10 +40,11 @@ from support.models import (
     TransportPassengerAssignment,
     Vehicle,
     WorkerProjectAssignment,
+    WorkerAccessScope,
     WorkProject,
     Worksite,
 )
-from support.permission_codes import AUDIT_VIEW
+from support.permission_codes import AUDIT_VIEW, SUPPORT_EXTENSION_REQUEST
 from support.services.audit import record_audit_event
 from support.services.notifications import enqueue_support_notification
 from support.services.organizations import activate_organization, create_organization
@@ -393,6 +396,175 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(manager_page, "Manager history house")
         self.assertNotContains(manager_page, "Owner history house")
         self.assertContains(manager_page, "Only your JobHub Support actions are shown")
+
+    def test_manager_requests_support_extension_and_only_owner_can_decide(self):
+        manager_membership = OrganizationMembership.objects.get(
+            organization=self.organization,
+            user=self.limited_member,
+        )
+        PermissionGrant.objects.create(
+            membership=manager_membership,
+            permission_code=SUPPORT_EXTENSION_REQUEST,
+            granted_by=self.owner,
+        )
+        WorkerAccessScope.objects.create(
+            membership=manager_membership,
+            connection=self.worker_connection,
+            granted_by=self.owner,
+        )
+        existing_grant = SupportAccessGrant.objects.create(
+            user=self.worker_connection.candidate,
+            organization=self.organization,
+            granted_by=self.operator,
+            starts_at=timezone.now() - timedelta(days=1),
+            ends_at=timezone.now() + timedelta(days=3),
+            reason=SupportAccessGrant.REASON_TECHNICAL,
+        )
+        extensions_url = (
+            f"/employer/support/access-extensions/?organization={self.organization.public_id}"
+        )
+        out_of_scope_application = SupportApplication.objects.get(
+            candidate=self.candidate,
+        )
+        out_of_scope_connection = SupportConnection.objects.create(
+            organization=self.organization,
+            vacancy=self.worker_connection.vacancy,
+            application=out_of_scope_application,
+            candidate=self.candidate,
+            stage=SupportConnection.STAGE_COORDINATOR,
+        )
+
+        self.client.force_login(self.limited_member)
+        manager_page = self.client.get(extensions_url)
+        self.assertEqual(manager_page.status_code, 200)
+        self.assertContains(manager_page, "Request an extension")
+        self.assertContains(manager_page, str(self.worker_connection.public_id))
+        self.assertNotContains(manager_page, str(out_of_scope_connection.public_id))
+
+        requested = self.client.post(
+            extensions_url,
+            {
+                "action": "support_extension_request",
+                "connection_id": self.worker_connection.public_id,
+                "duration_days": "14",
+                "reason": SupportAccessExtensionRequest.REASON_TRANSITION,
+            },
+        )
+        self.assertRedirects(requested, extensions_url)
+        extension_request = SupportAccessExtensionRequest.objects.get(
+            organization=self.organization,
+            user=self.worker_connection.candidate,
+        )
+        self.assertEqual(
+            extension_request.status,
+            SupportAccessExtensionRequest.STATUS_PENDING,
+        )
+        self.assertEqual(extension_request.requested_by, manager_membership)
+
+        out_of_scope_request = self.client.post(
+            extensions_url,
+            {
+                "action": "support_extension_request",
+                "connection_id": out_of_scope_connection.public_id,
+                "duration_days": "14",
+                "reason": SupportAccessExtensionRequest.REASON_TRANSITION,
+            },
+        )
+        self.assertRedirects(out_of_scope_request, extensions_url)
+        self.assertFalse(
+            SupportAccessExtensionRequest.objects.filter(
+                organization=self.organization,
+                user=out_of_scope_connection.candidate,
+            ).exists()
+        )
+
+        manager_decision = self.client.post(
+            extensions_url,
+            {
+                "action": "support_extension_approve",
+                "extension_request_id": extension_request.public_id,
+            },
+        )
+        self.assertRedirects(manager_decision, extensions_url)
+        extension_request.refresh_from_db()
+        self.assertEqual(
+            extension_request.status,
+            SupportAccessExtensionRequest.STATUS_PENDING,
+        )
+        self.assertEqual(
+            SupportAccessGrant.objects.filter(
+                user=self.worker_connection.candidate,
+                organization=self.organization,
+            ).count(),
+            1,
+        )
+
+        self.client.force_login(self.owner)
+        owner_page = self.client.get(extensions_url)
+        self.assertEqual(owner_page.status_code, 200)
+        self.assertContains(owner_page, "All company requests")
+        self.assertNotContains(owner_page, "Request an extension")
+
+        approved = self.client.post(
+            extensions_url,
+            {
+                "action": "support_extension_approve",
+                "extension_request_id": extension_request.public_id,
+                "decision_note": "Keep access for the transfer week.",
+            },
+        )
+        self.assertRedirects(approved, extensions_url)
+        extension_request.refresh_from_db()
+        self.assertEqual(
+            extension_request.status,
+            SupportAccessExtensionRequest.STATUS_APPROVED,
+        )
+        self.assertEqual(extension_request.decided_by, self.owner)
+        new_grant = SupportAccessGrant.objects.get(
+            user=self.worker_connection.candidate,
+            organization=self.organization,
+            granted_by=self.owner,
+        )
+        self.assertEqual(new_grant.starts_at, existing_grant.ends_at)
+        self.assertEqual(new_grant.ends_at - new_grant.starts_at, timedelta(days=14))
+        repeated_approval = self.client.post(
+            extensions_url,
+            {
+                "action": "support_extension_approve",
+                "extension_request_id": extension_request.public_id,
+            },
+        )
+        self.assertRedirects(repeated_approval, extensions_url)
+        self.assertEqual(
+            SupportAccessGrant.objects.filter(
+                user=self.worker_connection.candidate,
+                organization=self.organization,
+                granted_by=self.owner,
+            ).count(),
+            1,
+        )
+        self.assertTrue(
+            self.organization.audit_events.filter(
+                action="support_extension.requested",
+                actor=self.limited_member,
+                target_type="SupportAccessExtensionRequest",
+                target_public_id=extension_request.public_id,
+            ).exists()
+        )
+        self.assertTrue(
+            self.organization.audit_events.filter(
+                action="support_extension.approved",
+                actor=self.owner,
+                target_type="SupportAccessExtensionRequest",
+                target_public_id=extension_request.public_id,
+            ).exists()
+        )
+        history_page = self.client.get(
+            f"/employer/support/history/?organization={self.organization.public_id}"
+            "&category=requests"
+        )
+        self.assertEqual(history_page.status_code, 200)
+        self.assertContains(history_page, self.worker_connection.candidate.username)
 
     def test_owner_sees_only_approved_workspace_information_and_navigation_link(self):
         self.client.force_login(self.owner)

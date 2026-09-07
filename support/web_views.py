@@ -50,6 +50,7 @@ from .models import (
     RouteStop,
     ScheduledWorkShift,
     SupportApplication,
+    SupportAccessExtensionRequest,
     SupportChatImage,
     SupportConnection,
     SupportConversation,
@@ -84,6 +85,7 @@ from .selectors.workspace import (
     workspace_snapshot,
 )
 from .selectors.audit import audit_history_snapshot
+from .selectors.entitlements import support_extension_workspace_snapshot
 from .serializers import (
     AnnouncementCreateSerializer,
     DocumentRequestPackageDecisionSerializer,
@@ -158,7 +160,11 @@ from .services.pipeline import (
     request_application_clarification,
     transition_connection,
 )
-from .services.entitlements import support_access_snapshot_for
+from .services.entitlements import (
+    decide_support_access_extension,
+    request_support_access_extension,
+    support_access_snapshot_for,
+)
 from .services.documents import (
     DOCUMENT_TYPE_KEYS,
     create_document_request_package,
@@ -3705,6 +3711,87 @@ def audit_history_workspace(request):
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )
     return render(request, "support/audit_history_workspace.html", snapshot)
+
+
+def _support_extensions_redirect(organization):
+    return redirect(
+        f"{reverse('support:access-extensions')}?organization={organization.public_id}"
+    )
+
+
+def _support_extension_operation(request, *, snapshot):
+    organization = snapshot["organization"]
+    action = (request.POST.get("action") or "").strip()
+    try:
+        if action == "support_extension_request":
+            connection = get_object_or_404(
+                SupportConnection.objects.select_related("candidate", "organization"),
+                organization=organization,
+                is_archived=False,
+                public_id=request.POST.get("connection_id"),
+            )
+            request_support_access_extension(
+                actor=request.user,
+                organization=organization,
+                connection=connection,
+                duration_days=request.POST.get("duration_days"),
+                reason=request.POST.get("reason"),
+            )
+            message_key = "support_extensions_requested"
+        elif action in {"support_extension_approve", "support_extension_decline"}:
+            extension_request = get_object_or_404(
+                SupportAccessExtensionRequest,
+                organization=organization,
+                public_id=request.POST.get("extension_request_id"),
+            )
+            decide_support_access_extension(
+                actor=request.user,
+                extension_request=extension_request,
+                decision="approve" if action == "support_extension_approve" else "decline",
+                decision_note=request.POST.get("decision_note"),
+            )
+            message_key = (
+                "support_extensions_approved"
+                if action == "support_extension_approve"
+                else "support_extensions_declined"
+            )
+        else:
+            raise ValueError("support_extension_unknown_operation")
+    except (APIException, ValueError):
+        messages.error(request, tr(request, "support_extensions_error"))
+    else:
+        messages.success(request, tr(request, message_key))
+    return _support_extensions_redirect(organization)
+
+
+@login_required(login_url="employer:login")
+def support_extensions_workspace(request):
+    if not is_support_feature_enabled():
+        raise Http404("support_not_available")
+    snapshot = support_extension_workspace_snapshot(
+        user=request.user,
+        organization_public_id=request.GET.get("organization"),
+    )
+    if request.method == "POST":
+        return _support_extension_operation(request, snapshot=snapshot)
+    for item in snapshot["extension_requests"]:
+        item.status_label = tr(request, f"support_extensions_status_{item.status}")
+        item.reason_label = tr(request, f"support_extensions_reason_{item.reason}")
+    snapshot["duration_choices"] = [
+        {
+            "value": value,
+            "label": tr(request, "support_extensions_duration").format(days=value),
+        }
+        for value, _label in snapshot["duration_choices"]
+    ]
+    snapshot["reason_choices"] = [
+        {"value": value, "label": tr(request, f"support_extensions_reason_{value}")}
+        for value, _label in snapshot["reason_choices"]
+    ]
+    snapshot["workspace_url"] = (
+        f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
+    )
+    return render(request, "support/support_extensions_workspace.html", snapshot)
 
 
 def _team_redirect(organization, membership):

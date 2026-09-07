@@ -16,6 +16,7 @@ from support.models import (
     ProjectCrewShift,
     ProjectCrewShiftMember,
     SupportApplication,
+    SupportAccessExtensionRequest,
     SupportConnection,
     SupportVacancy,
     TaskAssignment,
@@ -62,7 +63,7 @@ def _category_for_action(action):
         return "team"
     if action.startswith("announcement."):
         return "announcements"
-    if action.startswith("worker_request."):
+    if action.startswith(("worker_request.", "support_extension.", "support_access.")):
         return "requests"
     if action.startswith("document_package."):
         return "documents"
@@ -71,7 +72,15 @@ def _category_for_action(action):
 
 def _verb_for_action(action):
     suffix = action.rsplit(".", 1)[-1]
-    if suffix in {"created", "drafted", "submitted", "invited", "granted", "assigned"}:
+    if suffix in {
+        "created",
+        "drafted",
+        "submitted",
+        "requested",
+        "invited",
+        "granted",
+        "assigned",
+    }:
         return "created"
     if suffix in {"published", "confirmed", "activated", "accepted"}:
         return "published"
@@ -167,6 +176,15 @@ def _target_labels(events):
         "SupportApplication": SupportApplication.objects.select_related("candidate").only(
             "public_id", "candidate_id", "candidate__first_name", "candidate__last_name", "candidate__username"
         ),
+        "SupportAccessExtensionRequest": SupportAccessExtensionRequest.objects.select_related(
+            "user"
+        ).only(
+            "public_id",
+            "user_id",
+            "user__first_name",
+            "user__last_name",
+            "user__username",
+        ),
         "SupportConnection": SupportConnection.objects.select_related("candidate").only(
             "public_id", "candidate_id", "candidate__first_name", "candidate__last_name", "candidate__username"
         ),
@@ -247,6 +265,8 @@ def _target_labels(events):
             label = f"{item.crew.project.internal_name} · {item.crew.internal_name or '#' + str(item.crew_id)} · {item.work_date:%d.%m.%Y}"
         elif event.target_type == "ProjectCrewShiftMember":
             label = f"{_display_name(item.connection.candidate)} · {item.shift.crew.project.internal_name}"
+        elif event.target_type == "SupportAccessExtensionRequest":
+            label = _display_name(item.user)
         elif event.target_type in {"SupportApplication", "SupportConnection", "WorkerAccessScope", "WorkerRequest", "TaskAssignment", "WorkTimeEntry", "DocumentRequestPackage"}:
             label = _display_name(item.connection.candidate) if hasattr(item, "connection") else _display_name(item.candidate)
             if event.target_type == "WorkTimeEntry":

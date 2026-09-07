@@ -200,6 +200,7 @@
                 {% if employer_support_header.transport %}<a class="jh-btn" href="{% url 'support:transport' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_transport }}</a>{% endif %}
                 {% if employer_support_header.announcements %}<a class="jh-btn{% if employer_support_header.active.announcements %} primary{% endif %}" href="{% url 'support:announcements' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_announcements }}</a>{% endif %}
                 {% if employer_support_header.audit %}<a class="jh-btn{% if employer_support_header.active.audit %} primary{% endif %}" href="{% url 'support:audit-history' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_audit }}</a>{% endif %}
+                {% if employer_support_header.support_extensions %}<a class="jh-btn{% if employer_support_header.active.support_extensions %} primary{% endif %}" href="{% url 'support:access-extensions' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_extensions }}</a>{% endif %}
                 {% if employer_support_header.team %}<a class="jh-btn" href="{% url 'support:team' %}?{{ employer_support_header.query }}">{{ employer_t.support_menu_team }}</a>{% endif %}
                 <div class="jh-menu-separator"></div>
               {% endif %}

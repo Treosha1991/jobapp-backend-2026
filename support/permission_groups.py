@@ -18,6 +18,7 @@ from .permission_codes import (
     PIPELINE_REVIEW,
     REQUEST_DECIDE,
     SCHEDULE_MANAGE,
+    SUPPORT_EXTENSION_REQUEST,
     TIME_EDIT,
     TIME_REVIEW,
     TIME_EXPORT,
@@ -47,6 +48,11 @@ TEAM_PERMISSION_GROUPS = (
     ("worker_requests", "support_team_permission_worker_requests", (REQUEST_DECIDE,)),
     ("announcements", "support_team_permission_announcements", (ANNOUNCEMENT_MANAGE,)),
     ("audit", "support_team_permission_audit", (AUDIT_VIEW,)),
+    (
+        "support_extension",
+        "support_team_permission_support_extension",
+        (SUPPORT_EXTENSION_REQUEST,),
+    ),
     (
         "team_management",
         "support_team_permission_team_management",

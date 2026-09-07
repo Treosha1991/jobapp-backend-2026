@@ -1,6 +1,6 @@
 # JobHub Support: реестр документации
 
-**Проверено:** 30.08.2026
+**Проверено:** 07.09.2026
 **Область:** `backend` + `mobile`, ветка `feature/jobhub-support-staging`
 **Назначение:** единый `documentation inventory` («реестр документации»), который показывает, каким файлам можно доверять при продолжении разработки.
 
@@ -91,7 +91,7 @@
 | `16-mobile-workspace-mode.md` | `ACTIVE` | Сверен с worker-навигацией «Сегодня»/«График»/«Чаты»/«Ещё», worker-owned project-first snapshot и текущими staff workspace, Workers, Projects, Applications, Fleet, Housing, time и chats. |
 | `17-templates-and-batch-actions.md` | `LEGACY` | Recurring shift batch и ShiftTemplate нельзя использовать в новых функциях. Исторические идеи массового выбора дат можно сохранить только после переписывания под project-first. |
 | `18-work-chats-and-translation.md` | `ACTIVE` | Сверен с точными приватными парами, типами разговоров, read/unread, групповым push и мобильной навигацией. API перевода есть, provider отключён и честно помечен неготовым. |
-| `19-subscription-status-and-sponsored-access.md` | `PARTIAL` | Ручной grant JobHub на 7/14/30 дней реализован. Apple/Google billing, менеджерский extension workflow и sponsored access остаются `PLANNED`. |
+| `19-subscription-status-and-sponsored-access.md` | `PARTIAL` | Ручной grant JobHub и owner-controlled manager extension на 7/14/30 дней реализованы в employer web workspace без оплаты. Apple/Google billing, receipt validation, sponsored access и отдельный mobile UI для запроса остаются `PLANNED`. |
 | `20-finance-information-and-advance-requests.md` | `PLANNED` | Финансы и авансы не входят в текущий основной пилот. Нельзя показывать как готовый модуль. |
 | `21-manual-employer-onboarding.md` | `ACTIVE` | Ручная проверка и подключение первой фирмы соответствует принятому процессу MVP. |
 | `22-first-operational-pilot-checklist.md` | `ACTIVE` | Release gate переписан под application → onboarding → worker и project-first проект/экипаж/календарь; содержит ручные device/push/offboarding проверки. |
