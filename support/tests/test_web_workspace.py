@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from support.models import (
     Announcement,
+    AnnouncementAcknowledgement,
     HousingAssignment,
     HousingPlace,
     HousingRoom,
@@ -335,6 +336,68 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertRedirects(archived, announcements_url)
         announcement.refresh_from_db()
         self.assertEqual(announcement.state, Announcement.STATE_ARCHIVED)
+
+    def test_owner_can_preview_a_published_announcement_translation(self):
+        announcement = Announcement.objects.create(
+            organization=self.organization,
+            title="Wijziging",
+            body="Vrijdag verandert de vertrektijd.",
+            translations={"auto": {"title": "Wijziging", "body": "Vrijdag verandert de vertrektijd."}},
+            original_language="auto",
+            state=Announcement.STATE_PUBLISHED,
+            created_by=self.owner,
+            published_by=self.owner,
+            published_at=timezone.now(),
+        )
+        AnnouncementAcknowledgement.objects.create(
+            announcement=announcement,
+            connection=self.worker_connection,
+        )
+        announcements_url = (
+            f"/employer/support/announcements/?organization={self.organization.public_id}"
+        )
+        self.client.force_login(self.owner)
+        translation = {
+            "state": "ready",
+            "title": "Zmiana",
+            "body": "W piątek zmienia się godzina wyjazdu.",
+            "target_language": "pl",
+            "source_language": "nl",
+            "provider": "google_cloud",
+        }
+
+        with patch(
+            "support.web_views.preview_announcement_translation",
+            return_value=translation,
+        ) as preview_translation:
+            response = self.client.post(
+                announcements_url,
+                {
+                    "action": "announcement_preview_translation",
+                    "announcement_id": announcement.public_id,
+                    "target_language": "pl",
+                },
+            )
+
+        preview_url = (
+            f"{announcements_url}&preview={announcement.public_id}&preview_language=pl"
+        )
+        self.assertRedirects(response, preview_url)
+        preview_translation.assert_called_once_with(
+            actor=self.owner,
+            announcement=announcement,
+            target_language="pl",
+        )
+        with patch(
+            "support.web_views.preview_announcement_translation",
+            return_value=translation,
+        ):
+            page = self.client.get(preview_url)
+
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Translation preview")
+        self.assertContains(page, "Zmiana")
+        self.assertContains(page, "W piątek zmienia się godzina wyjazdu.")
 
     def test_audit_history_is_full_for_owner_and_limited_to_the_manager_actions(self):
         owner_site = HousingSite.objects.create(

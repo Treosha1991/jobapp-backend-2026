@@ -520,6 +520,27 @@ def request_announcement_translation(*, announcement, requested_by, target_langu
     }
 
 
+def preview_announcement_translation(*, actor, announcement, target_language):
+    """Let an authorized staff member verify a published worker translation.
+
+    The same cached translation is returned to the worker later, so a desktop
+    preview never creates a separate or inconsistent version of the message.
+    """
+
+    require_permission(
+        user=actor,
+        organization=announcement.organization,
+        permission_code=ANNOUNCEMENT_MANAGE,
+    )
+    if announcement.state != Announcement.STATE_PUBLISHED:
+        raise ValidationError({"announcement": "announcement_not_published"})
+    return request_announcement_translation(
+        announcement=announcement,
+        requested_by=actor,
+        target_language=target_language,
+    )
+
+
 def publish_announcement(*, actor, announcement):
     require_permission(
         user=actor,

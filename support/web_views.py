@@ -18,6 +18,10 @@ from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from django.utils.http import url_has_allowed_host_and_scheme
 from rest_framework.exceptions import APIException, ValidationError
 
+from jobs.content_translations import (
+    ContentTranslationBudgetExceeded,
+    ContentTranslationUnavailable,
+)
 from jobs.web_i18n import get_lang, tr
 from jobs.avatar_utils import avatar_public_url
 from jobs.models import UserBlock
@@ -193,6 +197,7 @@ from .services.organizations import (
 from .services.tasks import (
     archive_announcement,
     create_announcement,
+    preview_announcement_translation,
     publish_announcement,
 )
 from .services.project_crews import (
@@ -3595,15 +3600,15 @@ def fleet_workspace(request):
     return render(request, "support/fleet_workspace.html", snapshot)
 
 
-def _announcements_redirect(organization):
-    return redirect(
-        f"{reverse('support:announcements')}?organization={organization.public_id}"
-    )
+def _announcements_redirect(organization, **parameters):
+    query = {"organization": organization.public_id, **parameters}
+    return redirect(f"{reverse('support:announcements')}?{urlencode(query)}")
 
 
 def _announcements_operation(request, *, snapshot):
     organization = snapshot["organization"]
     action = (request.POST.get("action") or "").strip()
+    redirect_parameters = {}
     try:
         if action == "announcement_create":
             serializer = AnnouncementCreateSerializer(
@@ -3638,13 +3643,34 @@ def _announcements_operation(request, *, snapshot):
             else:
                 archive_announcement(actor=request.user, announcement=announcement)
                 message_key = "support_announcements_archived"
+        elif action == "announcement_preview_translation":
+            announcement = get_object_or_404(
+                Announcement,
+                organization=organization,
+                public_id=request.POST.get("announcement_id"),
+            )
+            translation = preview_announcement_translation(
+                actor=request.user,
+                announcement=announcement,
+                target_language=request.POST.get("target_language"),
+            )
+            redirect_parameters = {
+                "preview": announcement.public_id,
+                "preview_language": translation["target_language"],
+            }
+            message_key = "support_announcements_translation_preview_ready"
         else:
             raise ValueError("support_announcements_unknown_operation")
-    except (APIException, ValueError):
+    except (
+        APIException,
+        ContentTranslationBudgetExceeded,
+        ContentTranslationUnavailable,
+        ValueError,
+    ):
         messages.error(request, tr(request, "support_announcements_error"))
     else:
         messages.success(request, tr(request, message_key))
-    return _announcements_redirect(organization)
+    return _announcements_redirect(organization, **redirect_parameters)
 
 
 @login_required(login_url="employer:login")
@@ -3673,6 +3699,45 @@ def announcements_workspace(request):
             for language in ("ru", "en", "pl", "uk")
         ],
     ]
+    snapshot["preview_languages"] = [
+        {
+            "code": language,
+            "label": tr(request, f"support_announcements_language_{language}"),
+        }
+        for language in ("ru", "en", "pl", "uk")
+    ]
+    preview_public_id = request.GET.get("preview")
+    preview_language = request.GET.get("preview_language")
+    if preview_public_id and preview_language:
+        preview_announcement = next(
+            (
+                announcement
+                for announcement in snapshot["announcements"]
+                if str(announcement.public_id) == preview_public_id
+            ),
+            None,
+        )
+        if preview_announcement is not None:
+            try:
+                preview = preview_announcement_translation(
+                    actor=request.user,
+                    announcement=preview_announcement,
+                    target_language=preview_language,
+                )
+            except (
+                APIException,
+                ContentTranslationBudgetExceeded,
+                ContentTranslationUnavailable,
+                ValueError,
+            ):
+                messages.error(request, tr(request, "support_announcements_error"))
+            else:
+                preview["announcement_public_id"] = preview_announcement.public_id
+                preview["target_language_label"] = tr(
+                    request,
+                    f"support_announcements_language_{preview['target_language']}",
+                )
+                snapshot["announcement_translation_preview"] = preview
     snapshot["source_language"] = "auto"
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"

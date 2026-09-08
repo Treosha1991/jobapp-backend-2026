@@ -39,6 +39,14 @@
   .announcement-meta { display:flex; flex-wrap:wrap; gap:7px 12px; color:var(--muted); font-size:12px; line-height:1.4; }
   .announcement-meta strong { color:#bde9ff; }
   .announcement-card-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
+  .announcement-preview-form { display:flex; align-items:end; gap:8px; flex-wrap:wrap; margin-top:13px; }
+  .announcement-preview-form .jh-field { min-width:176px; }
+  .announcement-preview-form .jh-field span { display:block; margin-bottom:5px; color:var(--muted); font-size:12px; }
+  .announcement-preview { margin-top:13px; padding:13px; border:1px solid rgba(24,223,103,.35); border-radius:13px; background:rgba(24,223,103,.07); }
+  .announcement-preview h4 { margin:0 0 8px; color:#c9ffe0; font-size:15px; }
+  .announcement-preview p { margin:0; color:#d9efff; line-height:1.45; white-space:normal; }
+  .announcement-preview p + p { margin-top:8px; }
+  .announcement-preview-note { color:var(--muted)!important; font-size:12px; }
   .announcement-empty { margin-top:18px; padding:19px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; }
   @media (max-width:760px) { .announcement-grid, .announcement-worker-list, .announcement-recipient-tools { grid-template-columns:1fr; } }
 </style>
@@ -125,6 +133,23 @@
               {% if announcement.state == 'draft' %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="announcement_publish"><input type="hidden" name="announcement_id" value="{{ announcement.public_id }}"><button class="jh-btn primary" type="submit">{{ employer_t.support_announcements_publish }}</button></form>{% endif %}
               <form method="post">{% csrf_token %}<input type="hidden" name="action" value="announcement_archive"><input type="hidden" name="announcement_id" value="{{ announcement.public_id }}"><button class="jh-btn danger" type="submit">{{ employer_t.support_announcements_archive }}</button></form>
             </div>
+          {% endif %}
+          {% if announcement.state == 'published' %}
+            <form class="announcement-preview-form" method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="announcement_preview_translation">
+              <input type="hidden" name="announcement_id" value="{{ announcement.public_id }}">
+              <label class="jh-field"><span>{{ employer_t.support_announcements_preview_language }}</span><select class="jh-input" name="target_language">{% for language in preview_languages %}<option value="{{ language.code }}">{{ language.label }}</option>{% endfor %}</select></label>
+              <button class="jh-btn" type="submit">{{ employer_t.support_announcements_preview_translation }}</button>
+            </form>
+          {% endif %}
+          {% if announcement_translation_preview and announcement_translation_preview.announcement_public_id == announcement.public_id %}
+            <section class="announcement-preview">
+              <h4>{{ employer_t.support_announcements_preview_title }} · {{ announcement_translation_preview.target_language_label }}</h4>
+              <p><strong>{{ announcement_translation_preview.title }}</strong></p>
+              <p>{{ announcement_translation_preview.body|linebreaksbr }}</p>
+              <p class="announcement-preview-note">{{ employer_t.support_announcements_preview_notice }}</p>
+            </section>
           {% endif %}
         </article>
       {% empty %}

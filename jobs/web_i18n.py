@@ -4857,6 +4857,11 @@ TRANSLATIONS["ru"].update({
     "support_announcements_draft_created": "Черновик объявления сохранён.",
     "support_announcements_published": "Объявление опубликовано для выбранных работников.",
     "support_announcements_archived": "Объявление снято с публикации. История сохранена.",
+    "support_announcements_preview_language": "Язык перевода",
+    "support_announcements_preview_translation": "Проверить перевод",
+    "support_announcements_preview_title": "Предпросмотр перевода",
+    "support_announcements_preview_notice": "Этот перевод сохранён и будет показан работникам с таким языком приложения.",
+    "support_announcements_translation_preview_ready": "Перевод создан и сохранён для работников.",
     "support_announcements_error": "Не удалось выполнить действие с объявлением. Проверьте текст, получателей и доступ.",
 })
 TRANSLATIONS["en"].update({
@@ -4906,6 +4911,11 @@ TRANSLATIONS["en"].update({
     "support_announcements_draft_created": "Announcement draft saved.",
     "support_announcements_published": "Announcement published for the selected workers.",
     "support_announcements_archived": "Announcement unpublished. The history is retained.",
+    "support_announcements_preview_language": "Translation language",
+    "support_announcements_preview_translation": "Check translation",
+    "support_announcements_preview_title": "Translation preview",
+    "support_announcements_preview_notice": "This translation is saved and will be shown to workers using this app language.",
+    "support_announcements_translation_preview_ready": "Translation created and saved for workers.",
     "support_announcements_error": "The announcement action could not be completed. Check the text, recipients and access.",
 })
 TRANSLATIONS["pl"].update({
@@ -4955,6 +4965,11 @@ TRANSLATIONS["pl"].update({
     "support_announcements_draft_created": "Szkic ogłoszenia został zapisany.",
     "support_announcements_published": "Ogłoszenie opublikowano dla wybranych pracowników.",
     "support_announcements_archived": "Ogłoszenie wycofano z publikacji. Historia została zachowana.",
+    "support_announcements_preview_language": "Język tłumaczenia",
+    "support_announcements_preview_translation": "Sprawdź tłumaczenie",
+    "support_announcements_preview_title": "Podgląd tłumaczenia",
+    "support_announcements_preview_notice": "To tłumaczenie jest zapisane i zostanie pokazane pracownikom używającym tego języka aplikacji.",
+    "support_announcements_translation_preview_ready": "Tłumaczenie zostało utworzone i zapisane dla pracowników.",
     "support_announcements_error": "Nie udało się wykonać działania na ogłoszeniu. Sprawdź treść, odbiorców i dostęp.",
 })
 TRANSLATIONS["uk"].update({
@@ -5004,6 +5019,11 @@ TRANSLATIONS["uk"].update({
     "support_announcements_draft_created": "Чернетку оголошення збережено.",
     "support_announcements_published": "Оголошення опубліковано для вибраних працівників.",
     "support_announcements_archived": "Оголошення знято з публікації. Історію збережено.",
+    "support_announcements_preview_language": "Мова перекладу",
+    "support_announcements_preview_translation": "Перевірити переклад",
+    "support_announcements_preview_title": "Попередній перегляд перекладу",
+    "support_announcements_preview_notice": "Цей переклад збережено та буде показано працівникам із такою мовою застосунку.",
+    "support_announcements_translation_preview_ready": "Переклад створено та збережено для працівників.",
     "support_announcements_error": "Не вдалося виконати дію з оголошенням. Перевірте текст, отримувачів і доступ.",
 })
 
