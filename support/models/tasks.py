@@ -21,6 +21,8 @@ LANGUAGE_CHOICES = [
     ("uk", "Ukrainian"),
 ]
 
+ANNOUNCEMENT_SOURCE_LANGUAGE_CHOICES = [("auto", "Detect automatically"), *LANGUAGE_CHOICES]
+
 
 class WorkerTask(models.Model):
     """An employer-created instruction visible to workers only on publish."""
@@ -258,8 +260,8 @@ class Announcement(models.Model):
     body = models.TextField(max_length=8000)
     translations = models.JSONField(default=dict)
     original_language = models.CharField(
-        max_length=2,
-        choices=LANGUAGE_CHOICES,
+        max_length=16,
+        choices=ANNOUNCEMENT_SOURCE_LANGUAGE_CHOICES,
         default="en",
     )
     importance = models.CharField(
@@ -294,6 +296,47 @@ class Announcement(models.Model):
         indexes = [
             models.Index(fields=("organization", "state", "published_at")),
             models.Index(fields=("organization", "expires_at")),
+        ]
+
+
+class AnnouncementTranslation(models.Model):
+    """A cached translation requested by a worker for one announcement."""
+
+    STATUS_READY = "ready"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [(STATUS_READY, "Ready"), (STATUS_FAILED, "Failed")]
+
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    announcement = models.ForeignKey(
+        Announcement,
+        on_delete=models.CASCADE,
+        related_name="translation_cache",
+    )
+    target_language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES)
+    source_fingerprint = models.CharField(max_length=64)
+    detected_source_language = models.CharField(max_length=16, blank=True, default="")
+    title = models.CharField(max_length=360, blank=True, default="")
+    body = models.TextField(max_length=12000, blank=True, default="")
+    provider = models.CharField(max_length=64, blank=True, default="")
+    provider_version = models.CharField(max_length=64, blank=True, default="")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES)
+    error_code = models.CharField(max_length=120, blank=True, default="")
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="requested_announcement_translations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("announcement", "target_language"),
+                name="support_unique_announcement_translation_language",
+            )
         ]
 
 

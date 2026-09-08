@@ -29,6 +29,11 @@ from .board_publishing import (
     revoke_authorization,
 )
 from .country_choices import normalize_audience_country_codes
+from .content_translations import (
+    ContentTranslationBudgetExceeded,
+    ContentTranslationUnavailable,
+    request_vacancy_translation,
+)
 from .driver_licenses import normalize_driver_license_categories
 from .economy import (
     EconomyActionRequiredError,
@@ -660,6 +665,36 @@ class VacancyDetailAPIView(APIView):
                 vacancy.created_by,
             )
         return Response(payload, status=200)
+
+
+class VacancyTranslationAPIView(APIView):
+    """Return a cached official translation for a currently public vacancy."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, pk, target_language):
+        vacancy = Vacancy.objects.filter(pk=pk).first()
+        error_response = _public_vacancy_error_response(vacancy)
+        if error_response is not None:
+            return error_response
+        try:
+            payload = request_vacancy_translation(
+                vacancy=vacancy,
+                target_language=target_language,
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except ContentTranslationBudgetExceeded:
+            return Response(
+                {"error": "translation_monthly_limit_reached"},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        except ContentTranslationUnavailable:
+            return Response(
+                {"error": "translation_unavailable"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({"vacancy_id": vacancy.id, "translation": payload})
 
 
 class VacancyBookmarkStatusAPIView(APIView):

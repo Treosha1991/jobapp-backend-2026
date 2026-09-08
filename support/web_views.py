@@ -3601,16 +3601,6 @@ def _announcements_redirect(organization):
     )
 
 
-def _announcement_translations_from_post(request):
-    return {
-        language: {
-            "title": request.POST.get(f"title_{language}", ""),
-            "body": request.POST.get(f"body_{language}", ""),
-        }
-        for language in ("ru", "en", "pl", "uk")
-    }
-
-
 def _announcements_operation(request, *, snapshot):
     organization = snapshot["organization"]
     action = (request.POST.get("action") or "").strip()
@@ -3619,7 +3609,8 @@ def _announcements_operation(request, *, snapshot):
             serializer = AnnouncementCreateSerializer(
                 data={
                     "source_language": request.POST.get("source_language"),
-                    "translations": _announcement_translations_from_post(request),
+                    "title": request.POST.get("title", ""),
+                    "body": request.POST.get("body", ""),
                     "importance": request.POST.get("importance", "normal"),
                     "requires_acknowledgement": (
                         request.POST.get("requires_acknowledgement") == "on"
@@ -3675,11 +3666,14 @@ def announcements_workspace(request):
             request,
             f"support_announcements_importance_{announcement.importance}",
         )
-    snapshot["languages"] = [
-        {"code": language, "label": tr(request, f"support_announcements_language_{language}")}
-        for language in ("ru", "en", "pl", "uk")
+    snapshot["source_languages"] = [
+        {"code": "auto", "label": tr(request, "support_announcements_language_auto")},
+        *[
+            {"code": language, "label": tr(request, f"support_announcements_language_{language}")}
+            for language in ("ru", "en", "pl", "uk")
+        ],
     ]
-    snapshot["source_language"] = get_lang(request)
+    snapshot["source_language"] = "auto"
     snapshot["workspace_url"] = (
         f"{reverse('support:workspace')}?organization={snapshot['organization'].public_id}"
     )

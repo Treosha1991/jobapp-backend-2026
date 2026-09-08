@@ -24,6 +24,7 @@ from rest_framework.views import APIView
 logger = logging.getLogger(__name__)
 
 from jobs.avatar_utils import avatar_public_url
+from jobs.content_translations import ContentTranslationBudgetExceeded, ContentTranslationUnavailable
 
 from .feature_flags import is_project_first_workspace_enabled, is_support_feature_enabled
 from .models import (
@@ -275,6 +276,7 @@ from .services.tasks import (
     create_worker_task,
     publish_announcement,
     publish_worker_task,
+    request_announcement_translation,
     staff_change_task_assignment,
     worker_change_task_assignment,
 )
@@ -6704,6 +6706,41 @@ class MyAnnouncementAcknowledgeAPIView(SupportFeatureAPIView):
             "connection__candidate",
         ).get(pk=recipient.pk)
         return Response({"announcement": _announcement_payload(recipient)})
+
+
+class MyAnnouncementTranslationAPIView(SupportFeatureAPIView):
+    """Worker-only cached translation for one delivered announcement."""
+
+    def post(self, request, recipient_public_id, target_language):
+        _require_active_support_access(request.user)
+        recipient = get_object_or_404(
+            AnnouncementAcknowledgement.objects.select_related("announcement", "connection"),
+            public_id=recipient_public_id,
+            connection__candidate=request.user,
+            connection__is_archived=False,
+            announcement__state=Announcement.STATE_PUBLISHED,
+        )
+        if recipient.announcement.expires_at and recipient.announcement.expires_at <= timezone.now():
+            raise Http404("announcement_expired")
+        try:
+            payload = request_announcement_translation(
+                announcement=recipient.announcement,
+                requested_by=request.user,
+                target_language=target_language,
+            )
+        except ValueError as exc:
+            raise ValidationError({"target_language": str(exc)})
+        except ContentTranslationBudgetExceeded:
+            return Response(
+                {"detail": "translation_monthly_limit_reached"},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        except ContentTranslationUnavailable:
+            return Response(
+                {"detail": "translation_unavailable"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({"recipient_id": str(recipient.public_id), "translation": payload})
 
 
 class OrganizationDocumentRequestPackageListCreateAPIView(

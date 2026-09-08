@@ -81,6 +81,7 @@ from .worker_requests import WorkerRequest, WorkerRequestDate, WorkerRequestEven
 from .tasks import (
     Announcement,
     AnnouncementAcknowledgement,
+    AnnouncementTranslation,
     ContentTemplate,
     TaskAssignment,
     WorkerTask,
@@ -99,6 +100,7 @@ __all__ = [
     "ContentTemplate",
     "Announcement",
     "AnnouncementAcknowledgement",
+    "AnnouncementTranslation",
     "ApplicationDecisionEvent",
     "BotContentRevision",
     "ConnectionStageEvent",

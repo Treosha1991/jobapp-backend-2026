@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -7,6 +8,7 @@ from rest_framework.test import APIClient
 
 from support.models import (
     AnnouncementAcknowledgement,
+    AnnouncementTranslation,
     ContentTemplate,
     HousingAssignment,
     HousingPlace,
@@ -238,6 +240,55 @@ class SupportTaskAndAnnouncementTests(TestCase):
         self.assertIsNotNone(acknowledged.data["announcement"]["acknowledged_at"])
         receipt = AnnouncementAcknowledgement.objects.get(public_id=item["recipient_id"])
         self.assertEqual(receipt.acknowledged_by, self.worker)
+
+    @override_settings(
+        JOBHUB_CONTENT_TRANSLATION_PROVIDER="google_cloud",
+        GOOGLE_CLOUD_TRANSLATION_API_KEY="test-key",
+        JOBHUB_CONTENT_TRANSLATION_MONTHLY_CHARACTER_LIMIT=450000,
+    )
+    @patch("jobs.content_translations._google_cloud_translate")
+    def test_single_source_announcement_is_translated_once_and_cached(
+        self, google_translate
+    ):
+        google_translate.return_value = (
+            ["Update", "The departure time changes on Friday."],
+            "nl",
+            "google_cloud",
+            "v2",
+        )
+        created = self.owner_client.post(
+            f"{self.organization_url}/announcements/",
+            {
+                "source_language": "auto",
+                "title": "Wijziging",
+                "body": "Vrijdag verandert de vertrektijd.",
+                "connection_ids": [str(self.connection.public_id)],
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        announcement_id = created.data["announcement"]["id"]
+        published = self.owner_client.post(
+            f"/api/v2/support/announcements/{announcement_id}/publish/", {}, format="json"
+        )
+        self.assertEqual(published.status_code, 200, published.data)
+
+        items = self.worker_client.get(
+            f"/api/v2/support/connections/{self.connection.public_id}/announcements/mine/"
+        )
+        self.assertEqual(items.status_code, 200, items.data)
+        recipient_id = items.data["results"][0]["recipient_id"]
+        url = f"/api/v2/support/announcement-recipients/{recipient_id}/translations/en/"
+
+        first = self.worker_client.post(url, {}, format="json")
+        second = self.worker_client.post(url, {}, format="json")
+
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(first.data["translation"]["title"], "Update")
+        self.assertEqual(google_translate.call_count, 1)
+        translation = AnnouncementTranslation.objects.get(target_language="en")
+        self.assertEqual(translation.detected_source_language, "nl")
 
     def test_multilingual_content_template_is_staff_only_and_scope_safe(self):
         template_url = f"{self.organization_url}/content-templates/"

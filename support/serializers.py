@@ -405,8 +405,12 @@ class WorkerTaskStaffDecisionSerializer(StrictInputSerializer):
 
 
 class AnnouncementCreateSerializer(StrictInputSerializer):
-    source_language = serializers.ChoiceField(choices=("ru", "en", "pl", "uk"))
-    translations = serializers.JSONField()
+    # New announcements use one original text.  ``translations`` remains
+    # accepted for older mobile builds and previously saved manual wording.
+    source_language = serializers.CharField(max_length=16, required=False, default="auto")
+    title = serializers.CharField(max_length=180, required=False, allow_blank=True)
+    body = serializers.CharField(max_length=8000, required=False, allow_blank=True)
+    translations = serializers.JSONField(required=False)
     importance = serializers.ChoiceField(choices=("normal", "important"), default="normal")
     requires_acknowledgement = serializers.BooleanField(default=False)
     expires_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
@@ -418,6 +422,47 @@ class AnnouncementCreateSerializer(StrictInputSerializer):
 
     def validate_translations(self, value):
         return _validate_translations(value, body_field="body", body_max_length=8000)
+
+    def validate_source_language(self, value):
+        normalized = value.strip().lower()
+        if normalized == "auto":
+            return normalized
+        if not re.fullmatch(r"[a-z]{2,3}", normalized):
+            raise serializers.ValidationError("invalid_announcement_source_language")
+        return normalized
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        source_language = attrs["source_language"]
+        title = (attrs.get("title") or "").strip()
+        body = (attrs.get("body") or "").strip()
+        has_single_text = bool(title or body)
+        translations = attrs.get("translations")
+
+        if has_single_text:
+            if not title:
+                raise serializers.ValidationError({"title": "announcement_title_required"})
+            if not body:
+                raise serializers.ValidationError({"body": "announcement_body_required"})
+            if _contains_encoding_placeholder({"title": title, "body": body}):
+                raise serializers.ValidationError("invalid_text_encoding_placeholder")
+            # Keep one source entry for older mobile builds.  New worker
+            # builds request cached translations through the server instead.
+            attrs["title"] = title
+            attrs["body"] = body
+            attrs["translations"] = {source_language: {"title": title, "body": body}}
+            return attrs
+
+        if translations is None:
+            raise serializers.ValidationError("announcement_text_required")
+        if source_language not in translations:
+            raise serializers.ValidationError(
+                {"source_language": "announcement_source_translation_required"}
+            )
+        source = translations[source_language]
+        attrs["title"] = source["title"]
+        attrs["body"] = source["body"]
+        return attrs
 
     def validate_connection_ids(self, value):
         if len(set(value)) != len(value):

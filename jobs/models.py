@@ -215,6 +215,57 @@ class Vacancy(models.Model):
         return self.title
 
 
+class ContentTranslationUsageMonth(models.Model):
+    """One guarded, shared character counter for paid translation calls."""
+
+    month = models.DateField(unique=True)
+    character_count = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-month",)
+
+
+class VacancyTranslation(models.Model):
+    """Cached public-vacancy translation; the original vacancy is unchanged."""
+
+    STATUS_READY = "ready"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = [(STATUS_READY, "Ready"), (STATUS_FAILED, "Failed")]
+    LANGUAGE_CHOICES = [
+        ("ru", "Russian"),
+        ("en", "English"),
+        ("pl", "Polish"),
+        ("uk", "Ukrainian"),
+    ]
+
+    vacancy = models.ForeignKey(
+        Vacancy,
+        on_delete=models.CASCADE,
+        related_name="translation_cache",
+    )
+    target_language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES)
+    source_fingerprint = models.CharField(max_length=64)
+    detected_source_language = models.CharField(max_length=16, blank=True, default="")
+    title = models.CharField(max_length=240, blank=True, default="")
+    city = models.CharField(max_length=160, blank=True, default="")
+    description = models.TextField(max_length=6000, blank=True, default="")
+    provider = models.CharField(max_length=64, blank=True, default="")
+    provider_version = models.CharField(max_length=64, blank=True, default="")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES)
+    error_code = models.CharField(max_length=120, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("vacancy", "target_language"),
+                name="jobs_unique_vacancy_translation_language",
+            )
+        ]
+
+
 class VacancyModerationAttempt(models.Model):
     TRIGGER_CHOICES = [
         ("create", "Create"),

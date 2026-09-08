@@ -28,6 +28,7 @@ from .api_views import (
     MyDocumentRequestPackageListAPIView,
     MyDocumentRequestPackageMarkSentAPIView,
     MyAnnouncementAcknowledgeAPIView,
+    MyAnnouncementTranslationAPIView,
     MyAnnouncementListAPIView,
     PermissionGrantCreateAPIView,
     PublicVacancySupportWorkflowAPIView,
@@ -681,6 +682,11 @@ urlpatterns = [
         "announcement-recipients/<uuid:recipient_public_id>/acknowledge/",
         MyAnnouncementAcknowledgeAPIView.as_view(),
         name="support-my-announcement-acknowledge",
+    ),
+    path(
+        "announcement-recipients/<uuid:recipient_public_id>/translations/<str:target_language>/",
+        MyAnnouncementTranslationAPIView.as_view(),
+        name="support-my-announcement-translation",
     ),
     path(
         "task-assignments/<uuid:assignment_public_id>/confirm/",

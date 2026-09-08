@@ -20,6 +20,7 @@ from .models import (
     Vacancy,
     VacancyContactAccessPolicy,
     VacancyModerationAttempt,
+    VacancyTranslation,
 )
 from .board_publishing import accept_authorization, request_authorization, revoke_authorization
 from .chat_notifications import notify_user_about_chat_message
@@ -76,6 +77,56 @@ class VerifiedEmployerApiTests(TestCase):
         profile = self.client.get(f"/api/employers/{self.employer.id}/profile/")
         self.assertEqual(profile.status_code, 200)
         self.assertTrue(profile.data["employer"]["is_verified"])
+
+
+class VacancyTranslationApiTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="translation-owner",
+            email="translation-owner@example.com",
+            password="password",
+        )
+        self.vacancy = Vacancy.objects.create(
+            created_by=self.owner,
+            title="Magazijnmedewerker",
+            country="NL",
+            city="Rotterdam",
+            category="warehouse",
+            employment_type="full",
+            description="Werk in een logistiek team.",
+            housing_type="none",
+            source="direct",
+            is_approved=True,
+            published_at=timezone.now(),
+            expires_at=timezone.now() + timezone.timedelta(days=30),
+        )
+
+    @override_settings(
+        JOBHUB_CONTENT_TRANSLATION_PROVIDER="google_cloud",
+        GOOGLE_CLOUD_TRANSLATION_API_KEY="test-key",
+        JOBHUB_CONTENT_TRANSLATION_MONTHLY_CHARACTER_LIMIT=450000,
+    )
+    @patch("jobs.content_translations._google_cloud_translate")
+    def test_public_vacancy_translation_is_cached_per_target_language(self, google_translate):
+        google_translate.return_value = (
+            ["Складской работник", "Роттердам", "Работа в логистической команде."],
+            "nl",
+            "google_cloud",
+            "v2",
+        )
+        url = f"/api/vacancies/{self.vacancy.id}/translations/ru/"
+
+        first = APIClient().post(url, {}, format="json")
+        second = APIClient().post(url, {}, format="json")
+
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(first.data["translation"]["title"], "Складской работник")
+        self.assertEqual(google_translate.call_count, 1)
+        self.assertEqual(
+            VacancyTranslation.objects.get(vacancy=self.vacancy, target_language="ru").title,
+            "Складской работник",
+        )
 
 
 class VacancyPromotionFeedTests(TestCase):

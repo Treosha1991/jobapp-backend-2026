@@ -7,11 +7,19 @@ workflow accepts uploads, document numbers or other sensitive files.
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+
+from jobs.content_translations import (
+    ContentTranslationBudgetExceeded,
+    ContentTranslationUnavailable,
+    source_fingerprint,
+    translate_content_texts,
+)
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from support.models import (
     Announcement,
     AnnouncementAcknowledgement,
+    AnnouncementTranslation,
     ContentTemplate,
     OrganizationMembership,
     SupportConnection,
@@ -346,6 +354,8 @@ def create_announcement(
     actor,
     organization,
     source_language,
+    title,
+    body,
     translations,
     importance,
     requires_acknowledgement,
@@ -369,11 +379,10 @@ def create_announcement(
             organization=organization,
             connections=connections,
         )
-        source = translations[source_language]
         announcement = Announcement.objects.create(
             organization=organization,
-            title=source["title"],
-            body=source["body"],
+            title=title,
+            body=body,
             translations=translations,
             original_language=source_language,
             importance=importance,
@@ -395,6 +404,120 @@ def create_announcement(
             details={"recipient_count": len(connections), "important": importance == "important"},
         )
     return announcement
+
+
+def request_announcement_translation(*, announcement, requested_by, target_language):
+    """Return one worker-requested translation without changing the original.
+
+    Legacy manually entered translations remain preferred.  New announcements
+    are translated only the first time a particular target language is needed.
+    """
+
+    target_language = (target_language or "").strip().lower()
+    if target_language not in {"ru", "en", "pl", "uk"}:
+        raise ValueError("unsupported_translation_target_language")
+    original_language = (announcement.original_language or "auto").strip().lower()
+    if target_language == original_language:
+        return {
+            "state": "original",
+            "title": announcement.title,
+            "body": announcement.body,
+            "target_language": target_language,
+            "source_language": original_language,
+            "provider": "original",
+        }
+    legacy = (announcement.translations or {}).get(target_language)
+    if isinstance(legacy, dict) and legacy.get("title") and legacy.get("body"):
+        return {
+            "state": "ready",
+            "title": str(legacy["title"]),
+            "body": str(legacy["body"]),
+            "target_language": target_language,
+            "source_language": original_language,
+            "provider": "manual",
+        }
+
+    fingerprint = source_fingerprint(announcement.title, announcement.body, original_language)
+    with transaction.atomic():
+        existing = (
+            AnnouncementTranslation.objects.select_for_update()
+            .filter(announcement=announcement, target_language=target_language)
+            .first()
+        )
+        if (
+            existing is not None
+            and existing.status == AnnouncementTranslation.STATUS_READY
+            and existing.source_fingerprint == fingerprint
+        ):
+            return {
+                "state": "ready",
+                "title": existing.title,
+                "body": existing.body,
+                "target_language": target_language,
+                "source_language": existing.detected_source_language or original_language,
+                "provider": existing.provider,
+            }
+        try:
+            translated, detected_source, provider, provider_version = translate_content_texts(
+                texts=[announcement.title, announcement.body],
+                source_language=original_language,
+                target_language=target_language,
+            )
+        except (ContentTranslationUnavailable, ContentTranslationBudgetExceeded):
+            if existing is None:
+                AnnouncementTranslation.objects.create(
+                    announcement=announcement,
+                    target_language=target_language,
+                    source_fingerprint=fingerprint,
+                    status=AnnouncementTranslation.STATUS_FAILED,
+                    error_code="translation_unavailable",
+                    requested_by=requested_by,
+                )
+            else:
+                existing.status = AnnouncementTranslation.STATUS_FAILED
+                existing.error_code = "translation_unavailable"
+                existing.requested_by = requested_by
+                existing.source_fingerprint = fingerprint
+                existing.save(
+                    update_fields=[
+                        "status",
+                        "error_code",
+                        "requested_by",
+                        "source_fingerprint",
+                        "updated_at",
+                    ]
+                )
+            raise
+
+        defaults = {
+            "source_fingerprint": fingerprint,
+            "detected_source_language": detected_source,
+            "title": translated[0],
+            "body": translated[1],
+            "provider": provider,
+            "provider_version": provider_version,
+            "status": AnnouncementTranslation.STATUS_READY,
+            "error_code": "",
+            "requested_by": requested_by,
+        }
+        if existing is None:
+            existing = AnnouncementTranslation.objects.create(
+                announcement=announcement,
+                target_language=target_language,
+                **defaults,
+            )
+        else:
+            for field, value in defaults.items():
+                setattr(existing, field, value)
+            existing.save(update_fields=[*defaults, "updated_at"])
+    return {
+        "state": "ready",
+        "title": existing.title,
+        "body": existing.body,
+        "target_language": target_language,
+        "source_language": existing.detected_source_language or original_language,
+        "provider": existing.provider,
+    }
 
 
 def publish_announcement(*, actor, announcement):

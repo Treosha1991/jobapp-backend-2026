@@ -257,12 +257,35 @@ SUPPORT_PROJECT_FIRST_RESET_ALLOWED = (
 # intentionally disabled by default, but its safe cache/access boundary exists.
 SUPPORT_TRANSLATION_PROVIDER = os.environ.get("SUPPORT_TRANSLATION_PROVIDER", "disabled").strip().lower()
 
+# Published vacancies and Support announcements may use a reviewed machine
+# translation provider.  This is deliberately separate from Support chat:
+# chats can contain private correspondence and stay disabled above.
+#
+# Keep the API key on the server only.  Never place it in a mobile build or in
+# browser JavaScript.  The provider remains disabled until the owner creates a
+# Google Cloud project and supplies this setting in the hosting environment.
+JOBHUB_CONTENT_TRANSLATION_PROVIDER = os.environ.get(
+    "JOBHUB_CONTENT_TRANSLATION_PROVIDER", "disabled"
+).strip().lower()
+GOOGLE_CLOUD_TRANSLATION_API_KEY = os.environ.get(
+    "GOOGLE_CLOUD_TRANSLATION_API_KEY", ""
+).strip()
+
 
 def _env_int(name, default):
     try:
         return int(os.environ.get(name, str(default)))
     except (TypeError, ValueError):
         return default
+
+
+# This is an application-level hard stop, not merely a billing notification.
+# It is intentionally below Google's current monthly free allowance so a
+# misconfiguration cannot create an unexpected bill while the product is
+# small.  The counter is shared by public vacancies and Support announcements.
+JOBHUB_CONTENT_TRANSLATION_MONTHLY_CHARACTER_LIMIT = _env_int(
+    "JOBHUB_CONTENT_TRANSLATION_MONTHLY_CHARACTER_LIMIT", 450000
+)
 
 # Public mobile app update config. Bump these env vars when a newer store
 # version is available; old app builds will then show the update button.

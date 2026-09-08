@@ -11,10 +11,8 @@
   .announcement-form h2 { margin:0 0 5px; font-size:20px; }
   .announcement-form > p { margin:0 0 15px; color:var(--muted); line-height:1.42; }
   .announcement-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-  .announcement-texts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:14px; }
-  .announcement-language { padding:13px; border:1px solid var(--line); border-radius:14px; background:rgba(5,22,36,.25); }
-  .announcement-language h3 { margin:0 0 10px; font-size:14px; color:#e8f6ff; }
-  .announcement-language .jh-field + .jh-field { margin-top:9px; }
+  .announcement-content { margin-top:14px; padding:13px; border:1px solid var(--line); border-radius:14px; background:rgba(5,22,36,.25); }
+  .announcement-content .jh-field + .jh-field { margin-top:9px; }
   .announcement-textarea { min-height:100px; resize:vertical; }
   .announcement-recipients { margin-top:16px; padding:14px; border:1px solid var(--line); border-radius:16px; background:rgba(5,22,36,.24); }
   .announcement-recipients h3 { margin:0 0 5px; font-size:16px; }
@@ -42,7 +40,7 @@
   .announcement-meta strong { color:#bde9ff; }
   .announcement-card-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
   .announcement-empty { margin-top:18px; padding:19px; border:1px dashed var(--line); border-radius:14px; color:var(--muted); text-align:center; }
-  @media (max-width:760px) { .announcement-grid, .announcement-texts, .announcement-worker-list, .announcement-recipient-tools { grid-template-columns:1fr; } }
+  @media (max-width:760px) { .announcement-grid, .announcement-worker-list, .announcement-recipient-tools { grid-template-columns:1fr; } }
 </style>
 {% endblock %}
 
@@ -61,19 +59,14 @@
       <p>{{ employer_t.support_announcements_create_text }}</p>
 
       <div class="announcement-grid">
-        <label class="jh-field"><span>{{ employer_t.support_announcements_source_language }}</span><select class="jh-input" name="source_language">{% for language in languages %}<option value="{{ language.code }}"{% if language.code == source_language %} selected{% endif %}>{{ language.label }}</option>{% endfor %}</select></label>
+        <label class="jh-field"><span>{{ employer_t.support_announcements_source_language }}</span><select class="jh-input" name="source_language">{% for language in source_languages %}<option value="{{ language.code }}"{% if language.code == source_language %} selected{% endif %}>{{ language.label }}</option>{% endfor %}</select></label>
         <label class="jh-field"><span>{{ employer_t.support_announcements_expires_at }}</span><input class="jh-input" type="datetime-local" name="expires_at"></label>
       </div>
 
-      <div class="announcement-texts">
-        {% for language in languages %}
-          <section class="announcement-language">
-            <h3>{{ language.label }}</h3>
-            <label class="jh-field"><span>{{ employer_t.support_announcements_message_title }}</span><input class="jh-input" type="text" name="title_{{ language.code }}" maxlength="180" required></label>
-            <label class="jh-field"><span>{{ employer_t.support_announcements_message_body }}</span><textarea class="jh-input announcement-textarea" name="body_{{ language.code }}" maxlength="8000" required></textarea></label>
-          </section>
-        {% endfor %}
-      </div>
+      <section class="announcement-content">
+        <label class="jh-field"><span>{{ employer_t.support_announcements_message_title }}</span><input class="jh-input" type="text" name="title" maxlength="180" required></label>
+        <label class="jh-field"><span>{{ employer_t.support_announcements_message_body }}</span><textarea class="jh-input announcement-textarea" name="body" maxlength="8000" required></textarea></label>
+      </section>
 
       <section class="announcement-recipients">
         <h3>{{ employer_t.support_announcements_recipients_title }}</h3>
