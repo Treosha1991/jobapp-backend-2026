@@ -293,6 +293,8 @@ class SupportWorkspaceWebTests(TestCase):
         self.assertContains(page, "Crew North")
         self.assertContains(page, "House North")
         self.assertContains(page, str(self.worker_connection.public_id))
+        self.assertContains(page, 'data-announcement-select-all')
+        self.assertContains(page, "Select all workers")
 
         created = self.client.post(
             announcements_url,

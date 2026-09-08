@@ -20,7 +20,8 @@
   .announcement-recipients h3 { margin:0 0 5px; font-size:16px; }
   .announcement-recipients > p { margin:0 0 12px; color:var(--muted); line-height:1.4; }
   .announcement-recipient-tools { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px; align-items:end; }
-  .announcement-selected-count { margin:12px 0 8px; color:#bafbd2; font-size:13px; font-weight:800; }
+  .announcement-selection-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:12px 0 8px; flex-wrap:wrap; }
+  .announcement-selected-count { margin:0; color:#bafbd2; font-size:13px; font-weight:800; }
   .announcement-worker-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; max-height:300px; overflow:auto; padding-right:4px; }
   .announcement-worker { display:flex; align-items:flex-start; gap:8px; padding:9px 10px; border:1px solid var(--line); border-radius:11px; background:rgba(5,22,36,.25); color:#e8f6ff; font-size:13px; line-height:1.35; cursor:pointer; }
   .announcement-worker input { margin-top:2px; accent-color:var(--green); }
@@ -89,7 +90,10 @@
               <button class="jh-btn" type="button" data-announcement-apply-group>{{ employer_t.support_announcements_apply_group }}</button>
             </div>
           {% endif %}
-          <div class="announcement-selected-count"><span>{{ employer_t.support_announcements_selected_workers }}</span>: <strong data-announcement-selected-count>0</strong></div>
+          <div class="announcement-selection-actions">
+            <div class="announcement-selected-count"><span>{{ employer_t.support_announcements_selected_workers }}</span>: <strong data-announcement-selected-count>0</strong></div>
+            <button class="jh-btn" type="button" data-announcement-select-all data-select-label="{{ employer_t.support_announcements_select_all }}" data-clear-label="{{ employer_t.support_announcements_clear_selection }}" aria-pressed="false">{{ employer_t.support_announcements_select_all }}</button>
+          </div>
           <div class="announcement-worker-list">
             {% for worker in worker_rows %}
               <label class="announcement-worker"><input type="checkbox" name="connection_ids" value="{{ worker.id }}" data-announcement-recipient><span>{{ worker.label }}</span></label>
@@ -142,10 +146,24 @@
       const count = document.querySelector('[data-announcement-selected-count]');
       const group = document.querySelector('[data-announcement-recipient-group]');
       const apply = document.querySelector('[data-announcement-apply-group]');
+      const selectAll = document.querySelector('[data-announcement-select-all]');
       const updateCount = () => {
-        if (count) count.textContent = recipients.filter((item) => item.checked).length;
+        const selectedCount = recipients.filter((item) => item.checked).length;
+        if (count) count.textContent = selectedCount;
+        if (selectAll) {
+          const isAllSelected = selectedCount === recipients.length;
+          selectAll.textContent = isAllSelected ? selectAll.dataset.clearLabel : selectAll.dataset.selectLabel;
+          selectAll.setAttribute('aria-pressed', String(isAllSelected));
+        }
       };
       recipients.forEach((item) => item.addEventListener('change', updateCount));
+      if (selectAll) {
+        selectAll.addEventListener('click', () => {
+          const shouldSelectAll = recipients.some((item) => !item.checked);
+          recipients.forEach((item) => { item.checked = shouldSelectAll; });
+          updateCount();
+        });
+      }
       if (group && apply) {
         apply.addEventListener('click', () => {
           const option = group.options[group.selectedIndex];
